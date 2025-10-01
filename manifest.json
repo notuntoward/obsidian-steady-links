@@ -1,0 +1,10 @@
+{
+  "id": "obsidian-link-editor",
+  "name": "Link Editor",
+  "version": "0.1.0",
+  "minAppVersion": "1.9.0",
+  "description": "Edit links in a modal and reposition cursor safely.",
+  "author": "Your Name",
+  "authorUrl": "https://github.com/yourname",
+  "isDesktopOnly": false
+}
