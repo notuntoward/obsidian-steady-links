@@ -371,7 +371,9 @@ class FileSuggest extends obsidian.AbstractInputSuggest {
         this.close();
 
         // Restore focus to the input box
-        this.textInputEl.focus();
+        if (document.activeElement !== this.textInputEl) {
+            this.textInputEl.focus();
+        }
     }
 
     selectCurrentSuggestion() {
@@ -466,8 +468,10 @@ class LinkEditModal extends obsidian.Modal {
                 toggle.toggleEl.addEventListener('keydown', (e) => {
                     if (e.key === ' ' || e.key === 'Spacebar') {
                         e.preventDefault();
-                        toggle.setValue(!toggle.getValue());
-                        toggle.onChange(toggle.getValue());
+                        const newValue = !toggle.getValue();
+                        toggle.setValue(newValue);
+                        this.isWiki = newValue;
+                        this.updateUIState();
                     }
                 });
             });
@@ -562,9 +566,9 @@ class LinkEditModal extends obsidian.Modal {
             this.textInput.inputEl.select();
         }
         else {
-            this.destInput.inputEl.focus();
-            if (linkDest && linkDest.length > 0) {
-                this.destInput.inputEl.select();
+            this.textInput.inputEl.focus();
+            if (linkText && linkText.length > 0) {
+                this.textInput.inputEl.select();
             }
         }
     }
