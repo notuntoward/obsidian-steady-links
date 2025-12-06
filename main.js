@@ -198,11 +198,7 @@ class FileSuggest extends obsidian.AbstractInputSuggest {
 		    const blockText = lines.slice(startLine, endLine + 1).join('\n');
 		    const blockIdMatch = blockText.match(/\^([a-zA-Z0-9-]+)\s*$/);
 		    const blockId = blockIdMatch ? blockIdMatch[1] : null;
-		    
-		    // Modification: Use the first line for display, which is often cleaner
-		    const firstLine = lines[startLine].trim(); 
-		    // Remove block ID from the display text if it's on the same line
-		    const displayText = firstLine.replace(/\s*\^[a-zA-Z0-9-]+\s*$/, '');
+		    const displayText = blockId ? blockText.replace(/\s*\^[a-zA-Z0-9-]+\s*$/, '') : blockText;
 		    
 		    if (blockQuery) {
 			const lowerBlockQuery = blockQuery.toLowerCase();
@@ -240,21 +236,13 @@ class FileSuggest extends obsidian.AbstractInputSuggest {
     
     renderSuggestion(item, el) {
 	// Use 'mod-complex' for the standard Title/Note stack layout
+	// Fix: Ensure every suggestion item has this class for styling
 	el.addClass("mod-complex");
 	const content = el.createDiv({ cls: "suggestion-content" });
 
-	const currentQuery = this.textInputEl.value.trim();
-	const currentFile = this.app.workspace.getActiveFile();
-	
-	// Helper function to get only the folder path (e.g., 'Howto/'). Returns empty string for root files.
-	const getFolderPath = (file) => {
-	    const pathParts = file.path.split('/');
-	    pathParts.pop(); // Remove the filename
-	    return pathParts.join('/') + (pathParts.length > 0 ? '/' : ''); // Re-add trailing slash, but only if there are folder parts
-	};
 
 	if (item.type === 'heading') {
-	    // Title (Heading Text)
+	    // Title
 	    content.createDiv({
 		text: item.heading,
 		cls: "suggestion-title"
@@ -269,109 +257,66 @@ class FileSuggest extends obsidian.AbstractInputSuggest {
 
 	    // Note (Path) - Conditional logic
 	    if (item.file) {
-		const isCrossFile = !currentFile || item.file.path !== currentFile.path;
-		// Pattern 5: filename#heading (user typed filename prefix, path is redundant)
+		const currentQuery = this.textInputEl.value.trim();
+		const currentFile = this.app.workspace.getActiveFile();
+		
 		const isFilenameHeadingPattern = currentQuery.includes('#') && 
 		      !currentQuery.startsWith('#') && 
 		    !currentQuery.startsWith('##');
 		
-		// We only show a path if it's cross-file AND the user didn't already type the filename/path.
-		const showPath = isCrossFile && !isFilenameHeadingPattern;
+		// Show path if NOT a filename#heading pattern AND (NOT current file OR not the current file)
+		// This handles the global search (##) case, and hides path for current-file heading search (#) and explicit filename#heading.
+		const showPath = !isFilenameHeadingPattern && 
+		      (!currentFile || item.file.path !== currentFile.path);
 		
 		if (showPath) {
-		    // Show full path, excluding the filename itself (e.g., "Folder/Subfolder/")
-		    const path = getFolderPath(item.file);
-		    
 		    content.createDiv({
-			text: path, // Display just the folder path
+			text: item.file.path,
 			cls: "suggestion-note"
 		    });
 		}
 	    }
 	} else if (item.type === 'block') {
-	    // Title (Block Text) - Use blockText (first line of the block)
+	    // Title (Block Text)
 	    const blockText = item.blockText || '';
-	    // Use a shorter preview for the display text
-	    const displayText = blockText.length > 80 ? blockText.substring(0, 80) + '...' : blockText;
+	    const displayText = blockText.length > 100 ? blockText.substring(0, 100) + '...' : blockText;
 	    
 	    content.createDiv({
 		text: displayText,
-		// Block/Heading text is generally not bolded in native Obsidian suggester
-		cls: "suggestion-title" 
+		cls: "suggestion-title"
 	    });
 	    
-	    // Note (Block ID and Path) - All in one suggestion-note element
-	    let pathText = null;
-	    let blockIdText = null;
-
+	    // Note (Block ID) - Display BELOW text, only if it already exists.
 	    if (item.blockId) {
-		blockIdText = `^${item.blockId}`;
-	    }
-	    
-	    // Path Logic: Only show path if it's a cross-file search that *didn't* start with the filename.
-	    if (item.file) {
-		// This checks for the two patterns that indicate the user has already specified the file:
-		// filename^blockquery
-		// filename#^blockquery
-		const isFilenameBlockPattern = 
-		      (currentQuery.includes('#^') && currentQuery.indexOf('#^') > 0) ||
-		      (currentQuery.includes('^') && !currentQuery.startsWith('^') && currentQuery.indexOf('^') > 0);
-		
-		const isCurrentFile = currentFile && item.file.path === currentFile.path;
-
-		// Show path if:
-		// 1. It's not the current file AND
-		// 2. The query did not already specify the filename (i.e., it was a global block search `^...` in the wrong file, or a global search `##^` which isn't fully implemented but future-proofs it)
-		// For the current implementation, we only show path for the global `^` if the file is *not* the current file.
-		if (!isFilenameBlockPattern) {
-		     // If it's a global search (`^`) but points to a different file, show the folder path.
-		     if (!isCurrentFile) {
-		    pathText = getFolderPath(item.file);
-		}
-		}
-		// If isFilenameBlockPattern is true, pathText remains null, hiding the path.
-	    }
-
-	    // Render the Note text
-	    let noteContent = '';
-
-	    if (blockIdText) {
-		noteContent += blockIdText;
-	    }
-
-	    if (pathText) {
-		if (noteContent.length > 0) {
-		    // Use the official Obsidian separator ' · ' (U+00B7 Middle Dot)
-		    noteContent += ' · '; 
-		}
-		noteContent += pathText;
-	    }
-
-	    if (noteContent.length > 0) {
 		content.createDiv({
-		    text: noteContent,
+		    text: `^${item.blockId}`,
 		    cls: "suggestion-note"
 		});
 	    }
-
+	    
+	    // Note (Path) - Conditional logic
+	    // FIX: Hide path for all block suggestions, as the file is either implied (^) or explicitly typed (filename#^).
+	    // The following block is intentionally removed/skipped to hide the path for blocks.
+	    
+	    /*
+	    if (item.file) {
+		const currentFile = this.app.workspace.getActiveFile();
+		const showPath = !currentFile || item.file.path !== currentFile.path;
+		if (showPath) {
+		     content.createDiv({
+			text: item.file.path,
+			cls: "suggestion-note"
+		    });
+		}
+	    }
+	    */
 	} else {
-	    // Regular File - Stacked basename (normal) and path (small, no basename)
+	    // Regular File - Stacked basename (large) and path (small)
+	    // Title: Basename (no extension - is handled by using item.basename)
+	    content.createDiv({ text: item.basename, cls: "suggestion-title" });
 	    
-	    // Title: Basename 
-	    content.createDiv({ 
-		text: item.basename, 
-		// File titles should be slightly larger/bolder in mod-complex
-		cls: "suggestion-title" 
-	    });
-	    
-	    // Note: Path (smaller, underneath, excluding filename)
-	    // Get the folder path (e.g., "Folder/Subfolder/")
-	    const path = getFolderPath(item);
-	    
-	    content.createDiv({ 
-		text: path, 
-		cls: "suggestion-note" 
-	    });
+	    // Note: Path (smaller, underneath)
+	    content.createDiv({ text: item.path, cls: "suggestion-note" });
 	}
     }
 
@@ -547,12 +492,34 @@ class LinkEditModal extends obsidian.Modal {
                 }
             }
 
+            // CRITICAL FIX: Ctrl+N (Down) and Ctrl+P (Up) navigation
+            // This is the core logic that enables quickswitcher-style navigation.
+            if (e.ctrlKey && (e.key === 'n' || e.key === 'p') && document.activeElement === this.destInput.inputEl) {
+
+                // Ensure the suggester is *open* and has values before attempting to navigate.
+                if (this.fileSuggest.suggestions && this.fileSuggest.suggestions.values.length > 0) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    
+                    if (e.key === 'n') {
+                        // Use the internal moveDown method
+                        this.fileSuggest.suggestions.moveDown();
+                    } else if (e.key === 'p') {
+                        // Use the internal moveUp method
+                        this.fileSuggest.suggestions.moveUp();
+                    }
+                    return;
+                }
+            } 
+            // End of Key Handling for Ctrl+N/P
+
             // Enter key submits (with validation)
             if (e.key === "Enter") {
                 if (e.target === this.toggleComponent.toggleEl) {
                     return;
                 }
-                if (this.fileSuggest.isOpen) {
+                // Stop Enter from submitting if the suggestion list is open (it should select the suggestion)
+                if (this.fileSuggest.suggestions && this.fileSuggest.suggestions.values.length > 0 && this.fileSuggest.isOpen) {
                     return;
                 }
                 e.preventDefault();
