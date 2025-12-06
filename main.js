@@ -23,15 +23,7 @@ class FileSuggest extends obsidian.AbstractInputSuggest {
 
         // --- WIKILINK MODE PATTERNS ---
 
-        // 1) "#heading" in current file
-        if (trimmedQuery.startsWith('#') && !trimmedQuery.startsWith('##')) {
-            const headingQuery = trimmedQuery.slice(1).toLowerCase();
-            const allHeadings = this.getHeadingsInCurrentFile();
-            if (!headingQuery) return allHeadings;
-            return allHeadings.filter(h => h.heading.toLowerCase().includes(headingQuery));
-        }
-
-        // 2) "##heading" in all files
+        // 1) "##heading" in all files
         if (trimmedQuery.startsWith('##')) {
             const headingQuery = trimmedQuery.slice(2).toLowerCase();
             const allHeadings = this.getAllHeadings();
@@ -39,7 +31,23 @@ class FileSuggest extends obsidian.AbstractInputSuggest {
             return allHeadings.filter(h => h.heading.toLowerCase().includes(headingQuery));
         }
 
-        // 3) "^block" in current file
+        // 2) "#^block" in current file (must come BEFORE single # check)
+        if (trimmedQuery.startsWith('#^')) {
+            const blockQuery = trimmedQuery.slice(2).toLowerCase();
+            const activeFile = this.app.workspace.getActiveFile();
+            if (!activeFile) return [];
+            return await this.getAllBlocksInFile(activeFile, blockQuery);
+        }
+
+        // 3) "#heading" in current file
+        if (trimmedQuery.startsWith('#') && !trimmedQuery.startsWith('##')) {
+            const headingQuery = trimmedQuery.slice(1).toLowerCase();
+            const allHeadings = this.getHeadingsInCurrentFile();
+            if (!headingQuery) return allHeadings;
+            return allHeadings.filter(h => h.heading.toLowerCase().includes(headingQuery));
+        }
+
+        // 4) "^block" in current file
         if (trimmedQuery.startsWith('^')) {
             const blockQuery = trimmedQuery.slice(1).toLowerCase();
             const activeFile = this.app.workspace.getActiveFile();
@@ -47,7 +55,7 @@ class FileSuggest extends obsidian.AbstractInputSuggest {
             return await this.getAllBlocksInFile(activeFile, blockQuery);
         }
 
-        // 4) "file#^block" in specific file
+        // 5) "file#^block" in specific file (must come BEFORE file#heading check)
         if (trimmedQuery.includes('#^')) {
             const [fileName, blockQuery = ''] = trimmedQuery.split('#^');
             const file = this.findFile(fileName);
@@ -55,13 +63,13 @@ class FileSuggest extends obsidian.AbstractInputSuggest {
             return await this.getAllBlocksInFile(file, blockQuery);
         }
 
-        // 5) "file#heading" in specific file
+        // 6) "file#heading" in specific file
         if (trimmedQuery.includes('#') && !trimmedQuery.startsWith('#')) {
             const [fileName, headingQuery = ''] = trimmedQuery.split('#');
             return this.getHeadingsInFile(fileName, headingQuery);
         }
 
-        // 6) "file^block" in specific file
+        // 7) "file^block" in specific file (without #)
         if (trimmedQuery.includes('^') && !trimmedQuery.startsWith('^')) {
             const [fileName, blockQuery = ''] = trimmedQuery.split('^');
             const file = this.findFile(fileName);
@@ -69,7 +77,7 @@ class FileSuggest extends obsidian.AbstractInputSuggest {
             return await this.getAllBlocksInFile(file, blockQuery);
         }
 
-        // 7) Default: [[file]]
+        // 8) Default: [[file]]
         return this.getFiles(trimmedQuery);
     }
 
