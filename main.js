@@ -680,12 +680,12 @@ class LinkEditModal extends obsidian.Modal {
                 const converted = wikiToMarkdown(dest);
                 if (converted !== dest) {
                     warnings.push({
-                        text: '⚠️ Invalid Wiki Link destination. Can be converted - toggle Link Type above.',
+                        text: '⚠️ Invalid WikiLink destination. Can toggle to Markdown below.',
                         cls: 'link-warning-caution',
                     });
                 } else {
                     warnings.push({
-                        text: '⚠️ Invalid Wiki Link destination. Contains forbidden characters (| ^ : %% [[ ]] * " ? \\ / in filename).',
+                        text: '⚠️ Invalid Wikilink destination. Contains forbidden characters (| ^ : %% [[ ]] * " ? \\ / in filename).',
                         cls: 'link-warning-error',
                     });
                 }
@@ -693,12 +693,12 @@ class LinkEditModal extends obsidian.Modal {
                 const converted = markdownToWiki(dest);
                 if (converted !== null) {
                     warnings.push({
-                        text: '⚠️ Invalid Markdown link destination. Can be converted - toggle Link Type above.',
+                        text: '⚠️ Invalid Markdown link destination. Can toggle to Wikilink below.',
                         cls: 'link-warning-caution',
                     });
                 } else {
                     warnings.push({
-                        text: '⚠️ Invalid Markdown destination. Spaces and ^ must be encoded or wrapped in <...>.',
+                        text: '⚠️ Invalid Markdown destination: Encode spaces and `^`; wrap them in `<...>`; or toggle to WikiLink',
                         cls: 'link-warning-error',
                     });
                 }
