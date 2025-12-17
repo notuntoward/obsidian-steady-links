@@ -2,6 +2,7 @@ import { Plugin, Editor, MarkdownView } from "obsidian";
 import { LinkEditModal } from "./LinkEditModal";
 import { LinkEditorSettingTab } from "./SettingTab";
 import { PluginSettings, LinkInfo } from "./types";
+import { parseClipboardLink } from "./utils";
 
 const DEFAULT_SETTINGS: PluginSettings = {
 	alwaysMoveToEnd: false,
@@ -143,8 +144,16 @@ export default class LinkEditorPlugin extends Plugin {
 								conversionNotice = `✓ URL converted: ${original} → ${normalized}`;
 							}
 						} else {
-							linkDest = clipboardText;
-							shouldBeMarkdown = false;
+							// Check if clipboard contains a valid link (wiki or markdown)
+							const parsedLink = parseClipboardLink(clipboardText);
+							if (parsedLink) {
+								linkDest = parsedLink.destination;
+								shouldBeMarkdown = !parsedLink.isWiki;
+								conversionNotice = `✓ Used destination from link in clipboard`;
+							} else {
+								linkDest = clipboardText;
+								shouldBeMarkdown = false;
+							}
 						}
 					} else if (isClipboardUrl) {
 						const original = clipboardText;
@@ -157,9 +166,18 @@ export default class LinkEditorPlugin extends Plugin {
 							conversionNotice = `✓ URL converted: ${original} → ${normalized}`;
 						}
 					} else {
-						linkText = "";
-						linkDest = clipboardText;
-						shouldBeMarkdown = false;
+						// Check if clipboard contains a valid link (wiki or markdown)
+						const parsedLink = parseClipboardLink(clipboardText);
+						if (parsedLink) {
+							linkText = parsedLink.text;
+							linkDest = parsedLink.destination;
+							shouldBeMarkdown = !parsedLink.isWiki;
+							conversionNotice = `✓ Used text & destination from link in clipboard`;
+						} else {
+							linkText = "";
+							linkDest = clipboardText;
+							shouldBeMarkdown = false;
+						}
 					}
 
 					link = {

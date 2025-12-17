@@ -1,7 +1,7 @@
 import { App, Modal, Setting, TextComponent, ButtonComponent, ToggleComponent } from "obsidian";
 import { LinkInfo } from "./types";
 import { FileSuggest } from "./FileSuggest";
-import { isValidWikiLink, isValidMarkdownLink, wikiToMarkdown, markdownToWiki } from "./utils";
+import { isValidWikiLink, isValidMarkdownLink, wikiToMarkdown, markdownToWiki, parseClipboardLink } from "./utils";
 
 export class LinkEditModal extends Modal {
 	link: LinkInfo;
@@ -193,7 +193,6 @@ export class LinkEditModal extends Modal {
 
 			// Enter
 			if (e.key === "Enter") {
-				if (e.target === this.toggleComponent.toggleEl) return;
 				const isOpen = this.fileSuggest.isSuggestOpen;
 				if (isOpen) return; // let suggester handle Enter
 				e.preventDefault();
@@ -213,6 +212,7 @@ export class LinkEditModal extends Modal {
 		});
 
 		this.updateUIState();
+		this.populateFromClipboard();
 		this.setInitialFocus();
 	}
 
@@ -245,6 +245,35 @@ export class LinkEditModal extends Modal {
 			if (linkText && linkText.length > 0) {
 				this.textInput.inputEl.select();
 			}
+		}
+	}
+
+	async populateFromClipboard(): Promise<void> {
+		try {
+			const clipboardText = await navigator.clipboard.readText();
+			const parsedLink = parseClipboardLink(clipboardText);
+			
+			if (parsedLink) {
+				// Only populate fields that are empty
+				if (!this.link.text.trim()) {
+					this.textInput.setValue(parsedLink.text);
+					this.link.text = parsedLink.text;
+				}
+				
+				if (!this.link.destination.trim()) {
+					this.destInput.setValue(parsedLink.destination);
+					this.link.destination = parsedLink.destination;
+					
+					// Update the link type based on the parsed link
+					this.isWiki = parsedLink.isWiki;
+					this.toggleComponent.setValue(parsedLink.isWiki);
+				}
+				
+				this.updateUIState();
+			}
+		} catch (error) {
+			// Silently fail if clipboard access is denied or unavailable
+			console.debug("Could not access clipboard:", error);
 		}
 	}
 

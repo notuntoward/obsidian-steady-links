@@ -125,3 +125,61 @@ export function markdownToWiki(dest: string): string | null {
 
 	return cleaned;
 }
+
+/**
+	* Parse a wiki link from text and extract text and destination
+	* WikiLink format: [[filename|display text]] or [[filename]]
+	*/
+export function parseWikiLink(text: string): { text: string; destination: string } | null {
+	if (!text) return null;
+	
+	// Match wiki link pattern: [[filename|display text]] or [[filename]]
+	const wikiLinkMatch = text.match(/^\[\[([^\[\]|]+)(?:\|([^\[\]]+))?\]\]$/);
+	if (!wikiLinkMatch) return null;
+	
+	const destination = wikiLinkMatch[1].trim();
+	const linkText = wikiLinkMatch[2] ? wikiLinkMatch[2].trim() : destination;
+	
+	return { text: linkText, destination };
+}
+
+/**
+	* Parse a markdown link from text and extract text and destination
+	* Markdown link format: [display text](destination)
+	*/
+export function parseMarkdownLink(text: string): { text: string; destination: string } | null {
+	if (!text) return null;
+	
+	// Match markdown link pattern: [display text](destination)
+	const markdownLinkMatch = text.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+	if (!markdownLinkMatch) return null;
+	
+	const linkText = markdownLinkMatch[1].trim();
+	const destination = markdownLinkMatch[2].trim();
+	
+	return { text: linkText, destination };
+}
+
+/**
+	* Parse clipboard content to extract link information
+	* Returns null if clipboard doesn't contain a valid link
+	*/
+export function parseClipboardLink(clipboardText: string): { text: string; destination: string; isWiki: boolean } | null {
+	if (!clipboardText) return null;
+	
+	const trimmed = clipboardText.trim();
+	
+	// Try to parse as wiki link first
+	const wikiLink = parseWikiLink(trimmed);
+	if (wikiLink) {
+		return { ...wikiLink, isWiki: true };
+	}
+	
+	// Try to parse as markdown link
+	const markdownLink = parseMarkdownLink(trimmed);
+	if (markdownLink) {
+		return { ...markdownLink, isWiki: false };
+	}
+	
+	return null;
+}
