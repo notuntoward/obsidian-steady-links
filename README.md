@@ -1,38 +1,86 @@
-# Link Editor
+# Obsidian Link Editor
 
-A single Keyboard-friendly command does either link creation or editing, entirely without a mouse. The mouse works too, of course, but you still benefit from the convenient link editing popup, which avoids editing the messy markdown of Obsidian's auto-expanded links.
-
-## Usage
-
-*Assuming you've mapped  `Edit link` to a hotkey ([Setup](setup)), then…*
-
-**Edit existing link**: Place cursor in any link, press hotkey. Modify and press Enter.
-
-**Create new link**: push hotkey, fill out the popup form and hit return or click `Accept`.  If your clipboard contains a URL, it goes to the link destination; if it contains non-URL text, it goes to the link text.
-
-**Create from selection**: Select text, run `Edit Link`. Text becomes link text if it's not a URL, otherwise, it becomes the the link destination. If the selection is text, and if you have a URL in your clipboard, that becomes the link destination.
-
-**Create from URL**: Copy URL, press hotkey. If you have no selection, then URL fills both fields (link text is highlighted for replacement).  
-
-**URL auto-conversion**: `www.example.com` → `https://www.example.com`
+Edit links in a modal with intelligent suggestions for files, headings, and blocks.
 
 ## Features
 
-- Toggle between Wiki links (`[[note]]`) and Markdown links (`[text](url)`)
-- Auto-switches to Markdown when URL detected
-- Note name completion interface for internal links 
-- Shows conversion notices when URLs are normalized
+- Edit both WikiLinks and Markdown links
+- File suggestions with autocomplete
+- Heading suggestions (current file or all files)
+- Block reference support with automatic ID generation
+- Convert between WikiLink and Markdown formats
+- Smart URL detection and normalization
+- Keyboard-friendly navigation (Tab, Ctrl+N/P, Enter, Escape)
 
-## Settings
+## Development
 
-**Always move cursor to end**: When disabled, cursor returns to original position after editing
+### Setup
 
-## Setup
+1. Clone this repo into your local development folder
+2. Install dependencies: `npm install`
+3. Create a symlink from your vault's plugins folder to this repo (see below)
 
-1. Install the plugin
-2. Go to Settings → Hotkeys
-3. Search for "Edit link"
-4. Assign a hotkey (e.g., `Ctrl+K`)
+### Windows Symlink Setup
+
+```powershell
+# Run as Administrator in PowerShell
+New-Item -ItemType SymbolicLink `
+  -Path "C:\Users\YOUR_USERNAME\path\to\vault\.obsidian\plugins\obsidian-link-editor" `
+  -Target "$HOME\repos\obsidian-link-editor"
+```
+
+### Development Workflow
+
+1. Start development build with file watching:
+   ```bash
+   npm run dev
+   ```
+
+2. Install the [Hot-Reload plugin](https://github.com/pjeby/hot-reload) in your vault
+   - The `.hotreload` file signals hot-reload to watch this directory
+
+3. Make changes to TypeScript files in `src/`
+   - esbuild watches and rebuilds automatically
+   - hot-reload detects changes and reloads the plugin
+   - No need to manually reload Obsidian
+
+### Build for Production
+
+```bash
+npm run build
+```
+
+### Format Code
+
+```bash
+npm run format
+```
+
+## Project Structure
+
+```
+obsidian-link-editor/
+├── src/
+│   ├── main.ts              # Main plugin class
+│   ├── LinkEditModal.ts     # Link editing modal
+│   ├── FileSuggest.ts       # File/heading/block suggestions
+│   ├── SettingTab.ts        # Plugin settings
+│   ├── types.ts             # TypeScript interfaces
+│   └── utils.ts             # Link format utilities
+├── styles.css               # Plugin styles
+├── manifest.json            # Plugin manifest
+├── package.json             # npm configuration
+├── tsconfig.json            # TypeScript configuration
+├── esbuild.config.mjs       # Build configuration
+└── .hotreload               # Hot-reload marker
+```
+
+## Configuration
+
+The plugin name can be changed by editing:
+- `manifest.json` - Change the `id` and `name` fields
+- `package.json` - Change the `name` field
+- Update the symlink path accordingly
 
 ## License
 

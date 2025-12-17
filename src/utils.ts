@@ -1,0 +1,127 @@
+/**
+ * Check if a destination string is valid for a WikiLink format
+ */
+export function isValidWikiLink(dest: string): boolean {
+	if (!dest) return false;
+
+	// WikiLinks don't support URLs
+	if (/^https?:\/\//i.test(dest)) return false;
+
+	// WikiLinks don't support angle brackets or parens
+	if (dest.includes("<") || dest.includes(">") || dest.includes("(") || dest.includes(")"))
+		return false;
+
+	// Check for invalid characters in the filename portion
+	// Split by # to separate filename from heading/block reference
+	const parts = dest.split("#");
+	const filename = parts[0];
+
+	// Filename portion cannot contain: | ^ : %% [[ ]]
+	// These are Obsidian's forbidden filename characters
+	if (filename.includes("|")) return false;
+	if (filename.includes("^")) return false;
+	if (filename.includes(":")) return false;
+	if (filename.includes("%%")) return false;
+	if (filename.includes("[[") || filename.includes("]]")) return false;
+
+	// Also check OS-level forbidden characters
+	if (filename.includes("*") || filename.includes('\"') || filename.includes("?")) return false;
+	if (filename.includes("\\") || filename.includes("/")) return false;
+
+	// If there's a heading/block reference part (after #), validate it
+	if (parts.length > 1) {
+		const reference = parts.slice(1).join("#"); // Rejoin in case # appears in heading
+
+		// Block reference (starts with ^)
+		if (reference.startsWith("^")) {
+			const blockId = reference.slice(1);
+			// Block IDs should only contain alphanumeric and hyphens
+			if (!/^[a-zA-Z0-9-]+$/.test(blockId)) return false;
+		}
+		// Heading reference - headings can contain most characters except [[ ]] | %%
+		else {
+			if (reference.includes("[[") || reference.includes("]]")) return false;
+			if (reference.includes("|")) return false;
+			if (reference.includes("%%")) return false;
+		}
+	}
+
+	return true;
+}
+
+/**
+ * Check if a destination string is valid for a Markdown link format
+ */
+export function isValidMarkdownLink(dest: string): boolean {
+	if (!dest) return false;
+
+	// Valid if it's a URL
+	if (/^https?:\/\//i.test(dest)) return true;
+
+	// Check for double angle brackets (invalid)
+	if (dest.startsWith("<<") || dest.endsWith(">>")) return false;
+
+	// Check if wrapped in single angle brackets (valid for paths with spaces)
+	if (dest.startsWith("<") && dest.endsWith(">")) {
+		// Must not have double brackets
+		const inner = dest.slice(1, -1);
+		if (inner.includes("<") || inner.includes(">")) return false;
+		return true;
+	}
+
+	// Not wrapped - check for problematic unencoded characters
+	// Spaces must be encoded
+	if (dest.includes(" ")) return false;
+
+	// Check for unencoded ^ (must be %5E)
+	// But allow it in the pattern filename#^ where it's part of block reference syntax
+	if (dest.includes("^")) {
+		// Must be properly encoded as %5E or be part of #^ pattern at the very end
+		if (!dest.includes("%5E") && !dest.match(/#\^[a-zA-Z0-9-]*$/)) return false;
+	}
+
+	return true;
+}
+
+/**
+ * Convert a WikiLink destination to Markdown link format
+ */
+export function wikiToMarkdown(dest: string): string {
+	if (!dest) return dest;
+
+	// If it's already a URL, return as-is
+	if (/^https?:\/\//i.test(dest)) return dest;
+
+	// If it already has angle brackets, return as-is (already converted)
+	if (dest.startsWith("<") && dest.endsWith(">")) return dest;
+
+	// Encode special characters for markdown
+	const encoded = dest.replace(/ /g, "%20").replace(/\^/g, "%5E");
+	return encoded;
+}
+
+/**
+ * Convert a Markdown link destination to WikiLink format
+ */
+export function markdownToWiki(dest: string): string | null {
+	if (!dest) return dest;
+
+	// Remove angle brackets if present
+	let cleaned = dest;
+	if (dest.startsWith("<") && dest.endsWith(">")) {
+		cleaned = dest.slice(1, -1);
+	}
+
+	// Decode URL encoding
+	try {
+		cleaned = decodeURIComponent(cleaned);
+	} catch (e) {
+		// If decode fails, manually decode common cases
+		cleaned = cleaned.replace(/%20/g, " ").replace(/%5E/gi, "^");
+	}
+
+	// If it's a URL, cannot convert to wikilink
+	if (/^https?:\/\//i.test(cleaned)) return null;
+
+	return cleaned;
+}

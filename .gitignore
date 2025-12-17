@@ -1,2 +1,19 @@
-node_modules/
-*.map
+# Build outputs
+main.js
+main.js.map
+*.js.map
+
+# npm
+node_modules
+package-lock.json
+
+# IDEs
+.vscode/
+.idea/
+*.iml
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db

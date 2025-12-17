@@ -5,10 +5,10 @@
 .modal-content .setting-item-control .checkbox-container,
 .modal-content .setting-item-control .toggle-component,
 .modal-content .setting-item-control .mod-cta {
-  transition:
-    box-shadow 0.1s ease-out,
-    transform 0.1s ease-out,
-    background-color 0.1s ease-out;
+	transition:
+		box-shadow 0.1s ease-out,
+		transform 0.1s ease-out,
+		background-color 0.1s ease-out;
 }
 
 /* Focused: obvious change in fill, border, and size */
@@ -16,18 +16,20 @@
 .modal-content .setting-item-control .checkbox-container:focus-visible,
 .modal-content .setting-item-control .toggle-component:focus-visible,
 .modal-content .setting-item-control .mod-cta:focus-visible {
-  outline: none;
-  /* Slight “zoom” so your eye is drawn to it */
-  transform: scale(1.05);
-  /* Thicker accent border + halo */
-  box-shadow:
-    0 0 0 2px var(--interactive-accent),
-    0 0 6px 2px color-mix(in srgb, var(--interactive-accent) 60%, transparent);
-  border-color: var(--interactive-accent);
-  border-width: 2px;
-  border-style: solid;
-  /* Darker (in light mode) or lighter (in dark mode) fill against background */
-  background-color: color-mix(in srgb,
-    var(--interactive-accent) 20%,
-    var(--background-primary) 80%);
+	outline: none;
+	/* Slight "zoom" so your eye is drawn to it */
+	transform: scale(1.05);
+	/* Thicker accent border + halo */
+	box-shadow:
+		0 0 0 2px var(--interactive-accent),
+		0 0 6px 2px color-mix(in srgb, var(--interactive-accent) 60%, transparent);
+	border-color: var(--interactive-accent);
+	border-width: 2px;
+	border-style: solid;
+	/* Darker (in light mode) or lighter (in dark mode) fill against background */
+	background-color: color-mix(
+		in srgb,
+		var(--interactive-accent) 20%,
+		var(--background-primary) 80%
+	);
 }
