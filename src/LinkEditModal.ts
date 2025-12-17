@@ -184,22 +184,25 @@ export class LinkEditModal extends Modal {
 
 		// Key handling
 		this.modalEl.addEventListener("keydown", (e) => {
-			// TAB: manual cycle + optional suggester accept
+			// TAB: accept suggestion if open, otherwise cycle focus
 			if (e.key === "Tab") {
+				// If on dest and suggester open, Tab = accept suggestion (don't cycle focus)
+				if (document.activeElement === this.destInput.inputEl) {
+					const isOpen = this.fileSuggest.isSuggestOpen;
+					if (isOpen && this.destInput.getValue().trim().length > 0) {
+						e.preventDefault();
+						this.fileSuggest.selectCurrentSuggestion();
+						return; // Stay on dest input after accepting suggestion
+					}
+				}
+
+				// Normal tab cycling when no suggestion is open
 				e.preventDefault();
 				const focusable = this.getFocusableElements();
 				const active = document.activeElement as HTMLElement;
 				let index = focusable.indexOf(active);
 				if (index === -1) index = 0;
 				const forward = !e.shiftKey;
-
-				// If on dest and suggester open, first Tab = accept suggestion
-				if (active === this.destInput.inputEl) {
-					const isOpen = this.fileSuggest.isSuggestOpen;
-					if (isOpen && this.destInput.getValue().trim().length > 0) {
-						this.fileSuggest.selectCurrentSuggestion();
-					}
-				}
 
 				const step = forward ? 1 : -1;
 				const nextIndex = (index + step + focusable.length) % focusable.length;
