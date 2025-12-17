@@ -14,8 +14,7 @@
 /* Focused: obvious change in fill, border, and size */
 .modal-content .setting-item-control .toggle:focus-visible,
 .modal-content .setting-item-control .checkbox-container:focus-visible,
-.modal-content .setting-item-control .toggle-component:focus-visible,
-.modal-content .setting-item-control .mod-cta:focus-visible {
+.modal-content .setting-item-control .toggle-component:focus-visible {
 	outline: none;
 	/* Slight "zoom" so your eye is drawn to it */
 	transform: scale(1.05);
@@ -32,4 +31,27 @@
 		var(--interactive-accent) 20%,
 		var(--background-primary) 80%
 	);
+}
+
+/* Special handling for Apply button to ensure text visibility */
+.modal-content .setting-item-control .mod-cta:focus-visible {
+	outline: none;
+	/* Slight "zoom" so your eye is drawn to it */
+	transform: scale(1.05);
+	/* Thicker accent border + halo */
+	box-shadow:
+		0 0 0 2px var(--interactive-accent),
+		0 0 6px 2px color-mix(in srgb, var(--interactive-accent) 60%, transparent);
+	border-color: var(--interactive-accent);
+	border-width: 2px;
+	border-style: solid;
+	/* Keep the original button background but add subtle overlay */
+	background-color: var(--interactive-accent);
+	/* Ensure text remains visible with proper contrast */
+	color: var(--text-on-accent) !important;
+	/* Add subtle inner shadow for depth */
+	box-shadow:
+		0 0 0 2px var(--interactive-accent),
+		0 0 6px 2px color-mix(in srgb, var(--interactive-accent) 60%, transparent),
+		inset 0 1px 0 color-mix(in srgb, white 20%, transparent);
 }
