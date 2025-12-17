@@ -7,7 +7,7 @@ export interface LinkInfo {
 }
 
 export interface SuggestionItem {
-	type: "file" | "heading" | "block";
+	type: "file" | "heading" | "block" | "alias";
 	file?: TFile;
 	heading?: string;
 	level?: number;
@@ -19,6 +19,7 @@ export interface SuggestionItem {
 	name?: string;
 	extension?: string;
 	displayPath?: string; // Path to display in suggestions (without filename)
+	alias?: string; // Note alias for completion
 }
 
 export interface PluginSettings {

@@ -88,20 +88,30 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 	getFiles(query: string): SuggestionItem[] {
 		const files = this.app.vault.getFiles();
 		const lowerQuery = query.toLowerCase();
-		const matches = files.filter(
-			(file) =>
-				file.path.toLowerCase().includes(lowerQuery) ||
-				file.basename.toLowerCase().includes(lowerQuery)
-		);
-		matches.sort((a, b) => b.stat.mtime - a.stat.mtime);
 		const currentFile = this.app.workspace.getActiveFile();
 		const currentDir = currentFile ? currentFile.parent?.path : "";
 		
-		return matches.slice(0, 20).map((f) => {
+		const results: SuggestionItem[] = [];
+		
+		for (const f of files) {
+			const matchesQuery =
+				f.path.toLowerCase().includes(lowerQuery) ||
+				f.basename.toLowerCase().includes(lowerQuery);
+			
+			if (!matchesQuery) {
+				// Check if query matches any aliases
+				const aliases = this.getFileAliases(f);
+				const aliasMatches = aliases.some(alias =>
+					alias.toLowerCase().includes(lowerQuery)
+				);
+				if (!aliasMatches) continue;
+			}
+			
 			const fileDir = f.parent?.path || "";
 			const showPath = fileDir !== currentDir && fileDir !== "";
 			
-			return {
+			// Add the file itself
+			results.push({
 				type: "file" as const,
 				file: f,
 				basename: f.basename,
@@ -109,8 +119,64 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 				name: f.name,
 				extension: f.extension,
 				displayPath: showPath ? fileDir + "/" : "",
-			};
+			});
+			
+			// Add aliases as separate suggestions
+			const aliases = this.getFileAliases(f);
+			for (const alias of aliases) {
+				if (alias.toLowerCase().includes(lowerQuery)) {
+					results.push({
+						type: "alias" as const,
+						file: f,
+						alias: alias,
+						basename: f.basename,
+						path: f.path,
+						name: f.name,
+						extension: f.extension,
+						displayPath: showPath ? fileDir + "/" : "",
+					});
+				}
+			}
+		}
+		
+		// Sort by modification time, putting files before aliases
+		results.sort((a, b) => {
+			if (a.file && b.file) {
+				if (a.type === "file" && b.type === "alias") return -1;
+				if (a.type === "alias" && b.type === "file") return 1;
+				return b.file.stat.mtime - a.file.stat.mtime;
+			}
+			return 0;
 		});
+		
+		return results.slice(0, 20);
+	}
+	
+	getFileAliases(file: TFile): string[] {
+		const cache = this.app.metadataCache.getFileCache(file);
+		if (!cache || !cache.frontmatter) return [];
+		
+		const aliases: string[] = [];
+		const frontmatter = cache.frontmatter;
+		
+		// Handle both alias and aliases fields
+		if (frontmatter.alias) {
+			if (Array.isArray(frontmatter.alias)) {
+				aliases.push(...frontmatter.alias);
+			} else if (typeof frontmatter.alias === 'string') {
+				aliases.push(frontmatter.alias);
+			}
+		}
+		
+		if (frontmatter.aliases) {
+			if (Array.isArray(frontmatter.aliases)) {
+				aliases.push(...frontmatter.aliases);
+			} else if (typeof frontmatter.aliases === 'string') {
+				aliases.push(frontmatter.aliases);
+			}
+		}
+		
+		return aliases.filter(alias => alias && typeof alias === 'string');
 	}
 
 	getHeadingsInCurrentFile(): SuggestionItem[] {
@@ -281,6 +347,23 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 					cls: "suggestion-note",
 				});
 			}
+		} else if (item.type === "alias") {
+			// Alias
+			const displayName = item.alias || "";
+			const displayPath = item.displayPath || "";
+			
+			content.createDiv({ text: displayName, cls: "suggestion-title" });
+			
+			// Show the actual filename as a note
+			content.createDiv({
+				text: `→ ${item.basename || ""}`,
+				cls: "suggestion-note"
+			});
+			
+			// Only show path if it's in a different folder than current note
+			if (displayPath && displayPath !== "/") {
+				content.createDiv({ text: displayPath, cls: "suggestion-note" });
+			}
 		} else {
 			// File
 			const displayName = item.basename || "";
@@ -325,6 +408,15 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 				linkValue = `${fileName}#^${item.blockId}`;
 			} else {
 				linkValue = `#^${item.blockId}`;
+			}
+		} else if (item.type === "alias") {
+			// Alias - use the actual file basename as the link value, not the alias text
+			if (item.file && item.file.extension === "md") {
+				linkValue = item.file.basename || "";
+			} else if (item.file) {
+				linkValue = item.file.name || "";
+			} else {
+				linkValue = item.alias || "";
 			}
 		} else {
 			// File - don't include path in the final link value
