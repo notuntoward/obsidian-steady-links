@@ -16,6 +16,7 @@ export class LinkEditModal extends Modal {
 	fileSuggest!: FileSuggest;
 	typeSetting!: Setting;
 	toggleComponent!: ToggleComponent;
+	embedToggle!: ToggleComponent;
 	applyBtn!: ButtonComponent;
 	warningsContainer!: HTMLElement;
 
@@ -128,6 +129,25 @@ export class LinkEditModal extends Modal {
 				});
 			});
 
+
+		// Embed checkbox
+		const embedSetting = new Setting(contentEl)
+			.setName("Embed content")
+			.setDesc("Preview content inline (prefix with !)")
+			.addToggle((toggle) => {
+				this.embedToggle = toggle;
+				toggle.setValue(this.link.isEmbed || false);
+				toggle.toggleEl.setAttribute("tabindex", "0");
+				toggle.toggleEl.addEventListener("keydown", (e) => {
+					if (e.key === " " || e.key === "Spacebar") {
+						e.preventDefault();
+						e.stopPropagation();
+						const currentValue = toggle.getValue();
+						toggle.setValue(!currentValue);
+					}
+				});
+			});
+		embedSetting.settingEl.addClass("link-embed-checkbox");
 		// Apply button
 		new Setting(contentEl).addButton((btn) => {
 			this.applyBtn = btn;
@@ -221,6 +241,7 @@ export class LinkEditModal extends Modal {
 			this.textInput.inputEl,
 			this.destInput.inputEl,
 			this.toggleComponent.toggleEl,
+			this.embedToggle.toggleEl,
 			this.applyBtn.buttonEl,
 		].filter((el) => el && el.offsetParent !== null);
 	}
@@ -268,6 +289,9 @@ export class LinkEditModal extends Modal {
 					this.isWiki = parsedLink.isWiki;
 					this.toggleComponent.setValue(parsedLink.isWiki);
 				}
+				
+				// Update the embed toggle based on the parsed link
+				this.embedToggle.setValue(parsedLink.isEmbed);
 				
 				this.updateUIState();
 			}
@@ -424,6 +448,7 @@ export class LinkEditModal extends Modal {
 			text: linkText,
 			destination: linkDest,
 			isWiki: this.isWiki,
+			isEmbed: this.embedToggle.getValue(),
 		});
 		this.close();
 	}

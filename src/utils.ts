@@ -152,13 +152,16 @@ export function markdownToWiki(dest: string): string | null {
 	* Parse a wiki link from text and extract text and destination
 	* WikiLink format: [[filename|display text]] or [[filename]]
 	*/
-export function parseWikiLink(text: string): { text: string; destination: string } | null {
+export function parseWikiLink(text: string): { text: string; destination: string; isEmbed: boolean } | null {
 	if (!text) return null;
+	// Check if it starts with ! for embed
+	const isEmbed = text.startsWith('![[');
+	const linkStart = isEmbed ? 3 : 2;
 	
 	// Match wiki link pattern: [[filename|display text]] or [[filename]]
 	// Using a more specific pattern to correctly handle the pipe character
 	// We need to find the last pipe before the closing brackets to separate destination from display text
-	const innerContent = text.slice(2, -2); // Remove [[ and ]]
+	const innerContent = text.slice(linkStart, -2); // Remove ![[/[[ and ]]
 	const lastPipeIndex = innerContent.lastIndexOf('|');
 	
 	let destination, linkText;
@@ -172,31 +175,35 @@ export function parseWikiLink(text: string): { text: string; destination: string
 		linkText = innerContent.substring(lastPipeIndex + 1).trim();
 	}
 	
-	return { text: linkText, destination };
+	return { text: linkText, destination, isEmbed };
 }
 
 /**
 	* Parse a markdown link from text and extract text and destination
 	* Markdown link format: [display text](destination)
 	*/
-export function parseMarkdownLink(text: string): { text: string; destination: string } | null {
+export function parseMarkdownLink(text: string): { text: string; destination: string; isEmbed: boolean } | null {
 	if (!text) return null;
+	// Check if it starts with ! for embed
+	const isEmbed = text.startsWith('![');
+	// Match markdown link pattern: [display text](destination) (or with ! prefix)
+	const pattern = isEmbed ? /^!\[([^\]]+)\]\(([^)]+)\)$/ : /^\[([^\]]+)\]\(([^)]+)\)$/;
 	
 	// Match markdown link pattern: [display text](destination)
-	const markdownLinkMatch = text.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+	const markdownLinkMatch = text.match(pattern);
 	if (!markdownLinkMatch) return null;
 	
 	const linkText = markdownLinkMatch[1].trim();
 	const destination = markdownLinkMatch[2].trim();
 	
-	return { text: linkText, destination };
+	return { text: linkText, destination, isEmbed };
 }
 
 /**
 	* Parse clipboard content to extract link information
 	* Returns null if clipboard doesn't contain a valid link
 	*/
-export function parseClipboardLink(clipboardText: string): { text: string; destination: string; isWiki: boolean } | null {
+export function parseClipboardLink(clipboardText: string): { text: string; destination: string; isWiki: boolean; isEmbed: boolean } | null {
 	if (!clipboardText) return null;
 	
 	const trimmed = clipboardText.trim();

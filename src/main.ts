@@ -34,7 +34,12 @@ export default class LinkEditorPlugin extends Plugin {
 					start = match.index;
 					end = match.index + match[0].length;
 					if (cursor.ch >= start && cursor.ch <= end) {
-						link = { text: match[1], destination: match[2], isWiki: false };
+						// Check if this is an embedded link (starts with !)
+						const isEmbed = start > 0 && line.charAt(start - 1) === '!';
+						if (isEmbed) {
+							start--; // Include the ! in the selection
+						}
+						link = { text: match[1], destination: match[2], isWiki: false, isEmbed: isEmbed };
 						enteredFromLeft = cursor.ch <= start + 1;
 						break;
 					}
@@ -79,10 +84,16 @@ export default class LinkEditorPlugin extends Plugin {
 						start = wikiMatch.index;
 						end = wikiMatch.index + wikiMatch.match.length;
 						if (cursor.ch >= start && cursor.ch <= end) {
+							// Check if this is an embedded link (starts with !)
+							const isEmbed = start > 0 && line.charAt(start - 1) === '!';
+							if (isEmbed) {
+								start--; // Include the ! in the selection
+							}
 							link = {
 								destination: wikiMatch.groups[0],
 								text: wikiMatch.groups[1],
 								isWiki: true,
+								isEmbed: isEmbed,
 							};
 							enteredFromLeft = cursor.ch <= start + 2;
 							break;
@@ -216,6 +227,7 @@ export default class LinkEditorPlugin extends Plugin {
 						text: linkText,
 						destination: linkDest,
 						isWiki: !shouldBeMarkdown,
+						isEmbed: false,
 					};
 
 					if (editor.somethingSelected()) {
@@ -234,14 +246,16 @@ export default class LinkEditorPlugin extends Plugin {
 					link,
 					(result: LinkInfo) => {
 						let replacement: string;
+						const embedPrefix = result.isEmbed ? "!" : "";
+						
 						if (result.isWiki) {
 							if (result.text === result.destination) {
-								replacement = `[[${result.destination}]]`;
+								replacement = `${embedPrefix}[[${result.destination}]]`;
 							} else {
-								replacement = `[[${result.destination}|${result.text}]]`;
+								replacement = `${embedPrefix}[[${result.destination}|${result.text}]]`;
 							}
 						} else {
-							replacement = `[${result.text}](${result.destination})`;
+							replacement = `${embedPrefix}[${result.text}](${result.destination})`;
 						}
 
 						editor.replaceRange(

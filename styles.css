@@ -40,6 +40,20 @@
   margin-bottom: 0.5em;
 }
 
+
+/* Style embed toggle to be less prominent than Link Type */
+.link-embed-checkbox {
+	opacity: 0.85;
+}
+
+.link-embed-checkbox .setting-item-name {
+	font-size: 0.95em;
+}
+
+.link-embed-checkbox .setting-item-description {
+	font-size: 0.85em;
+	color: var(--text-muted);
+}
 /* STRONG focus for Link Type slider + Apply button only */
 /* Unfocused: let the theme draw them normally */
 .modal-content .setting-item-control .toggle,

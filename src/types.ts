@@ -4,6 +4,7 @@ export interface LinkInfo {
 	text: string;
 	destination: string;
 	isWiki: boolean;
+	isEmbed: boolean;
 }
 
 export interface SuggestionItem {
