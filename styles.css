@@ -55,3 +55,68 @@
 		0 0 6px 2px color-mix(in srgb, var(--interactive-accent) 60%, transparent),
 		inset 0 1px 0 color-mix(in srgb, white 20%, transparent);
 }
+
+/* Link warning and error styling */
+.link-warnings-container {
+	margin-top: 10px;
+}
+
+.link-warning {
+	padding: 8px 12px;
+	margin: 4px 0;
+	border-radius: 4px;
+	font-size: 14px;
+	line-height: 1.4;
+}
+
+/* Subtle warning for fixable issues (less prominent) */
+.link-warning-caution {
+	background-color: rgba(var(--yellow-rgb), 0.1);
+	border-left: 3px solid var(--text-muted);
+	color: var(--text-muted);
+}
+
+/* Auto-fix notice styling */
+.link-warning-fixnotice {
+	background-color: color-mix(in srgb, var(--interactive-accent) 12%, var(--background-primary) 88%);
+	border-left: 3px solid var(--interactive-accent);
+	color: var(--text-accent);
+	font-weight: 500;
+}
+
+/* Strong error for unfixable issues (more prominent) */
+.link-warning-error {
+	background-color: rgba(var(--red-rgb), 0.15);
+	border-left: 3px solid var(--text-error);
+	color: var(--text-error);
+	font-weight: 500;
+}
+
+/* Highlight for input fields with issues */
+.link-warning-highlight {
+	border-color: var(--text-error) !important;
+	box-shadow: 0 0 0 1px var(--text-error) !important;
+}
+
+/* Conversion notice styling */
+.link-conversion-notice {
+	padding: 6px 10px;
+	margin: 4px 0;
+	background-color: rgba(var(--blue-rgb), 0.1);
+	border-left: 3px solid var(--text-accent);
+	color: var(--text-accent);
+	font-size: 13px;
+	border-radius: 4px;
+}
+
+/* Validation error styling */
+.link-validation-error {
+	background-color: rgba(var(--red-rgb), 0.2);
+	border: 1px solid var(--text-error);
+}
+
+.link-validation-hint {
+	font-size: 12px;
+	color: var(--text-muted);
+	margin-top: 4px;
+}

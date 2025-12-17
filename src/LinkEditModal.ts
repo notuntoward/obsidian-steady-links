@@ -10,6 +10,7 @@ export class LinkEditModal extends Modal {
 	conversionNotice: string | null;
 	isWiki: boolean;
 	wasUrl: boolean;
+	originalDestination: string; // Store original destination to track URL fixes
 
 	textInput!: TextComponent;
 	destInput!: TextComponent;
@@ -33,6 +34,19 @@ export class LinkEditModal extends Modal {
 		this.conversionNotice = conversionNotice || null;
 		this.isWiki = false;
 		this.wasUrl = false;
+		
+		// If there's a conversion notice about URL conversion, try to extract the original URL
+		// This helps us avoid showing the "format changed to Markdown" warning
+		if (conversionNotice && conversionNotice.includes("URL converted:")) {
+			const match = conversionNotice.match(/URL converted: (.+?) →/);
+			if (match && match[1]) {
+				this.originalDestination = match[1].trim();
+			} else {
+				this.originalDestination = link.destination;
+			}
+		} else {
+			this.originalDestination = link.destination;
+		}
 	}
 
 	onOpen(): void {
@@ -59,7 +73,16 @@ export class LinkEditModal extends Modal {
 		const destSetting = new Setting(contentEl).setName("Destination");
 		destSetting.addText((text) => {
 			this.destInput = text;
-			text.setValue(this.link.destination);
+			// Check if the initial destination needs URL fixing
+			let initialDest = this.link.destination;
+			if (initialDest && this.isAlmostUrl(initialDest)) {
+				const { fixed } = this.fixUrl(initialDest);
+				if (fixed !== initialDest) {
+					initialDest = fixed;
+					this.link.destination = fixed;
+				}
+			}
+			text.setValue(initialDest);
 			text.inputEl.style.width = "100%";
 			this.fileSuggest = new FileSuggest(this.app, text.inputEl, this);
 			text.inputEl.addEventListener("input", () => {
@@ -211,8 +234,8 @@ export class LinkEditModal extends Modal {
 			}
 		});
 
-		this.updateUIState();
 		this.populateFromClipboard();
+		this.updateUIState();
 		this.setInitialFocus();
 	}
 
@@ -267,9 +290,10 @@ export class LinkEditModal extends Modal {
 					// Update the link type based on the parsed link
 					this.isWiki = parsedLink.isWiki;
 					this.toggleComponent.setValue(parsedLink.isWiki);
+					
+					// Update UI state after setting destination to handle URL fixing
+					this.updateUIState();
 				}
-				
-				this.updateUIState();
 			}
 		} catch (error) {
 			// Silently fail if clipboard access is denied or unavailable
@@ -289,6 +313,41 @@ export class LinkEditModal extends Modal {
 		return /^htp:\/\/|^htps:\/\/|^http:\/[^\/]|^https\/\/|^www\.[a-zA-Z0-9-]+$/i.test(
 			trimmed
 		);
+	}
+
+	/**
+	 * Attempts to fix common URL issues
+	 * Returns the fixed URL and whether a fix was applied
+	 */
+	fixUrl(url: string): { fixed: string; wasFixed: boolean } {
+		if (!url) return { fixed: url, wasFixed: false };
+		
+		const trimmed = url.trim();
+		let fixed = trimmed;
+		let wasFixed = false;
+
+		// Fix common protocol issues
+		if (/^htp:\/\//i.test(fixed)) {
+			fixed = fixed.replace(/^htp:\/\//i, "http://");
+			wasFixed = true;
+		} else if (/^htps:\/\//i.test(fixed)) {
+			fixed = fixed.replace(/^htps:\/\//i, "https://");
+			wasFixed = true;
+		} else if (/^http:\/[^\/]/i.test(fixed)) {
+			fixed = fixed.replace(/^http:\/([^\/])/i, "http:///$1");
+			wasFixed = true;
+		} else if (/^https\/\/\S/i.test(fixed)) {
+			fixed = fixed.replace(/^https\/\//i, "https://");
+			wasFixed = true;
+		}
+
+		// Fix www. URLs that are missing protocol
+		if (/^www\.[a-zA-Z0-9-]+$/i.test(fixed)) {
+			fixed = "https://" + fixed;
+			wasFixed = true;
+		}
+
+		return { fixed, wasFixed };
 	}
 
 	handleDestInput(): void {
@@ -322,14 +381,67 @@ export class LinkEditModal extends Modal {
 		this.destInput.inputEl.classList.remove("link-warning-highlight");
 		this.textInput.inputEl.classList.remove("link-warning-highlight");
 
-		const dest = this.destInput.getValue();
-		const destLength = dest ? dest.length : 0;
-		const warnings: { text: string; cls: string }[] = [];
+		let dest = this.destInput.getValue();
+		const warnings: {
+			text: string;
+			cls: string;
+			severity: "fix" | "caution" | "error";
+		}[] = [];
+		let urlWasFixed = false;
+		const enteredDest = dest;
 
+		// Check if URL needs fixing and fix it if possible
+		if (dest && this.isAlmostUrl(dest)) {
+			const { fixed, wasFixed } = this.fixUrl(dest);
+			if (wasFixed) {
+				dest = fixed;
+				this.destInput.setValue(dest);
+				urlWasFixed = true;
+				if ((enteredDest || "").trim() !== dest.trim()) {
+					warnings.push({
+						text: `🛠️ Auto-corrected URL: ${(enteredDest || "").trim()} → ${dest.trim()}`,
+						cls: "link-warning-fixnotice",
+						severity: "fix",
+					});
+				}
+			}
+		}
+
+		// Detect URLs that were auto-corrected before the modal opened
+		if (!urlWasFixed && dest) {
+			const original = (this.originalDestination || "").trim();
+			if (original && original !== dest && this.isAlmostUrl(original)) {
+				const { fixed, wasFixed } = this.fixUrl(original);
+				if (wasFixed && fixed === dest) {
+					warnings.push({
+						text: `🛠️ Auto-corrected URL: ${original} → ${dest}`,
+						cls: "link-warning-fixnotice",
+						severity: "fix",
+					});
+				}
+			}
+		}
+
+		const destLength = dest ? dest.length : 0;
+
+		// Check if we have a URL destination and the format was just changed to WikiLink
 		if (this.isWiki && this.isUrl(dest)) {
 			warnings.push({
 				text: "⚠️ Warning: Valid URL detected but Wikilink format selected. Wikilinks cannot link to external URLs.",
 				cls: "link-warning-error",
+				severity: "error",
+			});
+		}
+		
+		// Check if we have a URL destination and the format was just changed to Markdown
+		// Only show this warning if the URL wasn't just fixed (to avoid duplicate messages)
+		// Also don't show if the original destination was a bare URL that was fixed
+		if (!this.isWiki && this.isUrl(dest) && this.wasUrl && !urlWasFixed &&
+			!(this.originalDestination && this.isAlmostUrl(this.originalDestination))) {
+			warnings.push({
+				text: "ℹ️ Note: Link format changed to Markdown to support URL destination",
+				cls: "link-warning-caution",
+				severity: "caution",
 			});
 		}
 
@@ -341,11 +453,13 @@ export class LinkEditModal extends Modal {
 					warnings.push({
 						text: "⚠️ Invalid WikiLink destination. Can toggle to Markdown below.",
 						cls: "link-warning-caution",
+						severity: "caution",
 					});
 				} else {
 					warnings.push({
 						text: '⚠️ Invalid Wikilink destination. Contains forbidden characters (| ^ : %% [[ ]] * " ? \\\\ / in filename).',
 						cls: "link-warning-error",
+						severity: "error",
 					});
 				}
 			} else if (!this.isWiki && !isValidMarkdownLink(dest)) {
@@ -354,20 +468,24 @@ export class LinkEditModal extends Modal {
 					warnings.push({
 						text: "⚠️ Invalid Markdown link destination. Can toggle to Wikilink below.",
 						cls: "link-warning-caution",
+						severity: "caution",
 					});
 				} else {
 					warnings.push({
 						text: "⚠️ Invalid Markdown destination: Encode spaces and `^`; wrap them in `<...>`; or toggle to WikiLink",
 						cls: "link-warning-error",
+						severity: "error",
 					});
 				}
 			}
 		}
 
-		if (!this.isUrl(dest) && this.isAlmostUrl(dest)) {
+		// Check for unfixable URL issues
+		if (dest && this.isAlmostUrl(dest) && !this.isUrl(dest) && !urlWasFixed) {
 			warnings.push({
-				text: "⚠️ Warning: Destination looks like a URL but may have typos (check protocol).",
-				cls: "link-warning-caution",
+				text: "⛔ Error: This URL still looks malformed and couldn't be auto-corrected. Please adjust the protocol or domain manually.",
+				cls: "link-warning-error",
+				severity: "error",
 			});
 		}
 
@@ -375,17 +493,22 @@ export class LinkEditModal extends Modal {
 			warnings.push({
 				text: `⚠️ Warning: Destination is very long (${destLength} chars). Consider shortening for reliability.`,
 				cls: "link-warning-caution",
+				severity: "caution",
 			});
 		}
 
 		if (warnings.length > 0) {
 			warnings.forEach((w) => {
-				this.warningsContainer.createEl("div", {
+				const warningEl = this.warningsContainer.createEl("div", {
 					cls: `link-warning ${w.cls}`,
 					text: w.text,
 				});
+				warningEl.setAttr("role", w.severity === "error" ? "alert" : "status");
 			});
-			this.destInput.inputEl.classList.add("link-warning-highlight");
+			const requiresHighlight = warnings.some((w) => w.severity !== "fix");
+			if (requiresHighlight) {
+				this.destInput.inputEl.classList.add("link-warning-highlight");
+			}
 		}
 	}
 
