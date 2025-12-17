@@ -1,5 +1,15 @@
 /**
  * Check if a destination string is valid for a WikiLink format
+ *
+ * WikiLink validation rules:
+ * 1. Cannot be a URL (starts with http:// or https://)
+ * 2. Cannot contain angle brackets or parentheses
+ * 3. Filename portion (before #) cannot contain:
+ *    - Obsidian forbidden characters: | ^ : %% [[ ]]
+ *    - OS forbidden characters: * " ? \ /
+ * 4. Heading/block reference (after #) validation:
+ *    - Block references (starting with ^) can only contain alphanumeric and hyphens
+ *    - Heading references cannot contain [[ ]] | %%
  */
 export function isValidWikiLink(dest: string): boolean {
 	if (!dest) return false;
@@ -51,12 +61,24 @@ export function isValidWikiLink(dest: string): boolean {
 
 /**
  * Check if a destination string is valid for a Markdown link format
+ *
+ * Markdown link validation rules:
+ * 1. URLs are always valid, including:
+ *    - Full URLs (http:// or https://)
+ *    - Bare URLs (www.example.com)
+ * 2. Double angle brackets (<< >>) are invalid
+ * 3. Single angle brackets (< >) are valid for paths with spaces, but:
+ *    - Cannot contain nested angle brackets inside
+ * 4. Unwrapped paths:
+ *    - Cannot contain unencoded spaces (must use %20)
+ *    - Caret (^) must be encoded as %5E, except when used in block reference pattern (#^)
+ *      at the end of the string
  */
 export function isValidMarkdownLink(dest: string): boolean {
 	if (!dest) return false;
 
-	// Valid if it's a URL
-	if (/^https?:\/\//i.test(dest)) return true;
+	// Valid if it's a URL (including bare URLs like www.example.com)
+	if (/^https?:\/\/\S+$|^www\.\S+$/i.test(dest)) return true;
 
 	// Check for double angle brackets (invalid)
 	if (dest.startsWith("<<") || dest.endsWith(">>")) return false;
@@ -89,8 +111,8 @@ export function isValidMarkdownLink(dest: string): boolean {
 export function wikiToMarkdown(dest: string): string {
 	if (!dest) return dest;
 
-	// If it's already a URL, return as-is
-	if (/^https?:\/\//i.test(dest)) return dest;
+	// If it's already a URL (including bare URLs), return as-is
+	if (/^https?:\/\/\S+$|^www\.\S+$/i.test(dest)) return dest;
 
 	// If it already has angle brackets, return as-is (already converted)
 	if (dest.startsWith("<") && dest.endsWith(">")) return dest;
@@ -120,8 +142,8 @@ export function markdownToWiki(dest: string): string | null {
 		cleaned = cleaned.replace(/%20/g, " ").replace(/%5E/gi, "^");
 	}
 
-	// If it's a URL, cannot convert to wikilink
-	if (/^https?:\/\//i.test(cleaned)) return null;
+	// If it's a URL (including bare URLs), cannot convert to wikilink
+	if (/^https?:\/\/\S+$|^www\.\S+$/i.test(cleaned)) return null;
 
 	return cleaned;
 }

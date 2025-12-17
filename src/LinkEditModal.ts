@@ -302,6 +302,18 @@ export class LinkEditModal extends Modal {
 		this.updateUIState();
 	}
 
+	/**
+	 * Updates the UI state based on the current link destination and type
+	 *
+	 * Validation process:
+	 * 1. Clear previous warnings and highlights
+	 * 2. Check for URL/WikiLink format mismatches
+	 * 3. Validate destination based on current link type:
+	 *    - For WikiLinks: Uses isValidWikiLink() to check for forbidden characters
+	 *    - For Markdown: Uses isValidMarkdownLink() to check for encoding issues
+	 * 4. If invalid, tries to convert between formats and suggests toggling
+	 * 5. Shows appropriate warnings and highlights the destination field
+	 */
 	updateUIState(): void {
 		this.typeSetting.setDesc(this.isWiki ? "Wikilink" : "Markdown Link");
 
