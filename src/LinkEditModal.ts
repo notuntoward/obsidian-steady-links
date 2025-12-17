@@ -81,7 +81,7 @@ export class LinkEditModal extends Modal {
 		// Link Type toggle
 		this.typeSetting = new Setting(contentEl)
 			.setName("Link Type")
-			.setDesc(this.isWiki ? "Wiki Link" : "Markdown Link")
+			.setDesc(this.isWiki ? "Wikilink" : "Markdown Link")
 			.addToggle((toggle) => {
 				this.toggleComponent = toggle;
 				toggle.setValue(this.isWiki).onChange((value) => {
@@ -268,7 +268,7 @@ export class LinkEditModal extends Modal {
 	}
 
 	updateUIState(): void {
-		this.typeSetting.setDesc(this.isWiki ? "Wiki Link" : "Markdown Link");
+		this.typeSetting.setDesc(this.isWiki ? "Wikilink" : "Markdown Link");
 
 		const existingWarnings = this.warningsContainer.querySelectorAll(".link-warning");
 		existingWarnings.forEach((w) => w.remove());
@@ -281,7 +281,7 @@ export class LinkEditModal extends Modal {
 
 		if (this.isWiki && this.isUrl(dest)) {
 			warnings.push({
-				text: "⚠️ Warning: Valid URL detected but Wiki Link format selected. Wiki links cannot link to external URLs.",
+				text: "⚠️ Warning: Valid URL detected but Wikilink format selected. Wikilinks cannot link to external URLs.",
 				cls: "link-warning-error",
 			});
 		}
