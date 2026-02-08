@@ -2,15 +2,19 @@ import { App, Modal, Setting, TextComponent, ButtonComponent, ToggleComponent } 
 import { LinkInfo } from "./types";
 import { FileSuggest } from "./FileSuggest";
 import { 
-	isValidWikiLink, 
-	isValidMarkdownLink, 
 	wikiToMarkdown, 
 	markdownToWiki, 
 	parseClipboardLink,
 	validateLinkDestination,
-	isUrl,
-	isAlmostUrl
 } from "./utils";
+import {
+	parseClipboardFlags,
+	determineInitialFocus,
+	handleDestChange,
+	computeConversionNotice,
+	validateSubmission,
+	determineInitialLinkType,
+} from "./modalLogic";
 
 export class LinkEditModal extends Modal {
 	link: LinkInfo;
@@ -52,18 +56,9 @@ export class LinkEditModal extends Modal {
 		this.conversionNoticeEl = null;
 
 		// Parse the conversion notice to determine what was used from clipboard
-		this.clipboardUsedText = false;
-		this.clipboardUsedDest = false;
-		if (conversionNotice) {
-			if (conversionNotice.includes("text & destination")) {
-				this.clipboardUsedText = true;
-				this.clipboardUsedDest = true;
-			} else if (conversionNotice.includes("text")) {
-				this.clipboardUsedText = true;
-			} else if (conversionNotice.includes("destination")) {
-				this.clipboardUsedDest = true;
-			}
-		}
+		const flags = parseClipboardFlags(conversionNotice);
+		this.clipboardUsedText = flags.clipboardUsedText;
+		this.clipboardUsedDest = flags.clipboardUsedDest;
 	}
 
 	onOpen() {
@@ -73,12 +68,9 @@ export class LinkEditModal extends Modal {
 		contentEl.createEl("h4", { text: "Edit Link" });
 
 		// Determine initial link type
-		if (isUrl(this.link.destination)) {
-			this.isWiki = false;
-		} else {
-			this.isWiki = this.link.isWiki;
-		}
-		this.wasUrl = isUrl(this.link.destination);
+		const initialState = determineInitialLinkType(this.link.destination, this.link.isWiki);
+		this.isWiki = initialState.isWiki;
+		this.wasUrl = initialState.wasUrl;
 
 		// Link Text
 		new Setting(contentEl)
@@ -273,25 +265,27 @@ export class LinkEditModal extends Modal {
 	}
 
 	setInitialFocus() {
-		const linkText = this.link.text;
-		const linkDest = this.link.destination;
-		const destLength = linkDest ? linkDest.length : 0;
+		const action = determineInitialFocus(
+			this.link.text,
+			this.link.destination,
+			this.shouldSelectText,
+		);
 
-		if (!linkText || linkText.length === 0) {
-			this.textInput.inputEl.focus();
-		} else if (!linkDest || linkDest.length === 0) {
-			this.destInput.inputEl.focus();
-		} else if (destLength > 500 || isAlmostUrl(linkDest)) {
-			this.destInput.inputEl.focus();
-			this.destInput.inputEl.select();
-		} else if (this.shouldSelectText) {
-			this.textInput.inputEl.focus();
-			this.textInput.inputEl.select();
-		} else {
-			this.textInput.inputEl.focus();
-			if (linkText && linkText.length > 0) {
+		switch (action) {
+			case "text-focus":
+				this.textInput.inputEl.focus();
+				break;
+			case "text-select":
+				this.textInput.inputEl.focus();
 				this.textInput.inputEl.select();
-			}
+				break;
+			case "dest-focus":
+				this.destInput.inputEl.focus();
+				break;
+			case "dest-select":
+				this.destInput.inputEl.focus();
+				this.destInput.inputEl.select();
+				break;
 		}
 	}
 
@@ -331,13 +325,13 @@ export class LinkEditModal extends Modal {
 
 	handleDestInput = () => {
 		const val = this.destInput.getValue();
-		const isNowUrl = isUrl(val);
+		const result = handleDestChange(val, this.isWiki);
 
-		if (isNowUrl && this.isWiki) {
-			this.isWiki = false;
-			this.toggleComponent.setValue(false);
+		if (result.isWiki !== this.isWiki) {
+			this.toggleComponent.setValue(result.isWiki);
 		}
-		this.wasUrl = isNowUrl;
+		this.isWiki = result.isWiki;
+		this.wasUrl = result.wasUrl;
 
 		this.clearValidationErrors();
 		this.updateUIState();
@@ -353,31 +347,21 @@ export class LinkEditModal extends Modal {
 	updateConversionNotice() {
 		if (!this.conversionNoticeEl) return;
 
-		const currentText = this.textInput.getValue();
-		const currentDest = this.destInput.getValue();
+		const noticeText = computeConversionNotice(
+			this.textInput.getValue(),
+			this.destInput.getValue(),
+			this.link.text,
+			this.link.destination,
+			this.clipboardUsedText,
+			this.clipboardUsedDest,
+		);
 
-		// Check if the current values still match what was from clipboard
-		const textStillFromClipboard = this.clipboardUsedText && currentText === this.link.text;
-		const destStillFromClipboard = this.clipboardUsedDest && currentDest === this.link.destination;
-
-		// If neither is from clipboard anymore, remove the notice
-		if (!textStillFromClipboard && !destStillFromClipboard) {
+		if (noticeText === null) {
 			this.conversionNoticeEl.remove();
 			this.conversionNoticeEl = null;
-			return;
+		} else {
+			this.conversionNoticeEl.textContent = noticeText;
 		}
-
-		// Update the notice text based on what's still from clipboard
-		let noticeText = "Used ";
-		if (textStillFromClipboard && destStillFromClipboard) {
-			noticeText += "text & destination from link in clipboard";
-		} else if (textStillFromClipboard) {
-			noticeText += "text from link in clipboard";
-		} else if (destStillFromClipboard) {
-			noticeText += "destination from link in clipboard";
-		}
-
-		this.conversionNoticeEl.textContent = noticeText;
 	}
 
 	/**
@@ -420,18 +404,19 @@ export class LinkEditModal extends Modal {
 	}
 
 	submit = () => {
-		const linkText = this.textInput.getValue().trim();
-		const linkDest = this.destInput.getValue().trim();
-
 		// Clear previous validation errors
 		this.clearValidationErrors();
 
-		// Validation: destination is always required
-		if (!linkDest) {
+		const validation = validateSubmission(
+			this.textInput.getValue(),
+			this.destInput.getValue(),
+		);
+
+		if (!validation.valid) {
 			const errorDiv = this.warningsContainer.createEl("div", {
 				cls: "link-warning link-validation-error link-warning-error",
 			});
-			errorDiv.createEl("div", { text: "Error: Destination is required." });
+			errorDiv.createEl("div", { text: validation.error! });
 			errorDiv.createEl("div", {
 				text: "Press Escape to cancel and close without making changes.",
 				cls: "link-validation-hint",
@@ -441,13 +426,9 @@ export class LinkEditModal extends Modal {
 			return;
 		}
 
-		// For both markdown links and wikilinks with empty text, use destination as text
-		// This allows markdown links with no text (like Obsidian does)
-		const finalText = !linkText ? linkDest : linkText;
-
 		this.onSubmit({
-			text: finalText,
-			destination: linkDest,
+			text: validation.finalText,
+			destination: validation.finalDest,
 			isWiki: this.isWiki,
 			isEmbed: this.embedToggle.getValue(),
 		});
