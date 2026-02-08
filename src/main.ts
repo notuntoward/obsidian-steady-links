@@ -22,6 +22,12 @@ export default class LinkEditorPlugin extends Plugin {
 		this.addCommand({
 			id: "edit-link",
 			name: "Edit link",
+			hotkeys: [
+				{
+					modifiers: ["Ctrl"],
+					key: "e"
+				}
+			],
 			editorCallback: async (editor: Editor, view: MarkdownView) => {
 				const cursor = editor.getCursor();
 				const line = editor.getLine(cursor.line);
@@ -155,7 +161,9 @@ export default class LinkEditorPlugin extends Plugin {
 		if (this.settings.alwaysMoveToEnd) {
 			newCh = start + replacement.length;
 		} else {
-			newCh = enteredFromLeft ? start + replacement.length : start;
+			// Move cursor to the outside of the link, to the edge nearest to where
+			// the cursor was when the link editor was originally activated
+			newCh = enteredFromLeft ? start : start + replacement.length;
 		}
 
 		editor.setCursor({ line: line, ch: newCh });
