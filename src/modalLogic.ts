@@ -352,6 +352,10 @@ export interface SkipCursorParams {
 	lineLength: number;
 	/** Line number the link is on */
 	line: number;
+	/** Total number of lines in the document */
+	lineCount: number;
+	/** Length of the previous line (used when link is at start of line) */
+	prevLineLength: number;
 }
 
 /**
@@ -363,35 +367,73 @@ export interface SkipCursorParams {
  *
  * - If cursor is on the left edge or left half, skip to the right (after link)
  * - If cursor is on the right edge or right half, skip to the left (before link)
- * - Position far enough that the link will be closed
+ * - Position far enough that the link will be closed (collapsed in live preview)
+ *
+ * When the link is at the start or end of a line, the cursor would land on
+ * the link boundary, which Obsidian treats as "inside" the link. In these
+ * cases, we move to an adjacent line instead — consistent with the behavior
+ * of computeCloseCursorPosition.
  *
  * @param params  All the information needed to compute the position
  * @returns `{ line, ch }` cursor position that skips over the link
  */
 export function computeSkipCursorPosition(params: SkipCursorParams): { line: number; ch: number } {
-	const { linkStart, linkEnd, cursorPos, lineLength, line } = params;
+	const { linkStart, linkEnd, cursorPos, lineLength, line, lineCount, prevLineLength } = params;
 
 	// Determine direction based on cursor position relative to link center
 	const linkCenter = (linkStart + linkEnd) / 2;
 	const isOnLeftSide = cursorPos <= linkCenter;
+
+	// Link spans the entire line — no position on this line will close it
+	if (linkStart === 0 && linkEnd >= lineLength) {
+		if (isOnLeftSide) {
+			// Skipping right → prefer next line
+			if (line + 1 < lineCount) {
+				return { line: line + 1, ch: 0 };
+			} else if (line > 0) {
+				return { line: line - 1, ch: prevLineLength };
+			}
+			return { line, ch: linkEnd }; // single-line doc, best effort
+		} else {
+			// Skipping left → prefer previous line
+			if (line > 0) {
+				return { line: line - 1, ch: prevLineLength };
+			} else if (line + 1 < lineCount) {
+				return { line: line + 1, ch: 0 };
+			}
+			return { line, ch: 0 }; // single-line doc, best effort
+		}
+	}
 
 	if (isOnLeftSide) {
 		// Skip to the right - position after the link
 		if (linkEnd < lineLength) {
 			// There's content after the link, position one character after it
 			return { line, ch: linkEnd + 1 };
-		} else {
-			// Link is at end of line, position at the end
-			return { line, ch: linkEnd };
 		}
+		// Link is at end of line — move to next line to close it
+		if (line + 1 < lineCount) {
+			return { line: line + 1, ch: 0 };
+		}
+		// Last line, fall back to left side
+		if (linkStart > 0) {
+			return { line, ch: linkStart - 1 };
+		}
+		return { line, ch: linkEnd }; // best effort
 	} else {
 		// Skip to the left - position before the link
 		if (linkStart > 0) {
 			// There's content before the link, position one character before it
 			return { line, ch: linkStart - 1 };
-		} else {
-			// Link is at start of line, position at the start
-			return { line, ch: 0 };
 		}
+		// Link is at start of line — move to previous line to close it
+		if (line > 0) {
+			return { line: line - 1, ch: prevLineLength };
+		}
+		// First line, fall back to right side
+		if (linkEnd < lineLength) {
+			return { line, ch: linkEnd + 1 };
+		}
+		return { line, ch: 0 }; // best effort
 	}
 }

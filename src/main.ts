@@ -139,13 +139,15 @@ export default class LinkEditorPlugin extends Plugin {
 				}
 
 				// Compute the skip position
-				const skipPos = computeSkipCursorPosition({
-					linkStart: existingLink.start,
-					linkEnd: existingLink.end,
-					cursorPos: cursor.ch,
-					lineLength: line.length,
-					line: cursor.line,
-				});
+					const skipPos = computeSkipCursorPosition({
+						linkStart: existingLink.start,
+						linkEnd: existingLink.end,
+						cursorPos: cursor.ch,
+						lineLength: line.length,
+						line: cursor.line,
+						lineCount: editor.lineCount(),
+						prevLineLength: cursor.line > 0 ? editor.getLine(cursor.line - 1).length : 0,
+					});
 
 				// Move cursor to skip position
 				editor.setCursor(skipPos);

@@ -541,6 +541,8 @@ describe('computeSkipCursorPosition', () => {
 			cursorPos: 10,
 			lineLength: 30,
 			line: 3,
+			lineCount: 10,
+			prevLineLength: 15,
 			...overrides,
 		};
 	}
@@ -564,14 +566,22 @@ describe('computeSkipCursorPosition', () => {
 			expect(result).toEqual({ line: 3, ch: 21 }); // linkEnd + 1
 		});
 
-		it('should skip to link end when link is at end of line', () => {
+		it('should skip to next line when link is at end of line', () => {
 			// Line: "Hello [text](dest)"
 			//        ^    ^             ^
 			//        0    5=start,cur   18=linkEnd=lineLength
 			const result = computeSkipCursorPosition(params({
 				linkStart: 5, linkEnd: 18, cursorPos: 5, lineLength: 18,
 			}));
-			expect(result).toEqual({ line: 3, ch: 18 }); // linkEnd (no +1)
+			expect(result).toEqual({ line: 4, ch: 0 }); // next line
+		});
+
+		it('should fall back to left side when link ends at line end on last line', () => {
+			const result = computeSkipCursorPosition(params({
+				linkStart: 5, linkEnd: 18, cursorPos: 5, lineLength: 18,
+				line: 9, lineCount: 10,
+			}));
+			expect(result).toEqual({ line: 9, ch: 4 }); // linkStart - 1
 		});
 
 		it('should skip to position after link when cursor is exactly at center', () => {
@@ -600,19 +610,80 @@ describe('computeSkipCursorPosition', () => {
 			expect(result).toEqual({ line: 3, ch: 4 }); // linkStart - 1
 		});
 
-		it('should skip to link start when link is at start of line', () => {
+		it('should skip to previous line when link is at start of line', () => {
 			// Line: "[text](dest) more"
 			//        ^           ^
 			//        0=start     12=end,cur
 			const result = computeSkipCursorPosition(params({
 				linkStart: 0, linkEnd: 12, cursorPos: 12, lineLength: 17,
+				prevLineLength: 20,
 			}));
-			expect(result).toEqual({ line: 3, ch: 0 }); // linkStart (no -1)
+			expect(result).toEqual({ line: 2, ch: 20 }); // end of prev line
+		});
+
+		it('should fall back to right side when link starts at col 0 on first line', () => {
+			const result = computeSkipCursorPosition(params({
+				linkStart: 0, linkEnd: 12, cursorPos: 12, lineLength: 17,
+				line: 0,
+			}));
+			expect(result).toEqual({ line: 0, ch: 13 }); // linkEnd + 1
+		});
+	});
+
+	describe('link spans entire line', () => {
+		it('should move to next line when cursor on left and next line available', () => {
+			// Line: "[[my note]]"
+			const result = computeSkipCursorPosition(params({
+				linkStart: 0, linkEnd: 11, cursorPos: 0, lineLength: 11,
+				line: 3, lineCount: 10,
+			}));
+			expect(result).toEqual({ line: 4, ch: 0 });
+		});
+
+		it('should move to previous line when cursor on right and prev line available', () => {
+			// Line: "[[my note]]"
+			const result = computeSkipCursorPosition(params({
+				linkStart: 0, linkEnd: 11, cursorPos: 11, lineLength: 11,
+				line: 3, lineCount: 10, prevLineLength: 25,
+			}));
+			expect(result).toEqual({ line: 2, ch: 25 });
+		});
+
+		it('should fall back to prev line when cursor on left and on last line', () => {
+			const result = computeSkipCursorPosition(params({
+				linkStart: 0, linkEnd: 11, cursorPos: 0, lineLength: 11,
+				line: 9, lineCount: 10, prevLineLength: 20,
+			}));
+			expect(result).toEqual({ line: 8, ch: 20 });
+		});
+
+		it('should fall back to next line when cursor on right and on first line', () => {
+			const result = computeSkipCursorPosition(params({
+				linkStart: 0, linkEnd: 11, cursorPos: 11, lineLength: 11,
+				line: 0, lineCount: 10,
+			}));
+			expect(result).toEqual({ line: 1, ch: 0 });
+		});
+
+		it('should use best effort (end) for single-line doc with cursor on left', () => {
+			const result = computeSkipCursorPosition(params({
+				linkStart: 0, linkEnd: 11, cursorPos: 0, lineLength: 11,
+				line: 0, lineCount: 1,
+			}));
+			expect(result).toEqual({ line: 0, ch: 11 }); // best effort
+		});
+
+		it('should use best effort (start) for single-line doc with cursor on right', () => {
+			const result = computeSkipCursorPosition(params({
+				linkStart: 0, linkEnd: 11, cursorPos: 11, lineLength: 11,
+				line: 0, lineCount: 1,
+			}));
+			expect(result).toEqual({ line: 0, ch: 0 }); // best effort
 		});
 	});
 
 	describe('edge cases', () => {
-		it('should handle link at start of line with cursor on left', () => {
+		it('should handle link at start of line with cursor on left (skip right)', () => {
 			// Line: "[text](dest) more"
 			const result = computeSkipCursorPosition(params({
 				linkStart: 0, linkEnd: 12, cursorPos: 0, lineLength: 17,
@@ -620,28 +691,12 @@ describe('computeSkipCursorPosition', () => {
 			expect(result).toEqual({ line: 3, ch: 13 }); // skip right to linkEnd + 1
 		});
 
-		it('should handle link at end of line with cursor on right', () => {
+		it('should handle link at end of line with cursor on right (skip left)', () => {
 			// Line: "Hello [text](dest)"
 			const result = computeSkipCursorPosition(params({
 				linkStart: 6, linkEnd: 18, cursorPos: 18, lineLength: 18,
 			}));
 			expect(result).toEqual({ line: 3, ch: 5 }); // skip left to linkStart - 1
-		});
-
-		it('should handle entire line as link with cursor on left', () => {
-			// Line: "[[my note]]"
-			const result = computeSkipCursorPosition(params({
-				linkStart: 0, linkEnd: 11, cursorPos: 0, lineLength: 11,
-			}));
-			expect(result).toEqual({ line: 3, ch: 11 }); // skip to end
-		});
-
-		it('should handle entire line as link with cursor on right', () => {
-			// Line: "[[my note]]"
-			const result = computeSkipCursorPosition(params({
-				linkStart: 0, linkEnd: 11, cursorPos: 11, lineLength: 11,
-			}));
-			expect(result).toEqual({ line: 3, ch: 0 }); // skip to start
 		});
 
 		it('should handle short link with cursor just past center', () => {
@@ -658,6 +713,24 @@ describe('computeSkipCursorPosition', () => {
 				linkStart: 4, linkEnd: 9, cursorPos: 6, lineLength: 13,
 			}));
 			expect(result).toEqual({ line: 3, ch: 10 }); // skip right to linkEnd + 1
+		});
+
+		it('should prefer next line over previous line for full-line links (skip right)', () => {
+			// When both adjacent lines exist and skipping right, prefer next line
+			const result = computeSkipCursorPosition(params({
+				linkStart: 0, linkEnd: 15, cursorPos: 0, lineLength: 15,
+				line: 5, lineCount: 10, prevLineLength: 25,
+			}));
+			expect(result).toEqual({ line: 6, ch: 0 }); // next line, not previous
+		});
+
+		it('should prefer prev line over next line for full-line links (skip left)', () => {
+			// When both adjacent lines exist and skipping left, prefer prev line
+			const result = computeSkipCursorPosition(params({
+				linkStart: 0, linkEnd: 15, cursorPos: 15, lineLength: 15,
+				line: 5, lineCount: 10, prevLineLength: 25,
+			}));
+			expect(result).toEqual({ line: 4, ch: 25 }); // prev line, not next
 		});
 	});
 });
