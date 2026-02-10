@@ -314,7 +314,7 @@ export function detectMarkdownLinkAtCursor(line: string, cursorCh: number): Link
 		const actualStart = isEmbed ? start - 1 : start;
 
 		// Check if cursor is within the link or immediately before it (for embeds)
-		if ((cursorCh >= start && cursorCh <= end) || 
+		if ((cursorCh >= start && cursorCh <= end) ||
 		    (isEmbed && cursorCh === actualStart)) {
 
 			return {
@@ -326,7 +326,7 @@ export function detectMarkdownLinkAtCursor(line: string, cursorCh: number): Link
 				},
 				start: isEmbed ? start - 1 : start,
 				end: end,
-				enteredFromLeft: cursorCh <= start + 1
+				enteredFromLeft: cursorCh <= (actualStart + end) / 2
 			};
 		}
 	}
@@ -381,7 +381,7 @@ export function detectWikiLinkAtCursor(line: string, cursorCh: number): LinkAtCu
 		const actualStart = isEmbed ? start - 1 : start;
 
 		// Check if cursor is within the link or immediately before it (for embeds)
-		if ((cursorCh >= start && cursorCh <= end) || 
+		if ((cursorCh >= start && cursorCh <= end) ||
 		    (isEmbed && cursorCh === actualStart)) {
 
 			return {
@@ -393,7 +393,7 @@ export function detectWikiLinkAtCursor(line: string, cursorCh: number): LinkAtCu
 				},
 				start: isEmbed ? start - 1 : start,
 				end: end,
-				enteredFromLeft: cursorCh <= start + 2
+				enteredFromLeft: cursorCh <= (actualStart + end) / 2
 			};
 		}
 	}

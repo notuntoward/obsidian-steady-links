@@ -8,6 +8,7 @@ import {
 	determineLinkFromContext,
 	urlAtCursor
 } from "./utils";
+import { buildLinkText, computeCloseCursorPosition } from "./modalLogic";
 
 const DEFAULT_SETTINGS: PluginSettings = {
 	alwaysMoveToEnd: false,
@@ -22,12 +23,6 @@ export default class LinkEditorPlugin extends Plugin {
 		this.addCommand({
 			id: "edit-link",
 			name: "Edit link",
-			hotkeys: [
-				{
-					modifiers: ["Ctrl"],
-					key: "e"
-				}
-			],
 			editorCallback: async (editor: Editor, view: MarkdownView) => {
 				const cursor = editor.getCursor();
 				const line = editor.getLine(cursor.line);
@@ -96,11 +91,13 @@ export default class LinkEditorPlugin extends Plugin {
 					const conversionNotice = linkContext.conversionNotice;
 
 					new LinkEditModal(
-						this.app,
-						link,
-						(result: LinkInfo) => {
-							this.applyLinkEdit(editor, cursor.line, start, end, result, enteredFromLeft);
-						},
+							this.app,
+							link,
+							(result: LinkInfo) => {
+								const cursorPos = this.applyLinkEdit(editor, cursor.line, start, end, result, enteredFromLeft);
+								// Re-assert cursor after modal closes so the link collapses in live preview
+								setTimeout(() => editor.setCursor(cursorPos), 0);
+							},
 						shouldSelectText,
 						conversionNotice,
 						!isEditingExistingLink
@@ -115,7 +112,9 @@ export default class LinkEditorPlugin extends Plugin {
 					this.app,
 					link!,
 					(result: LinkInfo) => {
-						this.applyLinkEdit(editor, cursor.line, start, end, result, enteredFromLeft);
+						const cursorPos = this.applyLinkEdit(editor, cursor.line, start, end, result, enteredFromLeft);
+						// Re-assert cursor after modal closes so the link collapses in live preview
+						setTimeout(() => editor.setCursor(cursorPos), 0);
 					},
 					false, // shouldSelectText
 					null,  // conversionNotice
@@ -137,19 +136,8 @@ export default class LinkEditorPlugin extends Plugin {
 		end: number,
 		result: LinkInfo,
 		enteredFromLeft: boolean
-	) {
-		let replacement: string;
-		const embedPrefix = result.isEmbed ? "!" : "";
-
-		if (result.isWiki) {
-			if (result.text === result.destination) {
-				replacement = `${embedPrefix}[[${result.destination}]]`;
-			} else {
-				replacement = `${embedPrefix}[[${result.destination}|${result.text}]]`;
-			}
-		} else {
-			replacement = `${embedPrefix}[${result.text}](${result.destination})`;
-		}
+	): { line: number; ch: number } {
+		const replacement = buildLinkText(result);
 
 		editor.replaceRange(
 			replacement,
@@ -157,16 +145,18 @@ export default class LinkEditorPlugin extends Plugin {
 			{ line: line, ch: end }
 		);
 
-		let newCh: number;
-		if (this.settings.alwaysMoveToEnd) {
-			newCh = start + replacement.length;
-		} else {
-			// Move cursor to the outside of the link, to the edge nearest to where
-			// the cursor was when the link editor was originally activated
-			newCh = enteredFromLeft ? start : start + replacement.length;
-		}
+		const cursorPos = computeCloseCursorPosition({
+			linkStart: start,
+			linkEnd: start + replacement.length,
+			lineLength: editor.getLine(line).length,
+			line,
+			preferRight: this.settings.alwaysMoveToEnd || !enteredFromLeft,
+			lineCount: editor.lineCount(),
+			prevLineLength: line > 0 ? editor.getLine(line - 1).length : 0,
+		});
 
-		editor.setCursor({ line: line, ch: newCh });
+		editor.setCursor(cursorPos);
+		return cursorPos;
 	}
 
 	onunload() {}

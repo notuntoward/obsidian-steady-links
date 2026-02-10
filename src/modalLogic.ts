@@ -7,6 +7,7 @@
  * testable.
  */
 
+import { LinkInfo } from "./types";
 import { isUrl, isAlmostUrl } from "./utils";
 
 /**
@@ -244,4 +245,91 @@ export function determineInitialLinkType(destination: string, isWiki: boolean): 
 		isWiki: destIsUrl ? false : isWiki,
 		wasUrl: destIsUrl,
 	};
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Link text building
+// ──────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Build the full link markup string from a LinkInfo result.
+ *
+ * @param result  The link information (text, destination, format, embed)
+ * @returns The replacement string for the editor, e.g. `[text](dest)` or `[[dest|text]]`
+ */
+export function buildLinkText(result: LinkInfo): string {
+	const embedPrefix = result.isEmbed ? "!" : "";
+	if (result.isWiki) {
+		if (result.text === result.destination) {
+			return `${embedPrefix}[[${result.destination}]]`;
+		}
+		return `${embedPrefix}[[${result.destination}|${result.text}]]`;
+	}
+	return `${embedPrefix}[${result.text}](${result.destination})`;
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Post-edit cursor positioning
+// ──────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Parameters for computing the cursor position that will close a link
+ * after editing.
+ */
+export interface CloseCursorParams {
+	/** Character offset where the link starts on its line */
+	linkStart: number;
+	/** Character offset where the link ends (linkStart + replacement length) */
+	linkEnd: number;
+	/** Length of the line after the edit */
+	lineLength: number;
+	/** Line number the link is on */
+	line: number;
+	/** Whether to prefer positioning cursor to the right of the link */
+	preferRight: boolean;
+	/** Total number of lines in the document */
+	lineCount: number;
+	/** Length of the previous line (used only when link spans entire line) */
+	prevLineLength: number;
+}
+
+/**
+ * Compute the cursor position that will cause Obsidian's live preview to
+ * collapse (close) the link.
+ *
+ * Obsidian treats cursor positions at the link boundary (start and
+ * start + length) as "inside" the link, so we position one character
+ * further out. When the link spans the entire line, no same-line position
+ * is outside the decoration, so we move to an adjacent line.
+ *
+ * @param params  All the information needed to compute the position
+ * @returns `{ line, ch }` cursor position that will close the link
+ */
+export function computeCloseCursorPosition(params: CloseCursorParams): { line: number; ch: number } {
+	const { linkStart, linkEnd, lineLength, line, preferRight, lineCount, prevLineLength } = params;
+
+	if (linkStart === 0 && linkEnd >= lineLength) {
+		// Link spans the entire line — no position on this line is outside
+		// the decoration. Move cursor to an adjacent line instead.
+		if (line + 1 < lineCount) {
+			return { line: line + 1, ch: 0 };
+		} else if (line > 0) {
+			return { line: line - 1, ch: prevLineLength };
+		} else {
+			// Single-line document with only a link — best effort
+			return { line: line, ch: linkEnd };
+		}
+	}
+
+	if (preferRight) {
+		if (linkEnd < lineLength) {
+			return { line: line, ch: linkEnd + 1 };
+		}
+		return { line: line, ch: linkStart - 1 };
+	}
+
+	if (linkStart > 0) {
+		return { line: line, ch: linkStart - 1 };
+	}
+	return { line: line, ch: linkEnd + 1 };
 }

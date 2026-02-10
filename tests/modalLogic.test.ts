@@ -6,6 +6,8 @@ import {
 	computeConversionNotice,
 	validateSubmission,
 	determineInitialLinkType,
+	buildLinkText,
+	computeCloseCursorPosition,
 } from '../src/modalLogic';
 
 // ============================================================================
@@ -321,5 +323,207 @@ describe('determineInitialLinkType', () => {
 		const result = determineInitialLinkType('', false);
 		expect(result.isWiki).toBe(false);
 		expect(result.wasUrl).toBe(false);
+	});
+});
+
+// ============================================================================
+// buildLinkText Tests
+// ============================================================================
+describe('buildLinkText', () => {
+	it('should build markdown link', () => {
+		expect(buildLinkText({
+			text: 'click here', destination: 'https://example.com',
+			isWiki: false, isEmbed: false,
+		})).toBe('[click here](https://example.com)');
+	});
+
+	it('should build wiki link with display text', () => {
+		expect(buildLinkText({
+			text: 'display', destination: 'my-note',
+			isWiki: true, isEmbed: false,
+		})).toBe('[[my-note|display]]');
+	});
+
+	it('should build wiki link without display text when text equals destination', () => {
+		expect(buildLinkText({
+			text: 'my-note', destination: 'my-note',
+			isWiki: true, isEmbed: false,
+		})).toBe('[[my-note]]');
+	});
+
+	it('should add embed prefix for markdown embed', () => {
+		expect(buildLinkText({
+			text: 'alt text', destination: 'image.png',
+			isWiki: false, isEmbed: true,
+		})).toBe('![alt text](image.png)');
+	});
+
+	it('should add embed prefix for wiki embed', () => {
+		expect(buildLinkText({
+			text: 'photo.png', destination: 'photo.png',
+			isWiki: true, isEmbed: true,
+		})).toBe('![[photo.png]]');
+	});
+
+	it('should add embed prefix for wiki embed with display text', () => {
+		expect(buildLinkText({
+			text: 'my photo', destination: 'photo.png',
+			isWiki: true, isEmbed: true,
+		})).toBe('![[photo.png|my photo]]');
+	});
+});
+
+// ============================================================================
+// computeCloseCursorPosition Tests
+// ============================================================================
+describe('computeCloseCursorPosition', () => {
+	// Helper to build params with sensible defaults
+	function params(overrides: Partial<Parameters<typeof computeCloseCursorPosition>[0]>) {
+		return {
+			linkStart: 5,
+			linkEnd: 20,
+			lineLength: 30,
+			line: 3,
+			preferRight: false,
+			lineCount: 10,
+			prevLineLength: 15,
+			...overrides,
+		};
+	}
+
+	// ── Prefer left (enteredFromLeft = true) ────────────────────────────
+
+	describe('preferRight = false (entered from left)', () => {
+		it('should place cursor one before the link start', () => {
+			// Line: "Hello [text](dest) more"
+			//        ^    ^             ^
+			//        0    5=linkStart   20=linkEnd, lineLength=30
+			const result = computeCloseCursorPosition(params({
+				linkStart: 5, linkEnd: 20, lineLength: 30, preferRight: false,
+			}));
+			expect(result).toEqual({ line: 3, ch: 4 }); // start - 1
+		});
+
+		it('should fall back to right side when link starts at column 0', () => {
+			// Line: "[text](dest) more"
+			//        ^           ^    ^
+			//        0=start     12   17=lineLength
+			const result = computeCloseCursorPosition(params({
+				linkStart: 0, linkEnd: 12, lineLength: 17, preferRight: false,
+			}));
+			expect(result).toEqual({ line: 3, ch: 13 }); // linkEnd + 1
+		});
+	});
+
+	// ── Prefer right (entered from right or alwaysMoveToEnd) ────────────
+
+	describe('preferRight = true (entered from right / alwaysMoveToEnd)', () => {
+		it('should place cursor one past the link end', () => {
+			// Line: "Hello [text](dest) more"
+			const result = computeCloseCursorPosition(params({
+				linkStart: 5, linkEnd: 20, lineLength: 30, preferRight: true,
+			}));
+			expect(result).toEqual({ line: 3, ch: 21 }); // linkEnd + 1
+		});
+
+		it('should fall back to left side when link ends at end of line', () => {
+			// Line: "Hello [text](dest)"
+			//        ^    ^             ^
+			//        0    5=start       18=linkEnd=lineLength
+			const result = computeCloseCursorPosition(params({
+				linkStart: 5, linkEnd: 18, lineLength: 18, preferRight: true,
+			}));
+			expect(result).toEqual({ line: 3, ch: 4 }); // start - 1
+		});
+	});
+
+	// ── Link spans entire line ──────────────────────────────────────────
+
+	describe('link spans entire line', () => {
+		it('should move to next line when available', () => {
+			// Line 3 is entirely a link, e.g. "[[my note]]"
+			const result = computeCloseCursorPosition(params({
+				linkStart: 0, linkEnd: 11, lineLength: 11,
+				line: 3, lineCount: 10,
+			}));
+			expect(result).toEqual({ line: 4, ch: 0 });
+		});
+
+		it('should move to previous line when on last line', () => {
+			// Last line of document is entirely a link
+			const result = computeCloseCursorPosition(params({
+				linkStart: 0, linkEnd: 14, lineLength: 14,
+				line: 9, lineCount: 10, prevLineLength: 20,
+			}));
+			expect(result).toEqual({ line: 8, ch: 20 });
+		});
+
+		it('should move to end of previous line (respecting its length)', () => {
+			const result = computeCloseCursorPosition(params({
+				linkStart: 0, linkEnd: 8, lineLength: 8,
+				line: 5, lineCount: 6, prevLineLength: 0,
+			}));
+			expect(result).toEqual({ line: 4, ch: 0 }); // prev line is empty
+		});
+
+		it('should use best-effort for single-line document', () => {
+			// Only line in the document is entirely a link
+			const result = computeCloseCursorPosition(params({
+				linkStart: 0, linkEnd: 12, lineLength: 12,
+				line: 0, lineCount: 1, prevLineLength: 0,
+			}));
+			expect(result).toEqual({ line: 0, ch: 12 }); // best effort
+		});
+	});
+
+	// ── Edge cases ──────────────────────────────────────────────────────
+
+	describe('edge cases', () => {
+		it('should handle link at start with text after (prefer left → falls to right)', () => {
+			const result = computeCloseCursorPosition(params({
+				linkStart: 0, linkEnd: 10, lineLength: 20, preferRight: false,
+			}));
+			expect(result).toEqual({ line: 3, ch: 11 }); // can't go left, go right
+		});
+
+		it('should handle link at end with text before (prefer right → falls to left)', () => {
+			const result = computeCloseCursorPosition(params({
+				linkStart: 10, linkEnd: 25, lineLength: 25, preferRight: true,
+			}));
+			expect(result).toEqual({ line: 3, ch: 9 }); // can't go right, go left
+		});
+
+		it('should prefer next line over previous line for full-line links', () => {
+			// When both adjacent lines exist, prefer next line
+			const result = computeCloseCursorPosition(params({
+				linkStart: 0, linkEnd: 15, lineLength: 15,
+				line: 5, lineCount: 10, prevLineLength: 25,
+			}));
+			expect(result).toEqual({ line: 6, ch: 0 }); // next line, not previous
+		});
+
+		it('should handle first line that spans entirely with next line available', () => {
+			const result = computeCloseCursorPosition(params({
+				linkStart: 0, linkEnd: 20, lineLength: 20,
+				line: 0, lineCount: 5, prevLineLength: 0,
+			}));
+			expect(result).toEqual({ line: 1, ch: 0 });
+		});
+
+		it('should handle short link in middle of line (prefer left)', () => {
+			// "Abc [[x]] def"  — link from 4 to 9, line length 13
+			const result = computeCloseCursorPosition(params({
+				linkStart: 4, linkEnd: 9, lineLength: 13, preferRight: false,
+			}));
+			expect(result).toEqual({ line: 3, ch: 3 }); // start - 1
+		});
+
+		it('should handle short link in middle of line (prefer right)', () => {
+			// "Abc [[x]] def"  — link from 4 to 9, line length 13
+			const result = computeCloseCursorPosition(params({
+				linkStart: 4, linkEnd: 9, lineLength: 13, preferRight: true,
+			}));
+			expect(result).toEqual({ line: 3, ch: 10 }); // linkEnd + 1
+		});
 	});
 });
