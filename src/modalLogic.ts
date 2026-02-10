@@ -333,3 +333,65 @@ export function computeCloseCursorPosition(params: CloseCursorParams): { line: n
 	}
 	return { line: line, ch: linkEnd + 1 };
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Skip over link positioning
+// ──────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Parameters for computing the cursor position to skip over a link.
+ */
+export interface SkipCursorParams {
+	/** Character offset where the link starts on its line */
+	linkStart: number;
+	/** Character offset where the link ends */
+	linkEnd: number;
+	/** Current cursor position within the link */
+	cursorPos: number;
+	/** Length of the line */
+	lineLength: number;
+	/** Line number the link is on */
+	line: number;
+}
+
+/**
+ * Compute the cursor position to skip over a link in the direction of travel.
+ *
+ * This is the opposite of computeCloseCursorPosition. Instead of positioning
+ * the cursor to close/collapse the link, it skips to the end of the link in
+ * the direction the cursor is approaching from.
+ *
+ * - If cursor is on the left edge or left half, skip to the right (after link)
+ * - If cursor is on the right edge or right half, skip to the left (before link)
+ * - Position far enough that the link will be closed
+ *
+ * @param params  All the information needed to compute the position
+ * @returns `{ line, ch }` cursor position that skips over the link
+ */
+export function computeSkipCursorPosition(params: SkipCursorParams): { line: number; ch: number } {
+	const { linkStart, linkEnd, cursorPos, lineLength, line } = params;
+
+	// Determine direction based on cursor position relative to link center
+	const linkCenter = (linkStart + linkEnd) / 2;
+	const isOnLeftSide = cursorPos <= linkCenter;
+
+	if (isOnLeftSide) {
+		// Skip to the right - position after the link
+		if (linkEnd < lineLength) {
+			// There's content after the link, position one character after it
+			return { line, ch: linkEnd + 1 };
+		} else {
+			// Link is at end of line, position at the end
+			return { line, ch: linkEnd };
+		}
+	} else {
+		// Skip to the left - position before the link
+		if (linkStart > 0) {
+			// There's content before the link, position one character before it
+			return { line, ch: linkStart - 1 };
+		} else {
+			// Link is at start of line, position at the start
+			return { line, ch: 0 };
+		}
+	}
+}

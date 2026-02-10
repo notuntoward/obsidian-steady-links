@@ -67,7 +67,14 @@ export class Notice {
 }
 
 export class MarkdownView {}
-export class Editor {}
+export class Editor {
+  getCursor() { return { line: 0, ch: 0 }; }
+  setCursor(_pos: { line: number; ch: number }) { return undefined; }
+  getLine(_line: number) { return ''; }
+  getSelection() { return ''; }
+  somethingSelected() { return false; }
+  replaceRange(_text: string, _from: { line: number; ch: number }, _to: { line: number; ch: number }) { return undefined; }
+}
 export class App {}
 export class Vault {}
 export class Workspace {}

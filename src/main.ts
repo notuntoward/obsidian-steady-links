@@ -8,7 +8,7 @@ import {
 	determineLinkFromContext,
 	urlAtCursor
 } from "./utils";
-import { buildLinkText, computeCloseCursorPosition } from "./modalLogic";
+import { buildLinkText, computeCloseCursorPosition, computeSkipCursorPosition } from "./modalLogic";
 
 const DEFAULT_SETTINGS: PluginSettings = {
 	alwaysMoveToEnd: false,
@@ -120,6 +120,35 @@ export default class LinkEditorPlugin extends Plugin {
 					null,  // conversionNotice
 					false  // isNewLink
 				).open();
+			},
+		});
+
+		this.addCommand({
+			id: "skip-over-link",
+			name: "Skip over link",
+			editorCallback: (editor: Editor, view: MarkdownView) => {
+				const cursor = editor.getCursor();
+				const line = editor.getLine(cursor.line);
+
+				// Try to detect existing link at cursor
+				const existingLink = detectLinkAtCursor(line, cursor.ch);
+
+				if (!existingLink) {
+					// No link at cursor, do nothing
+					return;
+				}
+
+				// Compute the skip position
+				const skipPos = computeSkipCursorPosition({
+					linkStart: existingLink.start,
+					linkEnd: existingLink.end,
+					cursorPos: cursor.ch,
+					lineLength: line.length,
+					line: cursor.line,
+				});
+
+				// Move cursor to skip position
+				editor.setCursor(skipPos);
 			},
 		});
 
