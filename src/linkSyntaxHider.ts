@@ -809,5 +809,8 @@ export {
 	findMarkdownLinkSyntaxRanges,
 	findWikiLinkSyntaxRanges,
 	computeHiddenRanges,
+	correctCursorPos,
+	listContinuation,
+	findLinkEndAtPos,
 };
 export type { HiddenRange };
