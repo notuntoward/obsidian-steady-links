@@ -1,5 +1,5 @@
 {
   "alwaysMoveToEnd": false,
-  "keepLinksSteady": false,
+  "keepLinksSteady": true,
   "preventLinkExpansion": true
 }
