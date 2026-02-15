@@ -20,6 +20,7 @@ import {
 	ViewUpdate,
 	PluginValue,
 	WidgetType,
+	keymap,
 } from "@codemirror/view";
 import {
 	RangeSetBuilder,
@@ -332,6 +333,7 @@ function correctCursorPos(
 	oldPos: number,
 	hidden: HiddenRange[],
 	doc: EditorState["doc"],
+	isPointer: boolean = false,
 ): number | null {
 	for (const h of hidden) {
 		let inside: boolean;
@@ -341,17 +343,42 @@ function correctCursorPos(
 			if (pos === h.from && pos === doc.lineAt(pos).from) return null;
 			inside = pos >= h.from && pos < h.to;
 		} else {
-			inside = pos >= h.from && pos <= h.to;
+			inside = pos >= h.from && pos < h.to;
 		}
-		if (!inside) continue;
+		if (!inside) {
+			// When moving left (or clicking), treat the position at h.to
+			// (zero-width widget boundary) as needing correction so the
+			// cursor skips directly into the visible link text.
+			if (
+				h.side === "trailing" &&
+				pos === h.to &&
+				(pos < oldPos || isPointer)
+			) {
+				return h.from;
+			}
+			continue;
+		}
 
 		const movingRight = pos >= oldPos;
 		if (h.side === "leading") {
 			return movingRight ? h.to : Math.max(0, h.from - 1);
 		}
-		return movingRight
-			? Math.min(doc.length, h.to + 1)
-			: h.from;
+		// For pointer (click) events, always go to the text boundary
+		// instead of skipping to the next line / past the range.
+		if (isPointer) {
+			return h.from;
+		}
+		if (movingRight) {
+			// For line-ending links, stop at the line end (h.to) rather
+			// than jumping to the next line (h.to + 1).  The user can
+			// press right again from h.to to advance normally.
+			const lineEnd = doc.lineAt(pos).to;
+			if (h.to === lineEnd) {
+				return h.to;
+			}
+			return Math.min(doc.length, h.to + 1);
+		}
+		return h.from;
 	}
 	return null;
 }
@@ -392,6 +419,11 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 
 	const hidden = computeHiddenRangesForPositions(state.doc, newSel);
 	if (hidden.length === 0) return;
+
+	// Detect pointer-initiated selection changes (clicks / taps)
+	const isPointer = update.transactions.some((tr) =>
+		tr.isUserEvent("select.pointer"),
+	);
 
 	let skipLeadingInsertionCorrection = false;
 	if (update.docChanged) {
@@ -441,7 +473,7 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 		let head = range.head;
 
 		for (let pass = 0; pass < 3; pass++) {
-			const corrected = correctCursorPos(head, oldHead, hidden, state.doc);
+			const corrected = correctCursorPos(head, oldHead, hidden, state.doc, isPointer);
 			if (corrected === null) break;
 			head = corrected;
 			needsAdjust = true;
@@ -466,6 +498,83 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 });
 
 
+
+// ---------------------------------------------------------------------------
+// Enter key at link end
+// ---------------------------------------------------------------------------
+
+/**
+ * Detect the list continuation prefix for a line.
+ * Returns the string to prepend after "\n" (e.g. "- ", "1. ", "- [ ] "),
+ * or "" for non-list lines.
+ */
+function listContinuation(lineText: string): string {
+	const trimmed = lineText.trimStart();
+	const indent = lineText.substring(
+		0,
+		lineText.length - trimmed.length,
+	);
+	// Matches: - , * , + , 1. , 1) , - [ ] , - [x] , etc.
+	const m = trimmed.match(
+		/^([-*+]|\d+[.)]) (?:(\[.\]) )?/,
+	);
+	if (!m) return "";
+	let prefix = indent + m[1] + " ";
+	if (m[2]) prefix += "[ ] ";
+	return prefix;
+}
+
+/**
+ * Keymap handler that fires BEFORE Obsidian's own Enter binding.
+ * When the cursor sits inside or at the boundary of a trailing hidden
+ * range that reaches the end of the line, we fully handle the Enter
+ * key by inserting a newline (with list continuation) at line.to and
+ * consuming the event.  This prevents any interaction between the
+ * cursor position (which may be inside a replaced decoration) and
+ * the default Enter handling.
+ */
+const enterAtLinkEndKeymap = keymap.of([
+	{
+		key: "Enter",
+		run(view) {
+			if (!view.state.field(syntaxHiderEnabledField, false))
+				return false;
+			const sel = view.state.selection;
+			if (sel.ranges.length !== 1 || !sel.main.empty)
+				return false;
+
+			const head = sel.main.head;
+			const hidden = computeHiddenRanges(view.state);
+
+			for (const h of hidden) {
+				if (h.side !== "trailing") continue;
+				if (head < h.from || head > h.to) continue;
+
+				const line = view.state.doc.lineAt(head);
+				// Only act when the trailing range reaches the line end
+				if (h.to !== line.to) continue;
+
+				// Compute insert text with list continuation
+				const continuation = listContinuation(line.text);
+				const insert = "\n" + continuation;
+
+				view.dispatch({
+					changes: {
+						from: line.to,
+						to: line.to,
+						insert,
+					},
+					selection: EditorSelection.cursor(
+						line.to + insert.length,
+					),
+					scrollIntoView: true,
+				});
+				return true; // Consume Enter — we handled it
+			}
+			return false;
+		},
+	},
+]);
 
 // ---------------------------------------------------------------------------
 // Edit protection
@@ -495,30 +604,62 @@ const enterAtLinkEndFix = EditorState.transactionFilter.of((tr) => {
 	});
 
 	if (!insertText || insertCount !== 1) return tr;
-	if (insertFrom !== insertTo) return tr;
-	if (insertFrom !== range.head) return tr;
 
 	const hidden = computeHiddenRanges(tr.startState);
 	if (hidden.length === 0) return tr;
 
-	const line = tr.startState.doc.lineAt(insertFrom);
-	const linkEnd = findLinkEndAtPos(line.text, line.from, insertFrom);
-	if (linkEnd === null) return tr;
-	for (const h of hidden) {
-		if (h.side !== "trailing") continue;
-		if (h.to !== line.to) continue;
-		if (linkEnd !== h.to) continue;
+	const line = tr.startState.doc.lineAt(range.head);
 
-		const userEvent = tr.annotation(Transaction.userEvent) ?? undefined;
-		return tr.startState.update({
-			changes: { from: h.to, to: h.to, insert: insertText },
-			selection: EditorSelection.cursor(h.to + insertText.length),
-			scrollIntoView: true,
-			userEvent,
-		});
+	// For pure insertions at cursor, check via findLinkEndAtPos
+	// For replacements or insertions at other positions, check whether
+	// the cursor or the change range overlaps a trailing hidden range
+	let matchedTrailing: HiddenRange | null = null;
+
+	if (insertFrom === insertTo && insertFrom === range.head) {
+		const linkEnd = findLinkEndAtPos(line.text, line.from, insertFrom);
+		if (linkEnd !== null) {
+			for (const h of hidden) {
+				if (h.side === "trailing" && linkEnd === h.to) {
+					matchedTrailing = h;
+					break;
+				}
+			}
+		}
 	}
 
-	return tr;
+	// Fallback: if the cursor is at or inside a trailing hidden range,
+	// or the change range overlaps one, redirect the newline to the
+	// end of the line regardless of exact insertion position.
+	if (!matchedTrailing) {
+		for (const h of hidden) {
+			if (h.side !== "trailing") continue;
+			// Cursor inside or at trailing range boundary
+			if (range.head >= h.from && range.head <= h.to) {
+				matchedTrailing = h;
+				break;
+			}
+			// Change range overlaps trailing range
+			if (insertFrom < h.to && insertTo > h.from) {
+				matchedTrailing = h;
+				break;
+			}
+		}
+	}
+
+	if (!matchedTrailing) return tr;
+
+	let finalInsertText = insertText;
+	if (insertText === "\n" && line.text.trimStart().startsWith("- ")) {
+		finalInsertText = "\n- ";
+	}
+
+	const userEvent = tr.annotation(Transaction.userEvent) ?? undefined;
+	return tr.startState.update({
+		changes: { from: line.to, to: line.to, insert: finalInsertText },
+		selection: EditorSelection.cursor(line.to + finalInsertText.length),
+		scrollIntoView: true,
+		userEvent,
+	});
 });
 
 const insertAtLinkStartFix = EditorState.transactionFilter.of((tr) => {
@@ -583,7 +724,43 @@ const protectSyntaxFilter = EditorState.transactionFilter.of((tr) => {
 			if (fromA < h.to && toA > h.from) dominated = true;
 		}
 	});
-	return dominated ? [] : tr;
+
+	if (!dominated) return tr;
+
+	// Safety net: if the blocked transaction contains a newline (Enter
+	// key), redirect the insertion to the end of the line so the link
+	// is preserved instead of silently swallowing the keypress.
+	let newlineText: string | undefined;
+	let newlineFrom = -1;
+	tr.changes.iterChanges(
+		(fromA, _toA, _fromB, _toB, inserted) => {
+			const text = inserted.toString();
+			if (text.includes("\n")) {
+				newlineText = text;
+				newlineFrom = fromA;
+			}
+		},
+	);
+
+	if (newlineText !== undefined && newlineFrom >= 0) {
+		const line = tr.startState.doc.lineAt(newlineFrom);
+		const userEvent =
+			tr.annotation(Transaction.userEvent) ?? undefined;
+		return tr.startState.update({
+			changes: {
+				from: line.to,
+				to: line.to,
+				insert: newlineText,
+			},
+			selection: EditorSelection.cursor(
+				line.to + newlineText.length,
+			),
+			scrollIntoView: true,
+			userEvent,
+		});
+	}
+
+	return [];
 });
 
 // ---------------------------------------------------------------------------
@@ -621,6 +798,7 @@ export function createLinkSyntaxHiderExtension() {
 		bodyClassPlugin,
 		Prec.highest(hiddenSyntaxReplacePlugin),
 		Prec.highest(cursorCorrector),
+		Prec.highest(enterAtLinkEndKeymap),
 		Prec.highest(enterAtLinkEndFix),
 		Prec.highest(insertAtLinkStartFix),
 		Prec.highest(protectSyntaxFilter),

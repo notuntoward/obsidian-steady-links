@@ -17,6 +17,7 @@ const DEFAULT_SETTINGS: PluginSettings = {
 	preventLinkExpansion: false,
 };
 
+
 export default class LinkEditorPlugin extends Plugin {
 	settings!: PluginSettings;
 
