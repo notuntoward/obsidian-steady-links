@@ -216,8 +216,13 @@ function computeHiddenRanges(state: EditorState): HiddenRange[] {
 	const seenLines = new Set<number>();
 
 	for (const sel of state.selection.ranges) {
-		seenLines.add(state.doc.lineAt(sel.head).number);
-		seenLines.add(state.doc.lineAt(sel.anchor).number);
+		const from = Math.min(sel.head, sel.anchor);
+		const to = Math.max(sel.head, sel.anchor);
+		const fromLine = state.doc.lineAt(from).number;
+		const toLine = state.doc.lineAt(to).number;
+		for (let lineNo = fromLine; lineNo <= toLine; lineNo += 1) {
+			seenLines.add(lineNo);
+		}
 	}
 
 	const temporarilyVisible = state.field(temporarilyVisibleLinkField, false);
