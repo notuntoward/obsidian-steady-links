@@ -581,18 +581,54 @@ export interface ValidationResult {
 }
 
 /**
+ * Check if a URL is an embeddable media file
+ */
+export function isEmbeddableUrl(url: string): boolean {
+	if (!isUrl(url)) return false;
+	
+	// Common embeddable media extensions
+	const embeddableExtensions = [
+		// Images
+		'.jpg', '.jpeg', '.png', '.gif', '.svg', '.webp', '.bmp', '.ico',
+		// Videos
+		'.mp4', '.webm', '.ogv', '.mov', '.mkv',
+		// Audio
+		'.mp3', '.wav', '.ogg', '.m4a', '.flac',
+		// Documents
+		'.pdf'
+	];
+	
+	const lowerUrl = url.toLowerCase();
+	return embeddableExtensions.some(ext => lowerUrl.includes(ext));
+}
+
+/**
  * Validate link destination based on link type
  */
 export function validateLinkDestination(
 	dest: string,
 	linkText: string,
-	isWiki: boolean
+	isWiki: boolean,
+	isEmbed: boolean = false,
+	currentFilePath?: string
 ): ValidationResult {
 	const warnings: ValidationWarning[] = [];
 	let shouldHighlightDest = false;
 	let shouldHighlightText = false;
 
 	const destLength = dest ? dest.length : 0;
+
+	// Check for URL normalization (www.example.com → https://www.example.com)
+	if (!isWiki && dest) {
+		const trimmed = dest.trim();
+		const normalized = normalizeUrl(trimmed);
+		if (normalized !== trimmed && isUrl(normalized)) {
+			warnings.push({
+				text: `URL will be converted: ${trimmed} → ${normalized}`,
+				severity: 'caution'
+			});
+		}
+	}
 
 	// WikiLinks cannot link to URLs
 	if (isWiki && isUrl(dest)) {
@@ -601,6 +637,31 @@ export function validateLinkDestination(
 			severity: 'error'
 		});
 		shouldHighlightDest = true;
+	}
+
+	// Warn about embedding non-media URLs
+	if (isEmbed && !isWiki && isUrl(dest) && !isEmbeddableUrl(dest)) {
+		warnings.push({
+			text: "Warning: Non-media URLs cannot be embedded (only images, audio, video, PDF).",
+			severity: 'caution'
+		});
+		shouldHighlightDest = true;
+	}
+
+	// Warn about self-embedding (wikilinks only)
+	if (isEmbed && isWiki && currentFilePath && dest) {
+		// Extract filename from destination (before # or |)
+		const destFile = dest.split('#')[0].split('|')[0].trim();
+		// Extract filename from current file path
+		const currentFile = currentFilePath.split('/').pop()?.replace(/\.md$/, '') || '';
+		
+		if (destFile && currentFile && destFile === currentFile) {
+			warnings.push({
+				text: "Warning: Note is embedding itself (may cause performance issues).",
+				severity: 'caution'
+			});
+			shouldHighlightDest = true;
+		}
 	}
 
 	// Check destination validity for current link type

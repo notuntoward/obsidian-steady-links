@@ -1,11 +1,13 @@
 import { App, Modal, Setting, TextComponent, ButtonComponent, ToggleComponent } from "obsidian";
 import { LinkInfo } from "./types";
 import { FileSuggest } from "./FileSuggest";
-import { 
-	wikiToMarkdown, 
-	markdownToWiki, 
+import {
+	wikiToMarkdown,
+	markdownToWiki,
 	parseClipboardLink,
 	validateLinkDestination,
+	normalizeUrl,
+	isUrl,
 } from "./utils";
 import {
 	parseClipboardFlags,
@@ -173,6 +175,7 @@ export class EditLinkModal extends Modal {
 				
 				toggle.onChange((value) => {
 					embedSetting.setDesc(value ? "Link contents shown in note" : "Link shown in note");
+					this.updateUIState(); // Update warnings when embed state changes
 				});
 
 				toggle.toggleEl.setAttribute("tabindex", "0");
@@ -183,6 +186,7 @@ export class EditLinkModal extends Modal {
 						const currentValue = toggle.getValue();
 						toggle.setValue(!currentValue);
 						embedSetting.setDesc(!currentValue ? "Link contents shown in note" : "Link shown in note");
+						this.updateUIState(); // Update warnings when embed state changes
 					}
 				});
 			});
@@ -377,17 +381,37 @@ export class EditLinkModal extends Modal {
 	updateUIState() {
 		this.typeSetting.setDesc(this.isWiki ? "Wikilink" : "Markdown Link");
 
-		// Clear previous warnings
-		const existingWarnings = this.warningsContainer.querySelectorAll(".link-warning");
+		// Clear previous warnings (but keep embed detection notices)
+		const existingWarnings = this.warningsContainer.querySelectorAll(".link-warning, .link-embed-detection-notice");
 		existingWarnings.forEach((w) => w.remove());
 		this.destInput.inputEl.classList.remove("link-warning-highlight");
 		this.textInput.inputEl.classList.remove("link-warning-highlight");
 
+		// Add notice about embed detection in preview mode if applicable
+		if (!this.isNewLink && !this.link.isEmbed) {
+			const activeLeaf = this.app.workspace.activeLeaf;
+			const view = activeLeaf?.view as any;
+			const mode = view?.getMode?.();
+			
+			// If we're in preview/live mode, show a notice
+			if (mode && (mode === 'preview' || mode === 'live')) {
+				this.warningsContainer.createEl("div", {
+					cls: "link-conversion-notice link-embed-detection-notice",
+					text: "⌾ In preview mode, embedded links that are collapsed may not be detected. Check 'Embed content' if this link should be embedded.",
+				});
+			}
+		}
+
 		const dest = this.destInput.getValue();
 		const linkText = this.textInput.getValue();
+		const isEmbed = this.embedToggle.getValue();
+
+		// Get current file path for self-embed detection
+		const activeFile = this.app.workspace.getActiveFile();
+		const currentFilePath = activeFile?.path;
 
 		// Use the refactored validation function
-		const validationResult = validateLinkDestination(dest, linkText, this.isWiki);
+		const validationResult = validateLinkDestination(dest, linkText, this.isWiki, isEmbed, currentFilePath);
 
 		// Display warnings
 		if (validationResult.warnings.length > 0) {
@@ -413,9 +437,20 @@ export class EditLinkModal extends Modal {
 		// Clear previous validation errors
 		this.clearValidationErrors();
 
+		let destValue = this.destInput.getValue();
+		
+		// Normalize URLs before submitting (add https:// if needed)
+		if (!this.isWiki && destValue) {
+			const trimmed = destValue.trim();
+			const normalized = normalizeUrl(trimmed);
+			if (normalized !== trimmed && isUrl(normalized)) {
+				destValue = normalized;
+			}
+		}
+
 		const validation = validateSubmission(
 			this.textInput.getValue(),
-			this.destInput.getValue(),
+			destValue,
 		);
 
 		if (!validation.valid) {
