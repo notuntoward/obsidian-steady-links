@@ -15,7 +15,6 @@ import { createLinkSyntaxHiderExtension, findLinkRangeAtPos, setTemporarilyVisib
 import { EditorView } from "@codemirror/view";
 
 const DEFAULT_SETTINGS: PluginSettings = {
-	alwaysMoveToEnd: false,
 	keepLinksSteady: false,
 };
 
@@ -347,7 +346,7 @@ export default class SteadyLinksPlugin extends Plugin {
 			linkEnd: start + replacement.length,
 			lineLength: editor.getLine(line).length,
 			line,
-			preferRight: this.settings.alwaysMoveToEnd || !enteredFromLeft,
+			preferRight: !enteredFromLeft,
 			lineCount: editor.lineCount(),
 			prevLineLength: line > 0 ? editor.getLine(line - 1).length : 0,
 		});

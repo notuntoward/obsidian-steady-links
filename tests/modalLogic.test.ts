@@ -417,9 +417,9 @@ describe('computeCloseCursorPosition', () => {
 		});
 	});
 
-	// ── Prefer right (entered from right or alwaysMoveToEnd) ────────────
+	// ── Prefer right (entered from right) ────────────
 
-	describe('preferRight = true (entered from right / alwaysMoveToEnd)', () => {
+	describe('preferRight = true (entered from right)', () => {
 		it('should place cursor one past the link end', () => {
 			// Line: "Hello [text](dest) more"
 			const result = computeCloseCursorPosition(params({

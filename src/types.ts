@@ -24,6 +24,5 @@ export interface SuggestionItem {
 }
 
 export interface PluginSettings {
-	alwaysMoveToEnd: boolean;
 	keepLinksSteady: boolean;
 }

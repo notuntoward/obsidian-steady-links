@@ -135,7 +135,6 @@ export function createSuggestion(overrides: Partial<SuggestionItem> = {}): Sugge
 
 export function createSettings(overrides: Partial<PluginSettings> = {}): PluginSettings {
   return {
-    alwaysMoveToEnd: false,
     keepLinksSteady: false,
     ...overrides,
   };

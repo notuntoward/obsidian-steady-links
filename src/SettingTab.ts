@@ -15,16 +15,6 @@ export class SteadyLinksSettingTab extends PluginSettingTab {
 		containerEl.createEl("h2", { text: "Link Editor Settings" });
 
 		new Setting(containerEl)
-			.setName("Always move cursor to end of link")
-			.setDesc("If enabled, the cursor will always move after the link after editing.")
-			.addToggle((toggle) =>
-				toggle.setValue(this.plugin.settings.alwaysMoveToEnd).onChange(async (value) => {
-					this.plugin.settings.alwaysMoveToEnd = value;
-					await this.plugin.saveSettings();
-				})
-			);
-
-		new Setting(containerEl)
 			.setName("Keep links steady")
 			.setDesc(
 				"When enabled, moving the cursor into a link will not expand it, " +
