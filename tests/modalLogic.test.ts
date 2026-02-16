@@ -9,6 +9,7 @@ import {
 	buildLinkText,
 	computeCloseCursorPosition,
 	computeSkipCursorPosition,
+	computeSkipLinkPosition,
 } from '../src/modalLogic';
 
 // ============================================================================
@@ -731,6 +732,206 @@ describe('computeSkipCursorPosition', () => {
 				line: 5, lineCount: 10, prevLineLength: 25,
 			}));
 			expect(result).toEqual({ line: 4, ch: 25 }); // prev line, not next
+		});
+	});
+});
+
+// ============================================================================
+// computeSkipLinkPosition Tests
+// ============================================================================
+describe('computeSkipLinkPosition', () => {
+	// Helper to build params with sensible defaults
+	function params(overrides: Partial<Parameters<typeof computeSkipLinkPosition>[0]>) {
+		return {
+			linkStart: 5,
+			linkEnd: 20,
+			displayedTextStart: 6,
+			displayedTextEnd: 10,
+			cursorPos: 8,
+			lineLength: 30,
+			line: 3,
+			lineCount: 10,
+			prevLineLength: 15,
+			isSourceMode: false,
+			keepLinksSteady: false,
+			...overrides,
+		};
+	}
+
+	describe('cursor not in link', () => {
+		it('should return null when cursor is before link', () => {
+			const result = computeSkipLinkPosition(params({
+				linkStart: 5, linkEnd: 20, cursorPos: 3,
+			}));
+			expect(result).toBeNull();
+		});
+
+		it('should return null when cursor is after link', () => {
+			const result = computeSkipLinkPosition(params({
+				linkStart: 5, linkEnd: 20, cursorPos: 25,
+			}));
+			expect(result).toBeNull();
+		});
+	});
+
+	describe('source mode', () => {
+		it('should skip right when cursor is nearer left edge', () => {
+			// Cursor at position 7, link from 5-20
+			// Distance to left edge: 2, to right edge: 13
+			const result = computeSkipLinkPosition(params({
+				linkStart: 5, linkEnd: 20, cursorPos: 7,
+				isSourceMode: true,
+			}));
+			expect(result).toEqual({ line: 3, ch: 21 }); // linkEnd + 1
+		});
+
+		it('should skip left when cursor is nearer right edge', () => {
+			// Cursor at position 18, link from 5-20
+			// Distance to left edge: 13, to right edge: 2
+			const result = computeSkipLinkPosition(params({
+				linkStart: 5, linkEnd: 20, cursorPos: 18,
+				isSourceMode: true,
+			}));
+			expect(result).toEqual({ line: 3, ch: 4 }); // linkStart - 1
+		});
+
+		it('should skip right when cursor is exactly at center', () => {
+			// Link from 5-15, center at 10
+			const result = computeSkipLinkPosition(params({
+				linkStart: 5, linkEnd: 15, cursorPos: 10,
+				isSourceMode: true,
+			}));
+			expect(result).toEqual({ line: 3, ch: 16 }); // linkEnd + 1
+		});
+
+		it('should handle link at start of line (skip right)', () => {
+			const result = computeSkipLinkPosition(params({
+				linkStart: 0, linkEnd: 12, cursorPos: 0,
+				isSourceMode: true,
+			}));
+			expect(result).toEqual({ line: 3, ch: 13 }); // linkEnd + 1
+		});
+
+		it('should handle link at end of line (skip left)', () => {
+			const result = computeSkipLinkPosition(params({
+				linkStart: 10, linkEnd: 25, cursorPos: 25, lineLength: 25,
+				isSourceMode: true,
+			}));
+			expect(result).toEqual({ line: 3, ch: 9 }); // linkStart - 1
+		});
+
+		it('should move to next line when link spans entire line and skipping right', () => {
+			const result = computeSkipLinkPosition(params({
+				linkStart: 0, linkEnd: 15, cursorPos: 0, lineLength: 15,
+				isSourceMode: true,
+			}));
+			expect(result).toEqual({ line: 4, ch: 0 });
+		});
+
+		it('should move to prev line when link spans entire line and skipping left', () => {
+			const result = computeSkipLinkPosition(params({
+				linkStart: 0, linkEnd: 15, cursorPos: 15, lineLength: 15,
+				isSourceMode: true,
+			}));
+			expect(result).toEqual({ line: 2, ch: 15 });
+		});
+	});
+
+	describe('preview mode with keepLinksSteady OFF', () => {
+		it('should skip outside link (same as source mode)', () => {
+			const result = computeSkipLinkPosition(params({
+				linkStart: 5, linkEnd: 20, cursorPos: 7,
+				isSourceMode: false,
+				keepLinksSteady: false,
+			}));
+			expect(result).toEqual({ line: 3, ch: 21 }); // linkEnd + 1
+		});
+	});
+
+	describe('preview mode with keepLinksSteady ON', () => {
+		it('should skip to displayed text end when skipping right', () => {
+			// Link: "[text](dest)" from 5-20
+			// Displayed text "text" from 6-10
+			// Cursor at 7 (nearer left edge)
+			const result = computeSkipLinkPosition(params({
+				linkStart: 5, linkEnd: 20,
+				displayedTextStart: 6, displayedTextEnd: 10,
+				cursorPos: 7,
+				isSourceMode: false,
+				keepLinksSteady: true,
+			}));
+			// Should position at displayed text end (cursor correction will handle the rest)
+			expect(result).toEqual({ line: 3, ch: 10 });
+		});
+
+		it('should skip to displayed text start when skipping left', () => {
+			// Link: "[text](dest)" from 5-20
+			// Displayed text "text" from 6-10
+			// Cursor at 18 (nearer right edge)
+			const result = computeSkipLinkPosition(params({
+				linkStart: 5, linkEnd: 20,
+				displayedTextStart: 6, displayedTextEnd: 10,
+				cursorPos: 18,
+				isSourceMode: false,
+				keepLinksSteady: true,
+			}));
+			// Should position at displayed text start (cursor correction will handle the rest)
+			expect(result).toEqual({ line: 3, ch: 6 });
+		});
+
+		it('should handle wiki link with pipe', () => {
+			// Link: "[[dest|text]]" from 5-20
+			// Displayed text "text" from 13-17
+			// Cursor at 6 (nearer left edge)
+			const result = computeSkipLinkPosition(params({
+				linkStart: 5, linkEnd: 20,
+				displayedTextStart: 13, displayedTextEnd: 17,
+				cursorPos: 6,
+				isSourceMode: false,
+				keepLinksSteady: true,
+			}));
+			expect(result).toEqual({ line: 3, ch: 17 }); // displayed text end
+		});
+
+		it('should handle wiki link without pipe', () => {
+			// Link: "[[dest]]" from 5-13
+			// Displayed text "dest" from 7-11
+			// Cursor at 12 (nearer right edge)
+			const result = computeSkipLinkPosition(params({
+				linkStart: 5, linkEnd: 13,
+				displayedTextStart: 7, displayedTextEnd: 11,
+				cursorPos: 12,
+				isSourceMode: false,
+				keepLinksSteady: true,
+			}));
+			expect(result).toEqual({ line: 3, ch: 7 }); // displayed text start
+		});
+	});
+
+	describe('edge cases', () => {
+		it('should handle cursor at link start', () => {
+			const result = computeSkipLinkPosition(params({
+				linkStart: 5, linkEnd: 20, cursorPos: 5,
+				isSourceMode: true,
+			}));
+			expect(result).toEqual({ line: 3, ch: 21 }); // skip right
+		});
+
+		it('should handle cursor at link end', () => {
+			const result = computeSkipLinkPosition(params({
+				linkStart: 5, linkEnd: 20, cursorPos: 20,
+				isSourceMode: true,
+			}));
+			expect(result).toEqual({ line: 3, ch: 4 }); // skip left
+		});
+
+		it('should handle single-line document with full-line link', () => {
+			const result = computeSkipLinkPosition(params({
+				linkStart: 0, linkEnd: 15, cursorPos: 0, lineLength: 15,
+				line: 0, lineCount: 1,
+				isSourceMode: true,
+			}));
+			expect(result).toEqual({ line: 0, ch: 15 }); // best effort
 		});
 	});
 });

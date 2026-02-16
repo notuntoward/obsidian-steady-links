@@ -16,6 +16,7 @@ import {
 	detectLinkAtCursor,
 	determineLinkFromContext,
 	validateLinkDestination,
+	computeDisplayedTextRange,
 } from '../src/utils';
 
 // ============================================================================
@@ -970,5 +971,193 @@ describe('validateLinkDestination', () => {
 		const result = validateLinkDestination('file|name', 'Text', true);
 		expect(result.shouldHighlightDest).toBe(true);
 		expect(result.shouldHighlightText).toBe(false);
+	});
+});
+
+// ============================================================================
+// computeDisplayedTextRange Tests
+// ============================================================================
+describe('computeDisplayedTextRange', () => {
+	describe('markdown links', () => {
+		it('should compute range for basic markdown link', () => {
+			// [text](dest) - displayed text is "text"
+			// "Click [here](https://example.com) now"
+			//       ^    ^                       ^
+			//       6    11                      33
+			// [here] is 6 chars, (https://example.com) is 21 chars
+			// Total: 27 chars, linkEnd = 6 + 27 = 33
+			const line = 'Click [here](https://example.com) now';
+			const result = computeDisplayedTextRange(line, 10); // cursor on 'here'
+			expect(result).toEqual({
+				linkStart: 6,
+				linkEnd: 33,
+				displayedTextStart: 7,
+				displayedTextEnd: 11
+			});
+		});
+
+		it('should compute range for embedded markdown link', () => {
+			// ![alt](image.png) - displayed text is "alt"
+			// "See ![photo](img.png) here"
+			//     ^          ^
+			//     4          21
+			// ![photo] is 8 chars, (img.png) is 9 chars
+			// Total: 17 chars, linkEnd = 4 + 17 = 21
+			const line = 'See ![photo](img.png) here';
+			const result = computeDisplayedTextRange(line, 8); // cursor on 'photo'
+			expect(result).toEqual({
+				linkStart: 4,
+				linkEnd: 21,
+				displayedTextStart: 6,
+				displayedTextEnd: 11
+			});
+		});
+
+		it('should compute range for markdown link at start of line', () => {
+			const line = '[link](dest) text';
+			const result = computeDisplayedTextRange(line, 3);
+			expect(result).toEqual({
+				linkStart: 0,
+				linkEnd: 12,
+				displayedTextStart: 1,
+				displayedTextEnd: 5
+			});
+		});
+
+		it('should compute range for markdown link with empty text', () => {
+			// Note: The regex requires at least one character in the text portion
+			// So `[]()` won't match. Use a minimal link with one character.
+			const line = '[x](dest)';
+			const result = computeDisplayedTextRange(line, 1);
+			expect(result).toEqual({
+				linkStart: 0,
+				linkEnd: 9,
+				displayedTextStart: 1,
+				displayedTextEnd: 2
+			});
+		});
+	});
+
+	describe('wiki links', () => {
+		it('should compute range for basic wiki link', () => {
+			// [[file]] - displayed text is "file"
+			const line = 'See [[Notes]] here';
+			const result = computeDisplayedTextRange(line, 8); // cursor on 'Notes'
+			expect(result).toEqual({
+				linkStart: 4,
+				linkEnd: 13,
+				displayedTextStart: 6,
+				displayedTextEnd: 11
+			});
+		});
+
+		it('should compute range for wiki link with display text', () => {
+			// [[dest|text]] - displayed text is "text"
+			// "Go to [[file.md|My Note]] now"
+			//       ^               ^
+			//       6               25
+			// Inner content: "file.md|My Note" (positions 8-24, but 0-indexed in innerContent)
+			// Pipe at position 7 in innerContent (position 15 in line)
+			// Display text starts at position 16 in line
+			const line = 'Go to [[file.md|My Note]] now';
+			const result = computeDisplayedTextRange(line, 20); // cursor on 'My Note'
+			expect(result).toEqual({
+				linkStart: 6,
+				linkEnd: 25,
+				displayedTextStart: 16,
+				displayedTextEnd: 23
+			});
+		});
+
+		it('should compute range for embedded wiki link', () => {
+			// ![[image.png]] - displayed text is "image.png"
+			// "See ![[photo.jpg]] here"
+			//     ^              ^
+			//     4              18
+			// Inner content: "photo.jpg" (positions 7-15 in line)
+			const line = 'See ![[photo.jpg]] here';
+			const result = computeDisplayedTextRange(line, 10); // cursor on 'photo'
+			expect(result).toEqual({
+				linkStart: 4,
+				linkEnd: 18,
+				displayedTextStart: 7,
+				displayedTextEnd: 16
+			});
+		});
+
+		it('should compute range for embedded wiki link with display text', () => {
+			// ![[file|text]] - displayed text is "text"
+			const line = '![[img.png|My Photo]]';
+			const result = computeDisplayedTextRange(line, 15); // cursor on 'My Photo'
+			expect(result).toEqual({
+				linkStart: 0,
+				linkEnd: 21,
+				displayedTextStart: 11,
+				displayedTextEnd: 19
+			});
+		});
+
+		it('should compute range for wiki link at start of line', () => {
+			const line = '[[link]] text';
+			const result = computeDisplayedTextRange(line, 3);
+			expect(result).toEqual({
+				linkStart: 0,
+				linkEnd: 8,
+				displayedTextStart: 2,
+				displayedTextEnd: 6
+			});
+		});
+	});
+
+	describe('no link at cursor', () => {
+		it('should return null when cursor is not in a link', () => {
+			const line = 'No links here';
+			const result = computeDisplayedTextRange(line, 5);
+			expect(result).toBeNull();
+		});
+
+		it('should return null when cursor is before link', () => {
+			const line = 'Text [link](dest) more';
+			const result = computeDisplayedTextRange(line, 2);
+			expect(result).toBeNull();
+		});
+
+		it('should return null when cursor is after link', () => {
+			const line = 'Text [link](dest) more';
+			const result = computeDisplayedTextRange(line, 20);
+			expect(result).toBeNull();
+		});
+	});
+
+	describe('edge cases', () => {
+		it('should handle cursor at link start', () => {
+			const line = '[text](dest)';
+			const result = computeDisplayedTextRange(line, 0);
+			expect(result).not.toBeNull();
+			expect(result?.linkStart).toBe(0);
+		});
+
+		it('should handle cursor at link end', () => {
+			const line = '[text](dest)';
+			const result = computeDisplayedTextRange(line, 12);
+			expect(result).not.toBeNull();
+			expect(result?.linkEnd).toBe(12);
+		});
+
+		it('should handle wiki link with multiple pipes', () => {
+			// Only the last pipe is the separator
+			// [[file|part1|part2]]
+			// Inner content: "file|part1|part2"
+			// Last pipe at position 10 in innerContent
+			// Display text starts at position 13 in line (2 + 10 + 1)
+			const line = '[[file|part1|part2]]';
+			const result = computeDisplayedTextRange(line, 17); // cursor on 'part2'
+			expect(result).toEqual({
+				linkStart: 0,
+				linkEnd: 20,
+				displayedTextStart: 13,
+				displayedTextEnd: 18
+			});
+		});
 	});
 });

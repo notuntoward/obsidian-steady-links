@@ -417,6 +417,100 @@ export function detectLinkAtCursor(line: string, cursorCh: number): LinkAtCursor
 }
 
 /**
+ * Result of computing displayed text range for a link.
+ * The displayed text is what the user sees in live preview (without syntax).
+ */
+export interface DisplayedTextRange {
+	/** Start of the full link (including syntax) */
+	linkStart: number;
+	/** End of the full link (including syntax) */
+	linkEnd: number;
+	/** Start of the displayed text (after leading syntax) */
+	displayedTextStart: number;
+	/** End of the displayed text (before trailing syntax) */
+	displayedTextEnd: number;
+}
+
+/**
+ * Compute the displayed text range for a link at the given position.
+ * This is used by the "Skip Link" command to determine where to position the cursor.
+ *
+ * For Markdown links like `[text](dest)`:
+ *   - Full link: `[text](dest)`
+ *   - Displayed text: `text`
+ *
+ * For WikiLinks like `[[dest|text]]` or `[[dest]]`:
+ *   - Full link: `[[dest|text]]` or `[[dest]]`
+ *   - Displayed text: `text` or `dest`
+ *
+ * @param line The line text
+ * @param cursorCh The cursor position
+ * @returns The displayed text range, or null if no link at cursor
+ */
+export function computeDisplayedTextRange(line: string, cursorCh: number): DisplayedTextRange | null {
+	// Try Markdown link first
+	const mdLink = detectMarkdownLinkAtCursor(line, cursorCh);
+	if (mdLink) {
+		// Markdown: [text](dest)
+		// Full link: mdLink.start to mdLink.end
+		// Displayed text starts after '[' and ends before ']('
+		const hasEmbedPrefix = mdLink.link.isEmbed;
+		const prefixLen = hasEmbedPrefix ? 2 : 1; // '![' or '['
+		const displayedTextStart = mdLink.start + prefixLen;
+		const displayedTextEnd = displayedTextStart + mdLink.link.text.length;
+		
+		return {
+			linkStart: mdLink.start,
+			linkEnd: mdLink.end,
+			displayedTextStart,
+			displayedTextEnd
+		};
+	}
+
+	// Try WikiLink
+	const wikiLink = detectWikiLinkAtCursor(line, cursorCh);
+	if (wikiLink) {
+		// WikiLink: [[dest|text]] or [[dest]]
+		// Full link: wikiLink.start to wikiLink.end
+		// Displayed text is after the pipe, or the whole destination if no pipe
+		const hasEmbedPrefix = wikiLink.link.isEmbed;
+		const prefixLen = hasEmbedPrefix ? 3 : 2; // '![' or '[['
+		
+		// Find the opening [[ position
+		const openIndex = hasEmbedPrefix 
+			? wikiLink.start + 1  // Skip the '!'
+			: wikiLink.start;
+		
+		// The inner content is between [[ and ]]
+		const innerStart = openIndex + 2;
+		const innerContent = line.substring(innerStart, wikiLink.end - 2);
+		
+		const lastPipeIndex = innerContent.lastIndexOf('|');
+		let displayedTextStart: number;
+		let displayedTextEnd: number;
+		
+		if (lastPipeIndex === -1) {
+			// No pipe: [[dest]] - displayed text is the destination
+			displayedTextStart = innerStart;
+			displayedTextEnd = wikiLink.end - 2;
+		} else {
+			// Has pipe: [[dest|text]] - displayed text is after the pipe
+			displayedTextStart = innerStart + lastPipeIndex + 1;
+			displayedTextEnd = wikiLink.end - 2;
+		}
+		
+		return {
+			linkStart: wikiLink.start,
+			linkEnd: wikiLink.end,
+			displayedTextStart,
+			displayedTextEnd
+		};
+	}
+
+	return null;
+}
+
+/**
  * Context for determining link from user input
  */
 export interface LinkContext {

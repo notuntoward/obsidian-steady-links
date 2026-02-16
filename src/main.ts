@@ -7,9 +7,10 @@ import {
 	parseClipboardLink,
 	detectLinkAtCursor,
 	determineLinkFromContext,
-	urlAtCursor
+	urlAtCursor,
+	computeDisplayedTextRange
 } from "./utils";
-import { buildLinkText, computeCloseCursorPosition, computeSkipCursorPosition } from "./modalLogic";
+import { buildLinkText, computeCloseCursorPosition, computeSkipCursorPosition, computeSkipLinkPosition } from "./modalLogic";
 import { createLinkSyntaxHiderExtension, findLinkRangeAtPos, setTemporarilyVisibleLink, temporarilyVisibleLinkField } from "./linkSyntaxHider";
 import { EditorView } from "@codemirror/view";
 
@@ -279,6 +280,42 @@ export default class SteadyLinksPlugin extends Plugin {
 				} else {
 					// Link is hidden, show it
 					this.showLinkSyntax(editor, view);
+				}
+			},
+		});
+
+		this.addCommand({
+			id: "skip-link",
+			name: "Skip Link",
+			editorCallback: (editor: Editor, view: MarkdownView) => {
+				const cursor = editor.getCursor();
+				const line = editor.getLine(cursor.line);
+
+				// Compute the displayed text range for the link at cursor
+				const displayedRange = computeDisplayedTextRange(line, cursor.ch);
+				
+				if (!displayedRange) {
+					// Cursor is not in or on the edge of a link - do nothing
+					return;
+				}
+
+				// Compute the skip position
+				const skipPos = computeSkipLinkPosition({
+					linkStart: displayedRange.linkStart,
+					linkEnd: displayedRange.linkEnd,
+					displayedTextStart: displayedRange.displayedTextStart,
+					displayedTextEnd: displayedRange.displayedTextEnd,
+					cursorPos: cursor.ch,
+					lineLength: line.length,
+					line: cursor.line,
+					lineCount: editor.lineCount(),
+					prevLineLength: cursor.line > 0 ? editor.getLine(cursor.line - 1).length : 0,
+					isSourceMode: this.isSourceMode(view),
+					keepLinksSteady: this.settings.keepLinksSteady
+				});
+
+				if (skipPos) {
+					editor.setCursor(skipPos);
 				}
 			},
 		});

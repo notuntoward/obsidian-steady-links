@@ -358,6 +358,173 @@ export interface SkipCursorParams {
 	prevLineLength: number;
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// Skip Link command positioning
+// ──────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Parameters for computing the cursor position for the "Skip Link" command.
+ */
+export interface SkipLinkParams {
+	/** Character offset where the full link starts (including syntax) */
+	linkStart: number;
+	/** Character offset where the full link ends */
+	linkEnd: number;
+	/** Character offset where the displayed text starts (after leading syntax) */
+	displayedTextStart: number;
+	/** Character offset where the displayed text ends (before trailing syntax) */
+	displayedTextEnd: number;
+	/** Current cursor position */
+	cursorPos: number;
+	/** Length of the line */
+	lineLength: number;
+	/** Line number the link is on */
+	line: number;
+	/** Total number of lines in the document */
+	lineCount: number;
+	/** Length of the previous line */
+	prevLineLength: number;
+	/** Whether in source mode (true) or live preview (false) */
+	isSourceMode: boolean;
+	/** Whether "keep links steady" setting is enabled */
+	keepLinksSteady: boolean;
+}
+
+/**
+ * Compute the cursor position for the "Skip Link" command.
+ *
+ * Skips to the opposite edge of the link based on which edge the cursor is nearest to.
+ * Target position depends on mode:
+ * - Source mode: Just outside the link syntax
+ * - Preview + keepLinksSteady OFF: Just outside the link (won't trigger link)
+ * - Preview + keepLinksSteady ON: At the edge of displayed text (cursor correction handles the rest)
+ *
+ * @param params All the information needed to compute the position
+ * @returns `{ line, ch }` cursor position, or null if cursor is not in a link
+ */
+export function computeSkipLinkPosition(params: SkipLinkParams): { line: number; ch: number } | null {
+	const {
+		linkStart,
+		linkEnd,
+		displayedTextStart,
+		displayedTextEnd,
+		cursorPos,
+		lineLength,
+		line,
+		lineCount,
+		prevLineLength,
+		isSourceMode,
+		keepLinksSteady
+	} = params;
+
+	// Check if cursor is within the link (including edges)
+	if (cursorPos < linkStart || cursorPos > linkEnd) {
+		return null;
+	}
+
+	// Determine which edge the cursor is nearest to
+	const distToLeftEdge = cursorPos - linkStart;
+	const distToRightEdge = linkEnd - cursorPos;
+	const isNearerLeftEdge = distToLeftEdge <= distToRightEdge;
+
+	// For source mode or preview with keepLinksSteady OFF: skip just outside the link
+	if (isSourceMode || !keepLinksSteady) {
+		return computeSkipOutsideLink({
+			linkStart,
+			linkEnd,
+			cursorPos,
+			lineLength,
+			line,
+			lineCount,
+			prevLineLength,
+			skipRight: isNearerLeftEdge
+		});
+	}
+
+	// For preview with keepLinksSteady ON: skip to the edge of displayed text
+	// The cursor correction in linkSyntaxHider will then move the cursor outside
+	if (isNearerLeftEdge) {
+		// Skip right: position at the end of displayed text (start of trailing hidden syntax)
+		// Cursor correction will move it outside the link
+		return { line, ch: displayedTextEnd };
+	} else {
+		// Skip left: position at the start of displayed text (end of leading hidden syntax)
+		// Cursor correction will move it outside the link
+		return { line, ch: displayedTextStart };
+	}
+}
+
+/**
+ * Compute position just outside the link (for source mode or keepLinksSteady OFF).
+ */
+function computeSkipOutsideLink(params: {
+	linkStart: number;
+	linkEnd: number;
+	cursorPos: number;
+	lineLength: number;
+	line: number;
+	lineCount: number;
+	prevLineLength: number;
+	skipRight: boolean;
+}): { line: number; ch: number } {
+	const { linkStart, linkEnd, lineLength, line, lineCount, prevLineLength, skipRight } = params;
+
+	// Check if link spans the entire line
+	if (linkStart === 0 && linkEnd >= lineLength) {
+		if (skipRight) {
+			// Skip right → go to next line
+			if (line + 1 < lineCount) {
+				return { line: line + 1, ch: 0 };
+			}
+			// Last line, go to previous line
+			if (line > 0) {
+				return { line: line - 1, ch: prevLineLength };
+			}
+			return { line, ch: linkEnd };
+		} else {
+			// Skip left → go to previous line
+			if (line > 0) {
+				return { line: line - 1, ch: prevLineLength };
+			}
+			// First line, go to next line
+			if (line + 1 < lineCount) {
+				return { line: line + 1, ch: 0 };
+			}
+			return { line, ch: 0 };
+		}
+	}
+
+	if (skipRight) {
+		// Skip to the right - position just after the link
+		if (linkEnd < lineLength) {
+			return { line, ch: linkEnd + 1 };
+		}
+		// Link is at end of line — move to next line
+		if (line + 1 < lineCount) {
+			return { line: line + 1, ch: 0 };
+		}
+		// Last line, fall back to left side
+		if (linkStart > 0) {
+			return { line, ch: linkStart - 1 };
+		}
+		return { line, ch: linkEnd };
+	} else {
+		// Skip to the left - position just before the link
+		if (linkStart > 0) {
+			return { line, ch: linkStart - 1 };
+		}
+		// Link is at start of line — move to previous line
+		if (line > 0) {
+			return { line: line - 1, ch: prevLineLength };
+		}
+		// First line, fall back to right side
+		if (linkEnd < lineLength) {
+			return { line, ch: linkEnd + 1 };
+		}
+		return { line, ch: 0 };
+	}
+}
+
 /**
  * Compute the cursor position to skip over a link in the direction of travel.
  *
