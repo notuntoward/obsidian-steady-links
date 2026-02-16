@@ -381,20 +381,31 @@ export class EditLinkModal extends Modal {
 	updateUIState() {
 		this.typeSetting.setDesc(this.isWiki ? "Wikilink" : "Markdown Link");
 
-		// Clear previous warnings (but keep embed detection notices)
-		const existingWarnings = this.warningsContainer.querySelectorAll(".link-warning, .link-embed-detection-notice");
+		// Clear previous warnings (but keep conversion notices that aren't validation warnings)
+		const existingWarnings = this.warningsContainer.querySelectorAll(".link-warning");
 		existingWarnings.forEach((w) => w.remove());
 		this.destInput.inputEl.classList.remove("link-warning-highlight");
 		this.textInput.inputEl.classList.remove("link-warning-highlight");
 
-		// Add notice about embed detection in preview mode if applicable
-		if (!this.isNewLink && !this.link.isEmbed) {
+		// Add notice about embed detection in preview/live mode if applicable
+		// Show this notice when editing an existing link in a mode where the link syntax might be hidden
+		if (!this.isNewLink) {
 			const activeLeaf = this.app.workspace.activeLeaf;
 			const view = activeLeaf?.view as any;
 			const mode = view?.getMode?.();
 			
-			// If we're in preview/live mode, show a notice
-			if (mode && (mode === 'preview' || mode === 'live')) {
+			// Check if we're in a mode where link syntax might be hidden (live preview or reading view)
+			// In these modes, the ! prefix might not be visible/detectable
+			const isPreviewMode = mode === 'preview' || mode === 'live';
+			
+			// Remove any existing embed detection notice first
+			const existingNotice = this.warningsContainer.querySelector(".link-embed-detection-notice");
+			if (existingNotice) existingNotice.remove();
+			
+			// Show notice if:
+			// 1. We're in preview/live mode AND the link wasn't detected as embedded
+			// 2. This helps users know they may need to manually check the embed box
+			if (isPreviewMode && !this.link.isEmbed) {
 				this.warningsContainer.createEl("div", {
 					cls: "link-conversion-notice link-embed-detection-notice",
 					text: "⌾ In preview mode, embedded links that are collapsed may not be detected. Check 'Embed content' if this link should be embedded.",

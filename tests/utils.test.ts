@@ -614,6 +614,34 @@ describe('detectMarkdownLinkAtCursor', () => {
 		expect(result?.start).toBe(7);
 		expect(result?.link.isEmbed).toBe(true);
 	});
+
+	// Tests for fix: embed detection when cursor is on the ! prefix
+	it('should detect embedded markdown link when cursor is on the ! prefix', () => {
+		const line = '![alt](image.png)';
+		const result = detectMarkdownLinkAtCursor(line, 0);
+		expect(result).not.toBeNull();
+		expect(result?.link.isEmbed).toBe(true);
+		expect(result?.link.text).toBe('alt');
+		expect(result?.link.destination).toBe('image.png');
+		expect(result?.start).toBe(0);
+	});
+
+	it('should detect embedded markdown link when cursor is at start of ! prefix with surrounding text', () => {
+		const line = 'See ![img](pic.png) here';
+		const result = detectMarkdownLinkAtCursor(line, 4); // Position of !
+		expect(result).not.toBeNull();
+		expect(result?.link.isEmbed).toBe(true);
+		expect(result?.start).toBe(4);
+	});
+
+	it('should include ! in the detected range for embedded markdown links', () => {
+		const line = 'text ![alt](dest) more';
+		const result = detectMarkdownLinkAtCursor(line, 5); // On the !
+		expect(result?.start).toBe(5); // Should start at !, not at [
+		// ![alt](dest) is 12 chars: ! + [ + alt + ] + ( + dest + ) = 1+1+3+1+1+4+1 = 12
+		expect(result?.end).toBe(17); // 5 + 12 = 17
+		expect(result?.link.isEmbed).toBe(true);
+	});
 });
 
 // ============================================================================
@@ -678,6 +706,49 @@ describe('detectWikiLinkAtCursor', () => {
 		const line = 'Text [[link]] text';
 		expect(detectWikiLinkAtCursor(line, 0)).toBe(null);
 		expect(detectWikiLinkAtCursor(line, 15)).toBe(null);
+	});
+
+	// Tests for fix: embed detection when cursor is on the ! prefix
+	it('should detect embedded wiki link when cursor is on the ! prefix', () => {
+		const line = '![[image.png]]';
+		const result = detectWikiLinkAtCursor(line, 0);
+		expect(result).not.toBeNull();
+		expect(result?.link.isEmbed).toBe(true);
+		expect(result?.link.destination).toBe('image.png');
+		expect(result?.start).toBe(0);
+	});
+
+	it('should detect embedded wiki link when cursor is at start of ! prefix with surrounding text', () => {
+		const line = 'See ![[photo.jpg]] here';
+		const result = detectWikiLinkAtCursor(line, 4); // Position of !
+		expect(result).not.toBeNull();
+		expect(result?.link.isEmbed).toBe(true);
+		expect(result?.start).toBe(4);
+	});
+
+	it('should include ! in the detected range for embedded wiki links', () => {
+		const line = 'text ![[file]] more';
+		const result = detectWikiLinkAtCursor(line, 5); // On the !
+		expect(result?.start).toBe(5); // Should start at !, not at [[
+		expect(result?.end).toBe(14); // Should end after ]]
+		expect(result?.link.isEmbed).toBe(true);
+	});
+
+	it('should correctly identify non-embedded wiki link at start of line', () => {
+		const line = '[[regular-link]]';
+		const result = detectWikiLinkAtCursor(line, 0);
+		expect(result).not.toBeNull();
+		expect(result?.link.isEmbed).toBe(false);
+		expect(result?.start).toBe(0);
+	});
+
+	it('should detect embedded wiki link with display text when cursor on !', () => {
+		const line = '![[file.md|Display Text]]';
+		const result = detectWikiLinkAtCursor(line, 0);
+		expect(result).not.toBeNull();
+		expect(result?.link.isEmbed).toBe(true);
+		expect(result?.link.destination).toBe('file.md');
+		expect(result?.link.text).toBe('Display Text');
 	});
 });
 

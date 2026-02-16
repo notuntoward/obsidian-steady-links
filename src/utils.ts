@@ -302,31 +302,33 @@ export interface LinkAtCursor {
  * Detect if there's a Markdown link at the cursor position
  */
 export function detectMarkdownLinkAtCursor(line: string, cursorCh: number): LinkAtCursor | null {
-	const mdRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
+	const mdRegex = /(!?)\[([^\]]+)\]\(([^)]+)\)/g;
 	let match: RegExpExecArray | null;
 
 	while ((match = mdRegex.exec(line)) !== null) {
+		const hasEmbedPrefix = match[1] === '!';
 		const start = match.index;
 		const end = match.index + match[0].length;
 
-		// Check if this is an embedded link (starts with !)
-		const isEmbed = start > 0 && line.charAt(start - 1) === '!';
-		const actualStart = isEmbed ? start - 1 : start;
+		// The actual link content starts after the ! if present
+		const linkContentStart = hasEmbedPrefix ? start + 1 : start;
+		const isEmbed = hasEmbedPrefix;
+		const actualStart = start; // Include the ! in the range
 
-		// Check if cursor is within the link or immediately before it (for embeds)
-		if ((cursorCh >= start && cursorCh <= end) ||
-		    (isEmbed && cursorCh === actualStart)) {
+		// Check if cursor is within the link (including the ! prefix)
+		// We check a wider range to handle cases where cursor is on the embed prefix
+		if (cursorCh >= start && cursorCh <= end) {
 
 			return {
 				link: {
-					text: match[1],
-					destination: match[2],
+					text: match[2], // Updated index due to new capture group
+					destination: match[3], // Updated index due to new capture group
 					isWiki: false,
 					isEmbed: isEmbed
 				},
-				start: isEmbed ? start - 1 : start,
+				start: start,
 				end: end,
-				enteredFromLeft: cursorCh <= (actualStart + end) / 2
+				enteredFromLeft: cursorCh <= (start + end) / 2
 			};
 		}
 	}
@@ -341,7 +343,7 @@ export function detectWikiLinkAtCursor(line: string, cursorCh: number): LinkAtCu
 	const wikiLinkMatches = [];
 	let startIndex = 0;
 
-	// Find all wikilinks in the line
+	// Find all wikilinks in the line (including optional ! prefix)
 	while (true) {
 		const openIndex = line.indexOf('[[', startIndex);
 		if (openIndex === -1) break;
@@ -349,7 +351,12 @@ export function detectWikiLinkAtCursor(line: string, cursorCh: number): LinkAtCu
 		const closeIndex = line.indexOf(']]', openIndex);
 		if (closeIndex === -1) break;
 
-		const fullMatch = line.substring(openIndex, closeIndex + 2);
+		// Check if this is an embedded link (starts with !)
+		const isEmbed = openIndex > 0 && line.charAt(openIndex - 1) === '!';
+		
+		// Include the ! in the match range if present
+		const matchStart = isEmbed ? openIndex - 1 : openIndex;
+		const fullMatch = line.substring(matchStart, closeIndex + 2);
 		const innerContent = line.substring(openIndex + 2, closeIndex);
 		const lastPipeIndex = innerContent.lastIndexOf('|');
 
@@ -363,9 +370,10 @@ export function detectWikiLinkAtCursor(line: string, cursorCh: number): LinkAtCu
 		}
 
 		wikiLinkMatches.push({
-			index: openIndex,
+			index: matchStart, // Start includes ! if present
 			match: fullMatch,
-			groups: [destination, text]
+			groups: [destination, text],
+			isEmbed: isEmbed
 		});
 
 		startIndex = closeIndex + 2;
@@ -376,24 +384,19 @@ export function detectWikiLinkAtCursor(line: string, cursorCh: number): LinkAtCu
 		const start = wikiMatch.index;
 		const end = wikiMatch.index + wikiMatch.match.length;
 
-		// Check if this is an embedded link (starts with !)
-		const isEmbed = start > 0 && line.charAt(start - 1) === '!';
-		const actualStart = isEmbed ? start - 1 : start;
-
-		// Check if cursor is within the link or immediately before it (for embeds)
-		if ((cursorCh >= start && cursorCh <= end) ||
-		    (isEmbed && cursorCh === actualStart)) {
+		// Check if cursor is within the link (including the ! prefix)
+		if (cursorCh >= start && cursorCh <= end) {
 
 			return {
 				link: {
 					destination: wikiMatch.groups[0],
 					text: wikiMatch.groups[1],
 					isWiki: true,
-					isEmbed: isEmbed,
+					isEmbed: wikiMatch.isEmbed,
 				},
-				start: isEmbed ? start - 1 : start,
+				start: start,
 				end: end,
-				enteredFromLeft: cursorCh <= (actualStart + end) / 2
+				enteredFromLeft: cursorCh <= (start + end) / 2
 			};
 		}
 	}
