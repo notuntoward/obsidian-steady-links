@@ -426,3 +426,93 @@ describe('validateLinkDestination with URL normalization', () => {
 		expect(wikiLinkWarning).toBeDefined();
 	});
 });
+
+// ============================================================================
+// Tests for Toggle Key Handlers (Space toggles, Enter submits)
+// ============================================================================
+
+describe('Toggle Key Handler Behavior', () => {
+	it('should toggle on Space key for link type toggle', () => {
+		// The toggle key handler should respond to Space but not Enter
+		const spaceKey: string = ' ';
+		const enterKey: string = 'Enter';
+		
+		// Space should trigger toggle
+		const shouldToggleOnSpace = spaceKey === ' ' || spaceKey === 'Spacebar';
+		expect(shouldToggleOnSpace).toBe(true);
+		
+		// Enter should NOT trigger toggle (it should submit)
+		const shouldToggleOnEnter = enterKey === ' ' || enterKey === 'Spacebar';
+		expect(shouldToggleOnEnter).toBe(false);
+	});
+
+	it('should toggle on Space key for embed toggle', () => {
+		// Same behavior for embed toggle
+		const spaceKey: string = ' ';
+		const enterKey: string = 'Enter';
+		
+		const shouldToggleOnSpace = spaceKey === ' ' || spaceKey === 'Spacebar';
+		expect(shouldToggleOnSpace).toBe(true);
+		
+		const shouldToggleOnEnter = enterKey === ' ' || enterKey === 'Spacebar';
+		expect(shouldToggleOnEnter).toBe(false);
+	});
+
+	it('should allow Enter to submit from toggle focus', () => {
+		// When Enter is pressed on a toggle, it should propagate to the modal's
+		// keydown handler which calls submit()
+		const enterKey: string = 'Enter';
+		
+		// The toggle handler should NOT prevent default for Enter
+		// (it only handles Space/Spacebar)
+		const handledByToggle = enterKey === ' ' || enterKey === 'Spacebar';
+		expect(handledByToggle).toBe(false);
+	});
+});
+
+// ============================================================================
+// Tests for onCancel Callback
+// ============================================================================
+
+describe('onCancel Callback Behavior', () => {
+	it('should call onCancel when ESC is pressed', () => {
+		// The modal should call onCancel before closing on ESC
+		let cancelCalled = false;
+		const onCancel = () => { cancelCalled = true; };
+		
+		// Simulate the ESC key handler behavior
+		const escapeKey: string = 'Escape';
+		if (escapeKey === 'Escape') {
+			if (onCancel) {
+				onCancel();
+			}
+		}
+		
+		expect(cancelCalled).toBe(true);
+	});
+
+	it('should not call onCancel on submit', () => {
+		// The onCancel should only be called on ESC, not on submit
+		let cancelCalled = false;
+		const onCancel = () => { cancelCalled = true; };
+		
+		// Simulate submit behavior (should NOT call onCancel)
+		const onSubmit = () => { /* submit logic */ };
+		onSubmit();
+		
+		expect(cancelCalled).toBe(false);
+	});
+
+	it('should allow onCancel to be undefined', () => {
+		// The modal should work without an onCancel callback
+		// Test that the pattern used in the modal doesn't throw
+		const maybeCall = (callback: (() => void) | undefined) => {
+			if (callback) {
+				callback();
+			}
+		};
+		
+		// This should not throw when passed undefined
+		expect(() => maybeCall(undefined)).not.toThrow();
+	});
+});

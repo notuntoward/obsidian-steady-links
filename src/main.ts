@@ -10,7 +10,7 @@ import {
 	urlAtCursor
 } from "./utils";
 import { buildLinkText, computeCloseCursorPosition, computeSkipCursorPosition } from "./modalLogic";
-import { createLinkSyntaxHiderExtension, findLinkRangeAtPos, setTemporarilyVisibleLink } from "./linkSyntaxHider";
+import { createLinkSyntaxHiderExtension, findLinkRangeAtPos, setTemporarilyVisibleLink, temporarilyVisibleLinkField } from "./linkSyntaxHider";
 import { EditorView } from "@codemirror/view";
 
 const DEFAULT_SETTINGS: PluginSettings = {
@@ -27,6 +27,42 @@ export default class SteadyLinksPlugin extends Plugin {
 	 * toggles the link-syntax-hider extension at runtime.
 	 */
 	private syntaxHiderExtensions: Extension[] = [];
+
+	/**
+	 * Check if the current view is in source mode (as opposed to live preview).
+	 */
+	private isSourceMode(view: MarkdownView): boolean {
+		const cm6View = (view.editor as any).cm as EditorView;
+		if (!cm6View) {
+			// If no CM6 view, we're likely in reading view or legacy mode
+			// In this case, treat as source mode (skip off link)
+			return true;
+		}
+		const sourceView = cm6View.dom.closest(".markdown-source-view");
+		if (!sourceView) {
+			// No source view container, treat as source mode
+			return true;
+		}
+		// Check for explicit source mode class
+		if (sourceView.classList.contains("is-source-mode")) return true;
+		// Check for live preview class - if not present, assume source mode
+		if (!sourceView.classList.contains("is-live-preview")) return true;
+		return false;
+	}
+
+	/**
+	 * Determine if cursor should skip off link after modal closes.
+	 * Returns true if:
+	 * - "keep links steady" is OFF, OR
+	 * - We're in source mode (where syntax hider is not active)
+	 */
+	private shouldSkipOffLink(view: MarkdownView): boolean {
+		// If keepLinksSteady is OFF, always skip
+		if (!this.settings.keepLinksSteady) return true;
+		// If keepLinksSteady is ON, only skip if we're in source mode
+		// (in live preview, the syntax hider is active and we want to stay on link)
+		return this.isSourceMode(view);
+	}
 
 	async onload() {
 		await this.loadSettings();
@@ -106,6 +142,7 @@ export default class SteadyLinksPlugin extends Plugin {
 					const shouldSelectText = linkContext.shouldSelectText;
 					const conversionNotice = linkContext.conversionNotice;
 
+					// For new links, we don't need to skip off - just return to original position
 					new EditLinkModal(
 							this.app,
 							link,
@@ -116,25 +153,74 @@ export default class SteadyLinksPlugin extends Plugin {
 							},
 						shouldSelectText,
 						conversionNotice,
-						!isEditingExistingLink
+						!isEditingExistingLink,
+						undefined // onCancel - for new links, just return to original position
 					).open();
 
 					return;
 				}
 
 				// At this point, link is guaranteed to be non-null
+				// Store original cursor position for cancel case
+				const originalCursor = { line: cursor.line, ch: cursor.ch };
+				const shouldSkip = this.shouldSkipOffLink(view);
+				
 				// Open modal for editing
 				new EditLinkModal(
 					this.app,
 					link!,
 					(result: LinkInfo) => {
-						const cursorPos = this.applyLinkEdit(editor, cursor.line, start, end, result, enteredFromLeft);
-						// Re-assert cursor after modal closes so the link collapses in live preview
-						setTimeout(() => editor.setCursor(cursorPos), 0);
+						// On submit: apply the edit
+						const replacement = buildLinkText(result);
+						const newEnd = start + replacement.length;
+						
+						editor.replaceRange(
+							replacement,
+							{ line: cursor.line, ch: start },
+							{ line: cursor.line, ch: end }
+						);
+						
+						if (shouldSkip) {
+							// Skip off the link to avoid painful cursoring
+							const lineText = editor.getLine(cursor.line);
+							const skipPos = computeSkipCursorPosition({
+								linkStart: start,
+								linkEnd: newEnd,
+								cursorPos: originalCursor.ch,
+								lineLength: lineText.length,
+								line: cursor.line,
+								lineCount: editor.lineCount(),
+								prevLineLength: cursor.line > 0 ? editor.getLine(cursor.line - 1).length : 0,
+							});
+							editor.setCursor(skipPos);
+						} else {
+							// In live preview with keepLinksSteady ON, return to original position
+							editor.setCursor(originalCursor);
+						}
 					},
 					false, // shouldSelectText
 					null,  // conversionNotice
-					false  // isNewLink
+					false, // isNewLink
+					() => {
+						// On cancel (ESC): return cursor based on mode
+						if (shouldSkip) {
+							// Skip off the link to avoid painful cursoring
+							const lineText = editor.getLine(cursor.line);
+							const skipPos = computeSkipCursorPosition({
+								linkStart: start,
+								linkEnd: end,
+								cursorPos: originalCursor.ch,
+								lineLength: lineText.length,
+								line: cursor.line,
+								lineCount: editor.lineCount(),
+								prevLineLength: cursor.line > 0 ? editor.getLine(cursor.line - 1).length : 0,
+							});
+							editor.setCursor(skipPos);
+						} else {
+							// In live preview with keepLinksSteady ON, return to original position
+							editor.setCursor(originalCursor);
+						}
+					}
 				).open();
 			},
 		});
@@ -143,34 +229,11 @@ export default class SteadyLinksPlugin extends Plugin {
 			id: "hide-link-syntax",
 			name: "Hide Link Syntax",
 			editorCallback: (editor: Editor, view: MarkdownView) => {
-				const cursor = editor.getCursor();
-				const line = editor.getLine(cursor.line);
-
-				const existingLink = detectLinkAtCursor(line, cursor.ch);
-
-				if (!existingLink) {
+				// In source mode, there's no link syntax hiding - do nothing
+				if (this.isSourceMode(view)) {
 					return;
 				}
-
-				// Clear any temporarily visible link
-				const cm6View = (editor as any).cm as EditorView;
-				if (cm6View) {
-					cm6View.dispatch({
-						effects: setTemporarilyVisibleLink.of(null)
-					});
-				}
-
-				const skipPos = computeSkipCursorPosition({
-					linkStart: existingLink.start,
-					linkEnd: existingLink.end,
-					cursorPos: cursor.ch,
-					lineLength: line.length,
-					line: cursor.line,
-					lineCount: editor.lineCount(),
-					prevLineLength: cursor.line > 0 ? editor.getLine(cursor.line - 1).length : 0,
-				});
-
-				editor.setCursor(skipPos);
+				this.hideLinkSyntax(editor, view);
 			},
 		});
 
@@ -178,55 +241,45 @@ export default class SteadyLinksPlugin extends Plugin {
 			id: "show-link-syntax",
 			name: "Show Link Syntax",
 			editorCallback: (editor: Editor, view: MarkdownView) => {
-				// Get the CM6 view from the editor
+				// In source mode, there's no link syntax hiding - do nothing
+				if (this.isSourceMode(view)) {
+					return;
+				}
+				this.showLinkSyntax(editor, view);
+			},
+		});
+
+		this.addCommand({
+			id: "toggle-link-syntax",
+			name: "Toggle Link Syntax",
+			editorCallback: (editor: Editor, view: MarkdownView) => {
+				// In source mode, there's no link syntax hiding - do nothing
+				if (this.isSourceMode(view)) {
+					return;
+				}
+
+				// When "keep links steady" is disabled, behave like Hide Link Syntax
+				// This preserves muscle memory for users who developed it while the setting was enabled
+				if (!this.settings.keepLinksSteady) {
+					this.hideLinkSyntax(editor, view);
+					return;
+				}
+
 				const cm6View = (editor as any).cm as EditorView;
 				if (!cm6View) {
 					return;
 				}
 
-				const cursor = editor.getCursor();
-				const line = editor.getLine(cursor.line);
-
-				// First, try to detect link at current cursor position using the editor API
-				let existingLink = detectLinkAtCursor(line, cursor.ch);
-
-				// If not found at cursor, try to find any link on the current line
-				// by iterating through potential positions (cursor might be pushed out)
-				if (!existingLink) {
-					// Try positions around the cursor
-					for (let offset = -5; offset <= 5; offset++) {
-						const testPos = cursor.ch + offset;
-						if (testPos >= 0 && testPos <= line.length) {
-							existingLink = detectLinkAtCursor(line, testPos);
-							if (existingLink) {
-								break;
-							}
-						}
-					}
-				}
-
-				if (!existingLink) {
-					return;
-				}
-
-				// Find the full link range (including syntax) using CM6 document positions
-				const docLine = cm6View.state.doc.line(cursor.line + 1); // CM6 lines are 1-indexed
+				// Check if there's a temporarily visible link
+				const currentVisible = cm6View.state.field(temporarilyVisibleLinkField, false);
 				
-				// Convert the editor line position to CM6 document position
-				const linkStartPos = docLine.from + existingLink.start;
-				const linkEndPos = docLine.from + existingLink.end;
-				
-				// Try to find the link range at the link's actual position
-				const linkRange = findLinkRangeAtPos(docLine.text, docLine.from, linkStartPos);
-
-				if (!linkRange) {
-					return;
+				if (currentVisible) {
+					// Link is shown, hide it
+					this.hideLinkSyntax(editor, view);
+				} else {
+					// Link is hidden, show it
+					this.showLinkSyntax(editor, view);
 				}
-
-				// Dispatch effect to temporarily show this link's syntax
-				cm6View.dispatch({
-					effects: setTemporarilyVisibleLink.of(linkRange)
-				});
 			},
 		});
 
@@ -264,6 +317,111 @@ export default class SteadyLinksPlugin extends Plugin {
 
 		editor.setCursor(cursorPos);
 		return cursorPos;
+	}
+
+	/**
+	 * Show the link syntax at the current cursor position.
+	 * Used by both "Show Link Syntax" and "Toggle Link Syntax" commands.
+	 * Only works in live preview mode when "keep links steady" is enabled.
+	 */
+	private showLinkSyntax(editor: Editor, view: MarkdownView): void {
+		// This command only makes sense when "keep links steady" is enabled
+		if (!this.settings.keepLinksSteady) {
+			return;
+		}
+
+		// Get the CM6 view from the editor
+		const cm6View = (editor as any).cm as EditorView;
+		if (!cm6View) {
+			return;
+		}
+
+		const cursor = editor.getCursor();
+		const line = editor.getLine(cursor.line);
+
+		// First, try to detect link at current cursor position using the editor API
+		let existingLink = detectLinkAtCursor(line, cursor.ch);
+
+		// If not found at cursor, try to find any link on the current line
+		// by iterating through potential positions (cursor might be pushed out)
+		if (!existingLink) {
+			// Try positions around the cursor
+			for (let offset = -5; offset <= 5; offset++) {
+				const testPos = cursor.ch + offset;
+				if (testPos >= 0 && testPos <= line.length) {
+					existingLink = detectLinkAtCursor(line, testPos);
+					if (existingLink) {
+						break;
+					}
+				}
+			}
+		}
+
+		if (!existingLink) {
+			return;
+		}
+
+		// Find the full link range (including syntax) using CM6 document positions
+		const docLine = cm6View.state.doc.line(cursor.line + 1); // CM6 lines are 1-indexed
+		
+		// Convert the editor line position to CM6 document position
+		const linkStartPos = docLine.from + existingLink.start;
+		
+		// Try to find the link range at the link's actual position
+		const linkRange = findLinkRangeAtPos(docLine.text, docLine.from, linkStartPos);
+
+		if (!linkRange) {
+			return;
+		}
+
+		// Dispatch effect to temporarily show this link's syntax
+		cm6View.dispatch({
+			effects: setTemporarilyVisibleLink.of(linkRange)
+		});
+	}
+
+	/**
+	 * Hide the link syntax at the current cursor position.
+	 * Used by both "Hide Link Syntax" and "Toggle Link Syntax" commands.
+	 * 
+	 * When "keep links steady" is ON: cursor stays on link for easy toggling
+	 * When "keep links steady" is OFF: cursor skips off link to prevent re-expansion
+	 */
+	private hideLinkSyntax(editor: Editor, view: MarkdownView): void {
+		const cursor = editor.getCursor();
+		const line = editor.getLine(cursor.line);
+
+		const existingLink = detectLinkAtCursor(line, cursor.ch);
+
+		if (!existingLink) {
+			return;
+		}
+
+		// Clear any temporarily visible link
+		const cm6View = (editor as any).cm as EditorView;
+		if (cm6View) {
+			cm6View.dispatch({
+				effects: setTemporarilyVisibleLink.of(null)
+			});
+		}
+
+		// When "keep links steady" is ON, don't skip - let user toggle back and forth
+		// When OFF, skip off the link to prevent automatic re-expansion
+		if (this.settings.keepLinksSteady) {
+			return;
+		}
+
+		const skipPos = computeSkipCursorPosition({
+			linkStart: existingLink.start,
+			linkEnd: existingLink.end,
+			cursorPos: cursor.ch,
+			lineLength: line.length,
+			line: cursor.line,
+			lineCount: editor.lineCount(),
+			prevLineLength: cursor.line > 0 ? editor.getLine(cursor.line - 1).length : 0,
+		});
+
+		editor.setCursor(skipPos);
 	}
 
 	/**

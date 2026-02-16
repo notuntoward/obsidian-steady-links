@@ -928,5 +928,6 @@ export {
 	listContinuation,
 	findLinkEndAtPos,
 	setTemporarilyVisibleLink,
+	temporarilyVisibleLinkField,
 };
 export type { HiddenRange, LinkRange };

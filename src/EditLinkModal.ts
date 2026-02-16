@@ -21,6 +21,7 @@ import {
 export class EditLinkModal extends Modal {
 	link: LinkInfo;
 	onSubmit: (result: LinkInfo) => void;
+	onCancel?: () => void;
 	shouldSelectText: boolean;
 	conversionNotice: string | null;
 	isWiki: boolean;
@@ -45,11 +46,13 @@ export class EditLinkModal extends Modal {
 		onSubmit: (result: LinkInfo) => void,
 		shouldSelectText?: boolean,
 		conversionNotice?: string | null,
-		isNewLink?: boolean
+		isNewLink?: boolean,
+		onCancel?: () => void
 	) {
 		super(app);
 		this.link = link;
 		this.onSubmit = onSubmit;
+		this.onCancel = onCancel;
 		this.shouldSelectText = shouldSelectText || false;
 		this.conversionNotice = conversionNotice || null;
 		this.isWiki = false;
@@ -141,7 +144,8 @@ export class EditLinkModal extends Modal {
 
 				toggle.toggleEl.setAttribute("tabindex", "0");
 				toggle.toggleEl.addEventListener("keydown", (e) => {
-					if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") {
+					// Only toggle with Space, let Enter propagate to submit
+					if (e.key === " " || e.key === "Spacebar") {
 						e.preventDefault();
 						const newValue = !toggle.getValue();
 
@@ -180,9 +184,9 @@ export class EditLinkModal extends Modal {
 
 				toggle.toggleEl.setAttribute("tabindex", "0");
 				toggle.toggleEl.addEventListener("keydown", (e) => {
-					if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") {
+					// Only toggle with Space, let Enter propagate to submit
+					if (e.key === " " || e.key === "Spacebar") {
 						e.preventDefault();
-						e.stopPropagation();
 						const currentValue = toggle.getValue();
 						toggle.setValue(!currentValue);
 						embedSetting.setDesc(!currentValue ? "Link contents shown in note" : "Link shown in note");
@@ -254,6 +258,9 @@ export class EditLinkModal extends Modal {
 				if (isOpen) {
 					this.fileSuggest.close();
 					return;
+				}
+				if (this.onCancel) {
+					this.onCancel();
 				}
 				this.close();
 			}
