@@ -166,9 +166,14 @@ export class EditLinkModal extends Modal {
 		// Embed checkbox
 		const embedSetting = new Setting(contentEl)
 			.setName("Embed content")
+			.setDesc(this.link.isEmbed ? "Link contents shown in note" : "Link shown in note")
 			.addToggle((toggle) => {
 				this.embedToggle = toggle;
 				toggle.setValue(this.link.isEmbed || false);
+				
+				toggle.onChange((value) => {
+					embedSetting.setDesc(value ? "Link contents shown in note" : "Link shown in note");
+				});
 
 				toggle.toggleEl.setAttribute("tabindex", "0");
 				toggle.toggleEl.addEventListener("keydown", (e) => {
@@ -177,6 +182,7 @@ export class EditLinkModal extends Modal {
 						e.stopPropagation();
 						const currentValue = toggle.getValue();
 						toggle.setValue(!currentValue);
+						embedSetting.setDesc(!currentValue ? "Link contents shown in note" : "Link shown in note");
 					}
 				});
 			});

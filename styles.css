@@ -70,6 +70,62 @@ body.le-keep-links-steady .cm-cursor {
   margin-bottom: 0.5em;
 }
 
+/* Warning and info message styling */
+.link-warning,
+.link-conversion-notice {
+  padding: 0.6em 0.8em;
+  border-radius: 4px;
+  margin: 0.4em 0;
+  font-size: 0.9em;
+  line-height: 1.4;
+}
+
+/* Info/conversion notices - subtle blue */
+.link-conversion-notice {
+  background-color: color-mix(in srgb, var(--color-blue) 10%, var(--background-primary));
+  border-left: 3px solid var(--color-blue);
+  color: var(--text-normal);
+}
+
+/* Warning messages - subtle amber/orange */
+.link-warning-caution {
+  background-color: color-mix(in srgb, var(--color-orange) 10%, var(--background-primary));
+  border-left: 3px solid var(--color-orange);
+  color: var(--text-normal);
+}
+
+/* Error messages - subtle red */
+.link-warning-error,
+.link-validation-error {
+  background-color: color-mix(in srgb, var(--color-red) 10%, var(--background-primary));
+  border-left: 3px solid var(--color-red);
+  color: var(--text-normal);
+}
+
+/* Add icons using ::before pseudo-element */
+.link-conversion-notice::before {
+  content: "ⓘ ";
+  font-weight: bold;
+  margin-right: 0.3em;
+}
+
+.link-warning-caution::before {
+  content: "⚠ ";
+  margin-right: 0.3em;
+}
+
+.link-warning-error::before,
+.link-validation-error::before {
+  content: "⚠ ";
+  margin-right: 0.3em;
+}
+
+/* Validation hint text (Cancel instruction) */
+.link-validation-hint {
+  margin-top: 0.4em;
+  font-size: 0.85em;
+  opacity: 0.8;
+}
 
 /* Style embed toggle to be less prominent than Link Type */
 .link-embed-checkbox {
