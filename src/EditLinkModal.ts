@@ -40,6 +40,12 @@ export class EditLinkModal extends Modal {
 	applyBtn!: ButtonComponent;
 	warningsContainer!: HTMLElement;
 
+	/**
+	 * Track event listeners for explicit cleanup on close.
+	 * Array of tuples: [element, event type, handler function]
+	 */
+	private eventListeners: Array<[HTMLElement, string, EventListener]> = [];
+
 	constructor(
 		app: App,
 		link: LinkInfo,
@@ -84,28 +90,32 @@ export class EditLinkModal extends Modal {
 				this.textInput = text;
 				text.setValue(this.link.text);
 				text.inputEl.style.width = "100%";
-				text.inputEl.addEventListener("input", () => {
+				const textInputHandler = () => {
 					this.clearValidationErrors();
 					this.updateUIState();
 					this.updateConversionNotice();
-				});
+				};
+				text.inputEl.addEventListener("input", textInputHandler);
+				this.eventListeners.push([text.inputEl, "input", textInputHandler]);
 			});
 
 		// Destination
 		const destSetting = new Setting(contentEl).setName("Destination");
 
-		destSetting.addText((text) => {
-			this.destInput = text;
-			text.setValue(this.link.destination);
-			text.inputEl.style.width = "100%";
+	destSetting.addText((text) => {
+		this.destInput = text;
+		text.setValue(this.link.destination);
+		text.inputEl.style.width = "100%";
 
-			this.fileSuggest = new FileSuggest(this.app, text.inputEl, this);
+		this.fileSuggest = new FileSuggest(this.app, text.inputEl, this);
 
-			text.inputEl.addEventListener("input", () => {
-				this.handleDestInput();
-				this.updateConversionNotice();
-			});
-		});
+		const destInputHandler = () => {
+			this.handleDestInput();
+			this.updateConversionNotice();
+		};
+		text.inputEl.addEventListener("input", destInputHandler);
+		this.eventListeners.push([text.inputEl, "input", destInputHandler]);
+	});
 
 		// Warnings container
 		this.warningsContainer = contentEl.createDiv({ cls: "link-warnings-container" });
@@ -142,31 +152,33 @@ export class EditLinkModal extends Modal {
 					this.updateUIState();
 				});
 
-				toggle.toggleEl.setAttribute("tabindex", "0");
-				toggle.toggleEl.addEventListener("keydown", (e) => {
-					// Only toggle with Space, let Enter propagate to submit
-					if (e.key === " " || e.key === "Spacebar") {
-						e.preventDefault();
-						const newValue = !toggle.getValue();
+			toggle.toggleEl.setAttribute("tabindex", "0");
+			const typeToggleKeydownHandler = (e: KeyboardEvent) => {
+				// Only toggle with Space, let Enter propagate to submit
+				if (e.key === " " || e.key === "Spacebar") {
+					e.preventDefault();
+					const newValue = !toggle.getValue();
 
-						const dest = this.destInput.getValue();
-						if (newValue && !this.isWiki) {
-							const converted = markdownToWiki(dest);
-							if (converted !== null && converted !== dest) {
-								this.destInput.setValue(converted);
-							}
-						} else if (!newValue && this.isWiki) {
-							const converted = wikiToMarkdown(dest);
-							if (converted !== dest) {
-								this.destInput.setValue(converted);
-							}
+					const dest = this.destInput.getValue();
+					if (newValue && !this.isWiki) {
+						const converted = markdownToWiki(dest);
+						if (converted !== null && converted !== dest) {
+							this.destInput.setValue(converted);
 						}
-
-						toggle.setValue(newValue);
-						this.isWiki = newValue;
-						this.updateUIState();
+					} else if (!newValue && this.isWiki) {
+						const converted = wikiToMarkdown(dest);
+						if (converted !== dest) {
+							this.destInput.setValue(converted);
+						}
 					}
-				});
+
+					toggle.setValue(newValue);
+					this.isWiki = newValue;
+					this.updateUIState();
+				}
+			};
+			toggle.toggleEl.addEventListener("keydown", typeToggleKeydownHandler as EventListener);
+			this.eventListeners.push([toggle.toggleEl, "keydown", typeToggleKeydownHandler as EventListener]);
 			});
 
 		// Embed checkbox
@@ -182,17 +194,19 @@ export class EditLinkModal extends Modal {
 					this.updateUIState(); // Update warnings when embed state changes
 				});
 
-				toggle.toggleEl.setAttribute("tabindex", "0");
-				toggle.toggleEl.addEventListener("keydown", (e) => {
-					// Only toggle with Space, let Enter propagate to submit
-					if (e.key === " " || e.key === "Spacebar") {
-						e.preventDefault();
-						const currentValue = toggle.getValue();
-						toggle.setValue(!currentValue);
-						embedSetting.setDesc(!currentValue ? "Link contents shown in note" : "Link shown in note");
-						this.updateUIState(); // Update warnings when embed state changes
-					}
-				});
+			toggle.toggleEl.setAttribute("tabindex", "0");
+			const embedToggleKeydownHandler = (e: KeyboardEvent) => {
+				// Only toggle with Space, let Enter propagate to submit
+				if (e.key === " " || e.key === "Spacebar") {
+					e.preventDefault();
+					const currentValue = toggle.getValue();
+					toggle.setValue(!currentValue);
+					embedSetting.setDesc(!currentValue ? "Link contents shown in note" : "Link shown in note");
+					this.updateUIState(); // Update warnings when embed state changes
+				}
+			};
+			toggle.toggleEl.addEventListener("keydown", embedToggleKeydownHandler as EventListener);
+			this.eventListeners.push([toggle.toggleEl, "keydown", embedToggleKeydownHandler as EventListener]);
 			});
 		embedSetting.settingEl.addClass("link-embed-checkbox");
 
@@ -208,7 +222,7 @@ export class EditLinkModal extends Modal {
 		});
 
 		// Key handling
-		this.modalEl.addEventListener("keydown", (e) => {
+		const modalKeydownHandler = (e: KeyboardEvent) => {
 			// TAB: accept suggestion if open, otherwise cycle focus
 			if (e.key === "Tab") {
 				// If on dest and suggester open, Tab accept suggestion (don't cycle focus)
@@ -264,7 +278,9 @@ export class EditLinkModal extends Modal {
 				}
 				this.close();
 			}
-		});
+		};
+		this.modalEl.addEventListener("keydown", modalKeydownHandler as EventListener);
+		this.eventListeners.push([this.modalEl, "keydown", modalKeydownHandler as EventListener]);
 
 		this.updateUIState();
 		this.populateFromClipboard();
@@ -496,6 +512,12 @@ export class EditLinkModal extends Modal {
 	};
 
 	onClose() {
+		// Explicitly remove all event listeners for proper cleanup
+		for (const [element, eventType, handler] of this.eventListeners) {
+			element.removeEventListener(eventType, handler);
+		}
+		this.eventListeners = [];
+		
 		this.contentEl.empty();
 	}
 }

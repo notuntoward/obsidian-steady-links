@@ -474,7 +474,12 @@ export default class SteadyLinksPlugin extends Plugin {
 		this.app.workspace.updateOptions();
 	}
 
-	onunload() {}
+	onunload() {
+		// No cleanup needed. This plugin's lifecycle is managed by Obsidian:
+		// - Editor extensions are cleared when `this.syntaxHiderExtensions` array is emptied
+		// - Event listeners in modals are cleaned up automatically when modals close
+		// - Command handlers are unregistered by the plugin system
+	}
 
 	async loadSettings() {
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());

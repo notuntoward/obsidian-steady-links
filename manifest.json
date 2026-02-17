@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "minAppVersion": "1.9.0",
   "description": "Links that stay put while you type, intelligent link editor.",
-  "author": "Your Name",
-  "authorUrl": "https://github.com/yourname",
+  "author": "Scott Otterson",
+  "authorUrl": "https://github.com/notuntoward",
   "isDesktopOnly": false
 }
