@@ -76,152 +76,7 @@ export default class SteadyLinksPlugin extends Plugin {
 			id: "edit-link",
 			name: "Edit link",
 			editorCallback: async (editor: Editor, view: MarkdownView) => {
-				const cursor = editor.getCursor();
-				const line = editor.getLine(cursor.line);
-
-				// Try to detect existing link at cursor
-				const existingLink = detectLinkAtCursor(line, cursor.ch);
-
-				let link: LinkInfo | null = null;
-				let start = cursor.ch;
-				let end = cursor.ch;
-				let enteredFromLeft = true;
-
-				if (existingLink) {
-					// Found existing link
-					link = existingLink.link;
-					start = existingLink.start;
-					end = existingLink.end;
-					enteredFromLeft = existingLink.enteredFromLeft;
-				} else {
-					// Creating new link
-					const selection = editor.getSelection();
-					let clipboardText = "";
-
-					try {
-						clipboardText = await navigator.clipboard.readText();
-						clipboardText = clipboardText.trim();
-					} catch (e) {
-						// Clipboard access may fail
-					}
-
-					const cursorUrl = urlAtCursor(line, cursor.ch);
-
-					// Determine link from context (selection, clipboard, URL at cursor)
-					const linkContext = determineLinkFromContext({
-						selection,
-						clipboardText,
-						cursorUrl,
-						line,
-						cursorCh: cursor.ch
-					});
-
-					link = {
-						text: linkContext.text,
-						destination: linkContext.destination,
-						isWiki: linkContext.isWiki,
-						isEmbed: false,
-					};
-
-					// Handle selection range or URL range
-					if (editor.somethingSelected()) {
-						const selStart = editor.getCursor("from");
-						const selEnd = editor.getCursor("to");
-						start = selStart.ch;
-						end = selEnd.ch;
-					} else if (cursorUrl) {
-						start = linkContext.start;
-						end = linkContext.end;
-					} else {
-						start = cursor.ch;
-						end = cursor.ch;
-					}
-
-					// Open modal with link information
-					const isEditingExistingLink = false;
-					const shouldSelectText = linkContext.shouldSelectText;
-					const conversionNotice = linkContext.conversionNotice;
-
-					// For new links, we don't need to skip off - just return to original position
-					new EditLinkModal(
-							this.app,
-							link,
-							(result: LinkInfo) => {
-								const cursorPos = this.applyLinkEdit(editor, cursor.line, start, end, result, enteredFromLeft);
-								// Re-assert cursor after modal closes so the link collapses in live preview
-								setTimeout(() => editor.setCursor(cursorPos), 0);
-							},
-						shouldSelectText,
-						conversionNotice,
-						!isEditingExistingLink,
-						undefined // onCancel - for new links, just return to original position
-					).open();
-
-					return;
-				}
-
-				// At this point, link is guaranteed to be non-null
-				// Store original cursor position for cancel case
-				const originalCursor = { line: cursor.line, ch: cursor.ch };
-				const shouldSkip = this.shouldSkipOffLink(view);
-				
-				// Open modal for editing
-				new EditLinkModal(
-					this.app,
-					link!,
-					(result: LinkInfo) => {
-						// On submit: apply the edit
-						const replacement = buildLinkText(result);
-						const newEnd = start + replacement.length;
-						
-						editor.replaceRange(
-							replacement,
-							{ line: cursor.line, ch: start },
-							{ line: cursor.line, ch: end }
-						);
-						
-						if (shouldSkip) {
-							// Skip off the link to avoid painful cursoring
-							const lineText = editor.getLine(cursor.line);
-							const skipPos = computeSkipCursorPosition({
-								linkStart: start,
-								linkEnd: newEnd,
-								cursorPos: originalCursor.ch,
-								lineLength: lineText.length,
-								line: cursor.line,
-								lineCount: editor.lineCount(),
-								prevLineLength: cursor.line > 0 ? editor.getLine(cursor.line - 1).length : 0,
-							});
-							editor.setCursor(skipPos);
-						} else {
-							// In live preview with keepLinksSteady ON, return to original position
-							editor.setCursor(originalCursor);
-						}
-					},
-					false, // shouldSelectText
-					null,  // conversionNotice
-					false, // isNewLink
-					() => {
-						// On cancel (ESC): return cursor based on mode
-						if (shouldSkip) {
-							// Skip off the link to avoid painful cursoring
-							const lineText = editor.getLine(cursor.line);
-							const skipPos = computeSkipCursorPosition({
-								linkStart: start,
-								linkEnd: end,
-								cursorPos: originalCursor.ch,
-								lineLength: lineText.length,
-								line: cursor.line,
-								lineCount: editor.lineCount(),
-								prevLineLength: cursor.line > 0 ? editor.getLine(cursor.line - 1).length : 0,
-							});
-							editor.setCursor(skipPos);
-						} else {
-							// In live preview with keepLinksSteady ON, return to original position
-							editor.setCursor(originalCursor);
-						}
-					}
-				).open();
+				await this.handleEditLinkCommand(editor, view);
 			},
 		});
 
@@ -472,6 +327,164 @@ export default class SteadyLinksPlugin extends Plugin {
 			);
 		}
 		this.app.workspace.updateOptions();
+	}
+
+	/**
+	 * Handle the Edit Link command - orchestrates opening the modal and applying changes.
+	 * Routes to either handling an existing link edit or creating a new link.
+	 */
+	private async handleEditLinkCommand(editor: Editor, view: MarkdownView): Promise<void> {
+		const cursor = editor.getCursor();
+		const line = editor.getLine(cursor.line);
+
+		// Detect existing link at cursor
+		const existingLink = detectLinkAtCursor(line, cursor.ch);
+
+		if (existingLink) {
+			// Editing existing link
+			this.handleExistingLinkEdit(editor, view, cursor, existingLink);
+		} else {
+			// Creating new link
+			await this.handleNewLinkCreation(editor, cursor, line);
+		}
+	}
+
+	/**
+	 * Handle editing an existing link - preserves cursor behavior based on "keep links steady" setting.
+	 * Applies link changes and positions cursor appropriately after modal closes.
+	 */
+	private handleExistingLinkEdit(
+		editor: Editor,
+		view: MarkdownView,
+		cursor: { line: number; ch: number },
+		existingLink: any
+	): void {
+		const originalCursor = { line: cursor.line, ch: cursor.ch };
+		const shouldSkip = this.shouldSkipOffLink(view);
+		const start = existingLink.start;
+		const end = existingLink.end;
+
+		new EditLinkModal(
+			this.app,
+			existingLink.link,
+			(result: LinkInfo) => {
+				const replacement = buildLinkText(result);
+				const newEnd = start + replacement.length;
+
+				editor.replaceRange(
+					replacement,
+					{ line: cursor.line, ch: start },
+					{ line: cursor.line, ch: end }
+				);
+
+				if (shouldSkip) {
+					const lineText = editor.getLine(cursor.line);
+					const skipPos = computeSkipCursorPosition({
+						linkStart: start,
+						linkEnd: newEnd,
+						cursorPos: originalCursor.ch,
+						lineLength: lineText.length,
+						line: cursor.line,
+						lineCount: editor.lineCount(),
+						prevLineLength: cursor.line > 0 ? editor.getLine(cursor.line - 1).length : 0,
+					});
+					editor.setCursor(skipPos);
+				} else {
+					editor.setCursor(originalCursor);
+				}
+			},
+			false, // shouldSelectText
+			null, // conversionNotice
+			false, // isNewLink
+			() => {
+				// On cancel: return cursor based on mode
+				if (shouldSkip) {
+					const lineText = editor.getLine(cursor.line);
+					const skipPos = computeSkipCursorPosition({
+						linkStart: start,
+						linkEnd: end,
+						cursorPos: originalCursor.ch,
+						lineLength: lineText.length,
+						line: cursor.line,
+						lineCount: editor.lineCount(),
+						prevLineLength: cursor.line > 0 ? editor.getLine(cursor.line - 1).length : 0,
+					});
+					editor.setCursor(skipPos);
+				} else {
+					editor.setCursor(originalCursor);
+				}
+			}
+		).open();
+	}
+
+	/**
+	 * Handle creating a new link - infers link context from selection/clipboard/cursor position.
+	 * Intelligently determines link text, destination, and range for the new link.
+	 */
+	private async handleNewLinkCreation(
+		editor: Editor,
+		cursor: { line: number; ch: number },
+		line: string
+	): Promise<void> {
+		const selection = editor.getSelection();
+		let clipboardText = "";
+
+		try {
+			clipboardText = await navigator.clipboard.readText();
+			clipboardText = clipboardText.trim();
+		} catch (e) {
+			// Clipboard access may fail - proceed without it
+		}
+
+		const cursorUrl = urlAtCursor(line, cursor.ch);
+		const linkContext = determineLinkFromContext({
+			selection,
+			clipboardText,
+			cursorUrl,
+			line,
+			cursorCh: cursor.ch
+		});
+
+		const link: LinkInfo = {
+			text: linkContext.text,
+			destination: linkContext.destination,
+			isWiki: linkContext.isWiki,
+			isEmbed: false,
+		};
+
+		// Determine range for new link (selection, URL, or cursor position)
+		let start = cursor.ch;
+		let end = cursor.ch;
+
+		if (editor.somethingSelected()) {
+			const selStart = editor.getCursor("from");
+			const selEnd = editor.getCursor("to");
+			start = selStart.ch;
+			end = selEnd.ch;
+		} else if (cursorUrl) {
+			start = linkContext.start;
+			end = linkContext.end;
+		}
+
+		new EditLinkModal(
+			this.app,
+			link,
+			(result: LinkInfo) => {
+				const cursorPos = this.applyLinkEdit(
+					editor,
+					cursor.line,
+					start,
+					end,
+					result,
+					true // enteredFromLeft
+				);
+				// Re-assert cursor after modal closes so the link collapses in live preview
+				setTimeout(() => editor.setCursor(cursorPos), 0);
+			},
+			linkContext.shouldSelectText,
+			linkContext.conversionNotice,
+			true // isNewLink
+		).open();
 	}
 
 	onunload() {
