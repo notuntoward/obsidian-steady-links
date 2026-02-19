@@ -140,6 +140,30 @@ describe("findWikiLinkSyntaxRanges", () => {
 		const ranges = findWikiLinkSyntaxRanges(text, 0);
 		expect(ranges[1].to).toBe(text.length);
 	});
+
+	it("should NOT hide empty wiki links like [[]]", () => {
+		// Empty wiki links should not be hidden so Obsidian's native
+		// link autocomplete can work when typing '[['
+		const ranges = findWikiLinkSyntaxRanges("[[]]", 0);
+		expect(ranges).toEqual([]);
+	});
+
+	it("should NOT hide whitespace-only wiki links like [[ ]]", () => {
+		const ranges = findWikiLinkSyntaxRanges("[[ ]]", 0);
+		expect(ranges).toEqual([]);
+	});
+
+	it("should NOT hide whitespace-only wiki links like [[\t]]", () => {
+		const ranges = findWikiLinkSyntaxRanges("[[\t]]", 0);
+		expect(ranges).toEqual([]);
+	});
+
+	it("should still hide wiki links with content", () => {
+		const ranges = findWikiLinkSyntaxRanges("[[a]]", 0);
+		expect(ranges).toHaveLength(2);
+		expect(ranges[0]).toEqual({ from: 0, to: 2, side: "leading" });
+		expect(ranges[1]).toEqual({ from: 3, to: 5, side: "trailing" });
+	});
 });
 
 // ============================================================================
@@ -353,12 +377,12 @@ describe("findLinkEndAtPos", () => {
 // ============================================================================
 
 describe("computeHiddenRanges", () => {
-	it("should return hidden ranges for lines with cursor on links", () => {
-		// Create a minimal EditorState with a link and cursor position
+	it("should return hidden ranges for lines with cursor on links (cursor NOT inside link content)", () => {
+		// Create a minimal EditorState with a link and cursor position OUTSIDE the link
 		const doc = "Check out [[my-note|My Note]] for more info";
 		const state = EditorState.create({
 			doc,
-			selection: EditorSelection.cursor(12), // Cursor inside the link
+			selection: EditorSelection.cursor(5), // Cursor BEFORE the link (not inside)
 		});
 
 		const ranges = computeHiddenRanges(state);
@@ -380,6 +404,21 @@ describe("computeHiddenRanges", () => {
 		expect(trailingRange!.to).toBeGreaterThan(trailingRange!.from);
 	});
 
+	it("should NOT hide link syntax when cursor is inside the link content", () => {
+		// When cursor is inside the link content, the link should NOT be hidden
+		// This allows Obsidian's native link autocomplete to work
+		const doc = "Check out [[my-note|My Note]] for more info";
+		const state = EditorState.create({
+			doc,
+			selection: EditorSelection.cursor(12), // Cursor inside the link content
+		});
+
+		const ranges = computeHiddenRanges(state);
+		
+		// Should have NO ranges because cursor is inside the link content
+		expect(ranges).toEqual([]);
+	});
+
 	it("should return empty array when cursor is not on a link line", () => {
 		const state = EditorState.create({
 			doc: "This is plain text\nAnd another line with [[a-link]]",
@@ -395,7 +434,7 @@ describe("computeHiddenRanges", () => {
 	it("should handle markdown links", () => {
 		const state = EditorState.create({
 			doc: "Click [here](https://example.com) for details",
-			selection: EditorSelection.cursor(10), // Cursor inside the link
+			selection: EditorSelection.cursor(5), // Cursor BEFORE the link
 		});
 
 		const ranges = computeHiddenRanges(state);

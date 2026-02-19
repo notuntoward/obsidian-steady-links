@@ -178,6 +178,7 @@ function findMarkdownLinkSyntaxRanges(
 function findWikiLinkSyntaxRanges(
 	lineText: string,
 	lineFrom: number,
+	cursorPos?: number, // Optional cursor position to exclude "in-progress" links
 ): HiddenRange[] {
 	const ranges: HiddenRange[] = [];
 	let searchIdx = 0;
@@ -194,6 +195,25 @@ function findWikiLinkSyntaxRanges(
 		const innerContent = lineText.substring(innerStart, closeIdx);
 		const pipeIdx = innerContent.lastIndexOf("|");
 		const fullEnd = lineFrom + closeIdx + 2;
+
+		// Skip empty wiki links (e.g., `[[]]`) so Obsidian's native
+		// link autocomplete can work when typing `[['
+		if (innerContent === "" || innerContent.trim() === "") {
+			searchIdx = closeIdx + 2;
+			continue;
+		}
+
+		// Skip links where the cursor is inside the content area (between [[ and ]])
+		// This allows Obsidian's native link autocomplete to work when typing inside [[...]]
+		if (cursorPos !== undefined) {
+			const contentStart = lineFrom + innerStart;
+			const contentEnd = lineFrom + closeIdx;
+			// If cursor is inside the content area, don't hide this link's syntax
+			if (cursorPos >= contentStart && cursorPos <= contentEnd) {
+				searchIdx = closeIdx + 2;
+				continue;
+			}
+		}
 
 		if (pipeIdx !== -1) {
 			const textStart = lineFrom + innerStart + pipeIdx + 1;
@@ -215,6 +235,9 @@ function computeHiddenRanges(state: EditorState): HiddenRange[] {
 	const ranges: HiddenRange[] = [];
 	const seenLines = new Set<number>();
 
+	// Get cursor position for excluding "in-progress" links
+	const cursorPos = state.selection.main.head;
+
 	for (const sel of state.selection.ranges) {
 		const from = Math.min(sel.head, sel.anchor);
 		const to = Math.max(sel.head, sel.anchor);
@@ -231,7 +254,7 @@ function computeHiddenRanges(state: EditorState): HiddenRange[] {
 		const line = state.doc.line(lineNo);
 		const lineRanges = [
 			...findMarkdownLinkSyntaxRanges(line.text, line.from),
-			...findWikiLinkSyntaxRanges(line.text, line.from),
+			...findWikiLinkSyntaxRanges(line.text, line.from, cursorPos),
 		];
 
 		// Filter out ranges that belong to the temporarily visible link
@@ -460,11 +483,15 @@ function computeHiddenRangesForPositions(
 	for (const r of sel.ranges) {
 		seenLines.add(doc.lineAt(r.head).number);
 	}
+	
+	// Get cursor position for excluding "in-progress" links
+	const cursorPos = sel.main.head;
+	
 	for (const lineNo of seenLines) {
 		const line = doc.line(lineNo);
 		ranges.push(
 			...findMarkdownLinkSyntaxRanges(line.text, line.from),
-			...findWikiLinkSyntaxRanges(line.text, line.from),
+			...findWikiLinkSyntaxRanges(line.text, line.from, cursorPos),
 		);
 	}
 	ranges.sort((a, b) => a.from - b.from || a.to - b.to);
@@ -491,6 +518,7 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 	);
 
 	let skipLeadingInsertionCorrection = false;
+	let skipTrailingInsertionCorrection = false;
 	if (update.docChanged) {
 		let insertText: string | undefined;
 		let insertFrom = -1;
@@ -516,17 +544,29 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 			const safeInsertText = insertText;
 			const head = newSel.main.head;
 			if (head === insertFrom + safeInsertText.length) {
+				// Skip correction when typing at the leading edge of a hidden range
+				// (e.g., typing the opening brackets of a link)
 				skipLeadingInsertionCorrection = hidden.some(
 					(h) =>
 						h.side === "leading" &&
 						h.from === head &&
 						insertFrom === h.from - safeInsertText.length,
 				);
+				
+				// Skip correction when typing at the trailing edge (h.from) of a trailing range.
+				// This is the position right before the trailing syntax (e.g., before "]]"),
+				// which is a valid editing position for typing link destinations.
+				// This allows Obsidian's native link autocomplete to work when typing inside [[...]]
+				skipTrailingInsertionCorrection = hidden.some(
+					(h) =>
+						h.side === "trailing" &&
+						head === h.from,
+				);
 			}
 		}
 	}
 
-	if (skipLeadingInsertionCorrection) return;
+	if (skipLeadingInsertionCorrection || skipTrailingInsertionCorrection) return;
 
 	let needsAdjust = false;
 
