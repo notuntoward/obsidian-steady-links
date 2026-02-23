@@ -404,9 +404,10 @@ describe("computeHiddenRanges", () => {
 		expect(trailingRange!.to).toBeGreaterThan(trailingRange!.from);
 	});
 
-	it("should NOT hide link syntax when cursor is inside the link content", () => {
-		// When cursor is inside the link content, the link should NOT be hidden
-		// This allows Obsidian's native link autocomplete to work
+	it("should hide link syntax even when cursor is inside the link content", () => {
+		// Links are always hidden (syntax replaced with zero-width widgets) to prevent
+		// expansion when cursoring over them. The [[]] empty-check handles in-progress
+		// links; skipTrailingInsertionCorrection handles cursor correction during typing.
 		const doc = "Check out [[my-note|My Note]] for more info";
 		const state = EditorState.create({
 			doc,
@@ -415,8 +416,8 @@ describe("computeHiddenRanges", () => {
 
 		const ranges = computeHiddenRanges(state);
 		
-		// Should have NO ranges because cursor is inside the link content
-		expect(ranges).toEqual([]);
+		// Should still have ranges because links are always hidden regardless of cursor position
+		expect(ranges.length).toBeGreaterThanOrEqual(2);
 	});
 
 	it("should return empty array when cursor is not on a link line", () => {
