@@ -642,8 +642,10 @@ export function determineLinkFromContext(context: LinkContext): LinkFromContext 
 			shouldBeMarkdown = !parsedLink.isWiki;
 			conversionNotice = `Used text & destination from link in clipboard`;
 		} else {
-			// If clipboard doesn't contain a valid link, use it as link text only
-			linkText = clipboardText;
+			// Clipboard has plain text but no link — leave both fields empty.
+			// Plain clipboard text is too likely to be stale/unrelated to be
+			// a useful default for link text.
+			linkText = "";
 			linkDest = "";
 			shouldBeMarkdown = false;
 		}

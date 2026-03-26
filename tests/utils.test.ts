@@ -889,7 +889,7 @@ describe('determineLinkFromContext', () => {
 		expect(result.destination).toBe('simple_destination');
 	});
 
-	it('should create wiki link by default', () => {
+	it('should create wiki link by default with empty fields when clipboard has plain text', () => {
 		const context = {
 			selection: '',
 			clipboardText: 'Notes',
@@ -899,7 +899,9 @@ describe('determineLinkFromContext', () => {
 		};
 		const result = determineLinkFromContext(context);
 		expect(result.isWiki).toBe(true);
-		expect(result.text).toBe('Notes');
+		// Plain clipboard text no longer autofills link text (too likely to be stale/unrelated)
+		expect(result.text).toBe('');
+		expect(result.destination).toBe('');
 	});
 
 	it('should set shouldSelectText flag for URLs', () => {

@@ -95,37 +95,40 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 		const results: SuggestionItem[] = [];
 		
 		for (const f of files) {
-			const matchesQuery =
+			const aliases = lowerQuery ? this.getFileAliases(f) : [];
+			const matchesName =
 				f.path.toLowerCase().includes(lowerQuery) ||
 				f.basename.toLowerCase().includes(lowerQuery);
-			
-			if (!matchesQuery) {
-				// Check if query matches any aliases
-				const aliases = this.getFileAliases(f);
-				const aliasMatches = aliases.some(alias =>
-					alias.toLowerCase().includes(lowerQuery)
-				);
-				if (!aliasMatches) continue;
-			}
+			const matchingAliases = aliases.filter(alias =>
+				alias.toLowerCase().includes(lowerQuery)
+			);
+
+			// Skip file if neither name nor any alias matches
+			if (!matchesName && matchingAliases.length === 0) continue;
 			
 			const fileDir = f.parent?.path || "";
 			const showPath = fileDir !== currentDir && fileDir !== "";
 			
-			// Add the file itself
-			results.push({
-				type: "file" as const,
-				file: f,
-				basename: f.basename,
-				path: f.path,
-				name: f.name,
-				extension: f.extension,
-				displayPath: showPath ? fileDir + "/" : "",
-			});
-			
-			// Add aliases as separate suggestions
-			const aliases = this.getFileAliases(f);
-			for (const alias of aliases) {
-				if (alias.toLowerCase().includes(lowerQuery)) {
+			// Always add the file itself when name matches
+			if (matchesName) {
+				results.push({
+					type: "file" as const,
+					file: f,
+					basename: f.basename,
+					path: f.path,
+					name: f.name,
+					extension: f.extension,
+					displayPath: showPath ? fileDir + "/" : "",
+				});
+			}
+
+			// When there is query text, add alias suggestions:
+			// - All aliases if the file name matched (to allow picking an alias for a known file)
+			// - Only matching aliases if found via alias search
+			// Skip alias rows when query is empty (avoid flooding the list before the user types)
+			if (lowerQuery) {
+				const aliasesToShow = matchesName ? aliases : matchingAliases;
+				for (const alias of aliasesToShow) {
 					results.push({
 						type: "alias" as const,
 						file: f,
@@ -163,7 +166,7 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 		// Handle both alias and aliases fields
 		if (frontmatter.alias) {
 			if (Array.isArray(frontmatter.alias)) {
-				aliases.push(...frontmatter.alias);
+				aliases.push(...frontmatter.alias.map(String));
 			} else if (typeof frontmatter.alias === 'string') {
 				aliases.push(frontmatter.alias);
 			}
@@ -171,7 +174,7 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 		
 		if (frontmatter.aliases) {
 			if (Array.isArray(frontmatter.aliases)) {
-				aliases.push(...frontmatter.aliases);
+				aliases.push(...frontmatter.aliases.map(String));
 			} else if (typeof frontmatter.aliases === 'string') {
 				aliases.push(frontmatter.aliases);
 			}
@@ -414,13 +417,21 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 				linkValue = `#^${item.blockId}`;
 			}
 		} else if (item.type === "alias") {
-			// Alias - use the actual file basename as the link value, not the alias text
+			// Alias - destination is the actual file basename, not the alias text
 			if (item.file && item.file.extension === "md") {
 				linkValue = item.file.basename || "";
 			} else if (item.file) {
 				linkValue = item.file.name || "";
 			} else {
 				linkValue = item.alias || "";
+			}
+
+			// If the link text field has not been deliberately set, offer the alias
+			// as link text. This matches Obsidian's native [[ completion behavior.
+			if (item.alias && this.modal.isTextProvisional()) {
+				this.modal.textInput.setValue(item.alias);
+				this.modal.link.text = item.alias;
+				this.modal.showAliasNotice(item.alias);
 			}
 		} else {
 			// File - don't include path in the final link value

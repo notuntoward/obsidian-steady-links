@@ -40,11 +40,32 @@ When you need to change where a link points, put your cursor on it and run **Edi
 
 The modal is the heart of the plugin. It works for both new and existing links, and handles WikiLinks and Markdown links equally.
 
-**Creating a new link:** Select some text (or just place your cursor) and run *Edit Link*. The modal opens with smart defaults:
+**Creating a new link:** Select some text (or just place your cursor) and run *Edit Link*. The modal opens with smart defaults based on your selection, clipboard, and cursor position.
 
-- If you selected text, it becomes the link text
-- If your clipboard holds a URL, it fills the destination
-- If your cursor is on a bare URL, it converts it into a proper link
+### Autofill Possibilities
+
+The following table shows all the ways the link editor can auto-fill the **Link Text** and **Destination** fields when creating a new link:
+
+| Condition | Link Text | Destination | Format |
+|-----------|-----------|-------------|--------|
+| Selection is a URL | URL | Normalized URL (adds `https://` if missing) | Markdown |
+| Cursor on bare URL + clipboard has plain text | Clipboard text | Normalized URL | Markdown |
+| Cursor on bare URL + clipboard empty | URL | Normalized URL | Markdown |
+| Has selection + clipboard has URL | Selection | Normalized URL | Markdown |
+| Has selection + clipboard has wiki link | Selection | Destination from clipboard link | WikiLink |
+| Has selection + clipboard has markdown link | Selection | Destination from clipboard link | Markdown |
+| Has selection + clipboard has plain text | Selection | Clipboard text | WikiLink |
+| No selection + clipboard has URL | Normalized URL | Normalized URL | Markdown |
+| No selection + clipboard has wiki link | Text from clipboard link | Destination from clipboard link | WikiLink |
+| No selection + clipboard has markdown link | Text from clipboard link | Destination from clipboard link | Markdown |
+| No selection + clipboard has plain text | *(empty)* | *(empty)* | WikiLink |
+
+**Notes:**
+- A "bare URL" means `www.example.com` (without protocol); it gets normalized to `https://www.example.com`
+- URL normalization includes adding `https://` to `www.` URLs and converting `http://` to `https://`
+- When **editing an existing link**, the modal is pre-filled with the current link's text, destination, and format (Wiki or Markdown)
+- The **URL at cursor** detection only triggers when the cursor is positioned on plain text that looks like a URL (not inside an existing link)
+- When there is **no selection and the clipboard holds plain text** (not a link or URL), both fields open empty. Plain clipboard text is too likely to be unrelated to the link you're creating to be a reliable default.
 
 <!-- 📸 IMAGE SUGGESTION: Short GIF showing the workflow of selecting text,
      running Edit Link, and the modal pre-filling the link text field with

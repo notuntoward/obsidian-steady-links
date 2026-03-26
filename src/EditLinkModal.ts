@@ -30,6 +30,8 @@ export class EditLinkModal extends Modal {
 	clipboardUsedText: boolean;
 	clipboardUsedDest: boolean;
 	conversionNoticeEl!: HTMLElement | null;
+	textModifiedByUser: boolean = false;
+	private aliasNoticeEl: HTMLElement | null = null;
 
 	textInput!: TextComponent;
 	destInput!: TextComponent;
@@ -91,6 +93,8 @@ export class EditLinkModal extends Modal {
 				text.setValue(this.link.text);
 				text.inputEl.style.width = "100%";
 				const textInputHandler = () => {
+					this.textModifiedByUser = true;
+					this.clearAliasNotice();
 					this.clearValidationErrors();
 					this.updateUIState();
 					this.updateConversionNotice();
@@ -511,13 +515,51 @@ export class EditLinkModal extends Modal {
 		this.close();
 	};
 
+	/**
+	 * Returns true if the link text field has not been deliberately set by the user
+	 * and can safely be replaced by an alias suggestion.
+	 *
+	 * "Not deliberately set" means:
+	 *   - The field is empty, OR
+	 *   - Its value came from clipboard-as-text-only autofill (the "used text from
+	 *     clipboard" case) and the user has not edited it since the modal opened.
+	 */
+	isTextProvisional(): boolean {
+		if (this.textModifiedByUser) return false;
+		const currentText = this.textInput.getValue().trim();
+		if (!currentText) return true;
+		// The text came from clipboard alone (not from a selection or existing link)
+		// if clipboardUsedText is true but clipboardUsedDest is false, AND the value
+		// still matches what was autofilled (i.e., link.text, which was set at open time).
+		if (this.clipboardUsedText && !this.clipboardUsedDest) {
+			return currentText === this.link.text.trim();
+		}
+		return false;
+	}
+
+	showAliasNotice(aliasText: string): void {
+		this.clearAliasNotice();
+		this.aliasNoticeEl = this.warningsContainer.createEl("div", {
+			cls: "link-conversion-notice link-alias-notice",
+			text: `Alias "${aliasText}" used as link text — edit to change`,
+		});
+	}
+
+	clearAliasNotice(): void {
+		if (this.aliasNoticeEl) {
+			this.aliasNoticeEl.remove();
+			this.aliasNoticeEl = null;
+		}
+	}
+
 	onClose() {
 		// Explicitly remove all event listeners for proper cleanup
 		for (const [element, eventType, handler] of this.eventListeners) {
 			element.removeEventListener(eventType, handler);
 		}
 		this.eventListeners = [];
-		
+
+		this.clearAliasNotice();
 		this.contentEl.empty();
 	}
 }

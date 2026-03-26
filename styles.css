@@ -34,6 +34,13 @@
   font-family: var(--font-text) !important;
 }
 
+/* Hide the native browser clear (✕) button that appears on search-type inputs */
+.modal-content input[type="search"]::-webkit-search-cancel-button,
+.modal-content input[type="search"]::-webkit-search-decoration {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
 /* ── Keep Links Steady ────────────────────────────────────────────
  * When the body has `.le-keep-links-steady`, collapse Obsidian's
  * own syntax-highlight spans to zero width so raw link syntax is hidden
@@ -192,4 +199,5 @@ body.le-keep-links-steady .cm-cursor {
   /* Ensure text remains visible with proper contrast */
   color: var(--text-on-accent) !important;
 }
+
 
