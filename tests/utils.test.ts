@@ -57,7 +57,8 @@ describe('isValidWikiLink', () => {
 		expect(isValidWikiLink('file"name')).toBe(false);
 		expect(isValidWikiLink('file?name')).toBe(false);
 		expect(isValidWikiLink('file\\name')).toBe(false);
-		expect(isValidWikiLink('file/name')).toBe(false);
+		// Note: Forward slash (/) is valid in Obsidian wikilinks for vault paths
+		// Tested separately in 'should accept paths with forward slashes'
 	});
 
 	it('should accept valid wikilink filenames', () => {
@@ -65,6 +66,19 @@ describe('isValidWikiLink', () => {
 		expect(isValidWikiLink('my-file')).toBe(true);
 		expect(isValidWikiLink('my_file')).toBe(true);
 		expect(isValidWikiLink('file 123')).toBe(true);
+	});
+
+	it('should accept paths with forward slashes in wikilinks', () => {
+		// Forward slash is the standard path separator in Obsidian vaults
+		expect(isValidWikiLink('folder/file')).toBe(true);
+		expect(isValidWikiLink('path/to/note')).toBe(true);
+		expect(isValidWikiLink('a/b/c/d')).toBe(true);
+		// Paths with headings should also work
+		expect(isValidWikiLink('folder/file#heading')).toBe(true);
+		expect(isValidWikiLink('path/to/note#^block-id')).toBe(true);
+		// Test case from user issue: path with .md extension AND heading with space
+		// [[test-notes/Note-08.md#Note Eight |Note Eight]]
+		expect(isValidWikiLink('test-notes/Note-08.md#Note Eight')).toBe(true);
 	});
 
 	it('should handle heading references', () => {
@@ -954,6 +968,18 @@ describe('validateLinkDestination', () => {
 	it('should accept valid wikilink destination', () => {
 		const result = validateLinkDestination('Notes#heading', 'Link', true);
 		expect(result.isValid).toBe(true);
+	});
+
+	it('should NOT warn for wikilink with path, .md extension, and heading with space', () => {
+		// Test case: [[test-notes/Note-08.md#Note Eight |Note Eight]]
+		const dest = 'test-notes/Note-08.md#Note Eight';
+		const text = 'Note Eight';
+		const result = validateLinkDestination(dest, text, true);
+		
+		// Key assertions: no warning about invalid wikilink
+		expect(result.isValid).toBe(true);
+		expect(result.warnings.some(w => w.text.includes('Invalid WikiLink'))).toBe(false);
+		expect(result.shouldHighlightDest).toBe(false);
 	});
 
 	it('should accept valid markdown destination', () => {

@@ -37,8 +37,9 @@ export function isValidWikiLink(dest: string): boolean {
 	if (filename.includes("[[") || filename.includes("]]")) return false;
 
 	// Also check OS-level forbidden characters
+	// Note: Forward slash (/) is NOT forbidden in Obsidian wikilinks - it's used for vault paths
 	if (filename.includes("*") || filename.includes('"') || filename.includes("?")) return false;
-	if (filename.includes("\\") || filename.includes("/")) return false;
+	if (filename.includes("\\")) return false;
 
 	// If there's a heading/block reference part (after #), validate it
 	if (parts.length > 1) {
@@ -821,3 +822,4 @@ export function validateLinkDestination(
 		shouldHighlightText
 	};
 }
+

@@ -230,7 +230,8 @@ describe('link parsing properties', () => {
 		});
 
 		it('should reject forbidden characters in wiki link filename', () => {
-			const forbiddenChars = ['|', '^', ':', '*', '"', '?', '\\', '/'];
+			// Note: Forward slash (/) is NOT forbidden - it's used for vault paths
+			const forbiddenChars = ['|', '^', ':', '*', '"', '?', '\\'];
 			fc.assert(
 				fc.property(
 					fc.string(),
