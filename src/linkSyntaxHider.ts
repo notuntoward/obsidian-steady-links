@@ -178,6 +178,7 @@ function findMarkdownLinkSyntaxRanges(
 function findWikiLinkSyntaxRanges(
 	lineText: string,
 	lineFrom: number,
+	cursorPos?: number, // Optional cursor position to exclude "in-progress" links
 ): HiddenRange[] {
 	const ranges: HiddenRange[] = [];
 	let searchIdx = 0;
@@ -202,6 +203,18 @@ function findWikiLinkSyntaxRanges(
 			continue;
 		}
 
+		// Skip links where the cursor is inside the content area (between [[ and ]])
+		// This allows Obsidian's native link autocomplete to work when typing inside [[...]]
+		if (cursorPos !== undefined) {
+			const contentStart = lineFrom + innerStart;
+			const contentEnd = lineFrom + closeIdx;
+			// If cursor is inside the content area, don't hide this link's syntax
+			if (cursorPos >= contentStart && cursorPos <= contentEnd) {
+				searchIdx = closeIdx + 2;
+				continue;
+			}
+		}
+
 		if (pipeIdx !== -1) {
 			const textStart = lineFrom + innerStart + pipeIdx + 1;
 			const textEnd = lineFrom + closeIdx;
@@ -222,6 +235,9 @@ function computeHiddenRanges(state: EditorState): HiddenRange[] {
 	const ranges: HiddenRange[] = [];
 	const seenLines = new Set<number>();
 
+	// Get cursor position for excluding "in-progress" links
+	const cursorPos = state.selection.main.head;
+
 	for (const sel of state.selection.ranges) {
 		const from = Math.min(sel.head, sel.anchor);
 		const to = Math.max(sel.head, sel.anchor);
@@ -238,7 +254,7 @@ function computeHiddenRanges(state: EditorState): HiddenRange[] {
 		const line = state.doc.line(lineNo);
 		const lineRanges = [
 			...findMarkdownLinkSyntaxRanges(line.text, line.from),
-			...findWikiLinkSyntaxRanges(line.text, line.from),
+			...findWikiLinkSyntaxRanges(line.text, line.from, cursorPos),
 		];
 
 		// Filter out ranges that belong to the temporarily visible link
@@ -468,11 +484,14 @@ function computeHiddenRangesForPositions(
 		seenLines.add(doc.lineAt(r.head).number);
 	}
 	
+	// Get cursor position for excluding "in-progress" links
+	const cursorPos = sel.main.head;
+	
 	for (const lineNo of seenLines) {
 		const line = doc.line(lineNo);
 		ranges.push(
 			...findMarkdownLinkSyntaxRanges(line.text, line.from),
-			...findWikiLinkSyntaxRanges(line.text, line.from),
+			...findWikiLinkSyntaxRanges(line.text, line.from, cursorPos),
 		);
 	}
 	ranges.sort((a, b) => a.from - b.from || a.to - b.to);

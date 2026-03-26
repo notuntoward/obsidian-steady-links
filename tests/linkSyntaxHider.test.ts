@@ -404,20 +404,21 @@ describe("computeHiddenRanges", () => {
 		expect(trailingRange!.to).toBeGreaterThan(trailingRange!.from);
 	});
 
-	it("should hide link syntax even when cursor is inside the link content", () => {
-		// Links are always hidden (syntax replaced with zero-width widgets) to prevent
-		// expansion when cursoring over them. The [[]] empty-check handles in-progress
-		// links; skipTrailingInsertionCorrection handles cursor correction during typing.
+	it("should NOT hide link syntax when cursor is inside the link content", () => {
+		// When cursor is inside the link content, we don't hide the link syntax.
+		// This allows Obsidian's native autocomplete (e.g., [[# for headings) to work
+		// with mouse clicks and Return key - only arrow keys navigate through hidden syntax.
 		const doc = "Check out [[my-note|My Note]] for more info";
 		const state = EditorState.create({
 			doc,
-			selection: EditorSelection.cursor(12), // Cursor inside the link content
+			selection: EditorSelection.cursor(12), // Cursor inside the link content (after "[[")
 		});
 
 		const ranges = computeHiddenRanges(state);
 		
-		// Should still have ranges because links are always hidden regardless of cursor position
-		expect(ranges.length).toBeGreaterThanOrEqual(2);
+		// Should NOT have ranges because cursor is inside the link content
+		// This allows Obsidian's native autocomplete to work properly
+		expect(ranges.length).toBe(0);
 	});
 
 	it("should return empty array when cursor is not on a link line", () => {
@@ -459,6 +460,145 @@ describe("computeHiddenRanges", () => {
 		
 		// Should have 4 ranges: 2 for each wikilink (leading + trailing)
 		expect(ranges.length).toBe(4);
+	});
+
+	// ---------------------------------------------------------------------------
+	// Regression: Heading autocomplete when cursor inside link
+	// Issue: Obsidian's native heading autocomplete [[# didn't work with mouse
+	// clicks or Return key when cursor was inside a link. Root cause was that
+	// linkSyntaxHider was hiding links even when cursor was inside content.
+	// Fix: Don't hide link syntax when cursor is inside the link content area.
+	// ---------------------------------------------------------------------------
+
+	describe("Regression: Heading autocomplete when cursor inside link", () => {
+		it("should NOT hide link when cursor is inside the link content", () => {
+			// "See [[my-note|My Note]] here" - cursor inside link content
+			const doc = "See [[my-note|My Note]] here";
+			const state = EditorState.create({
+				doc,
+				selection: EditorSelection.cursor(12), // Inside "my-note|My Note"
+			});
+
+			const ranges = computeHiddenRanges(state);
+			expect(ranges).toHaveLength(0);
+		});
+
+		it("should NOT hide link when cursor is at start of link content", () => {
+			const doc = "See [[my-note]] here";
+			const state = EditorState.create({
+				doc,
+				selection: EditorSelection.cursor(8), // Right after "[["
+			});
+
+			const ranges = computeHiddenRanges(state);
+			expect(ranges).toHaveLength(0);
+		});
+
+		it("should NOT hide link when cursor is inside link content (before ]])", () => {
+			// "See [[my-note]] here" - positions: "See " (0-3), "[[" (4-5), "my-note" (6-12), "]]" (13-14)
+			const doc = "See [[my-note]] here";
+			const state = EditorState.create({
+				doc,
+				selection: EditorSelection.cursor(12), // Last char of "my-note", before "]]"
+			});
+
+			const ranges = computeHiddenRanges(state);
+			expect(ranges).toHaveLength(0);
+		});
+
+		it("should hide link when cursor is OUTSIDE the link", () => {
+			const doc = "See [[my-note]] here";
+			const state = EditorState.create({
+				doc,
+				selection: EditorSelection.cursor(0), // Before the link
+			});
+
+			const ranges = computeHiddenRanges(state);
+			expect(ranges.length).toBeGreaterThanOrEqual(2);
+		});
+
+		it("should hide link when cursor is after the trailing ]]", () => {
+			const doc = "Check [[target]] now";
+			const state = EditorState.create({
+				doc,
+				selection: EditorSelection.cursor(20), // After "now"
+			});
+
+			const ranges = computeHiddenRanges(state);
+			expect(ranges.length).toBeGreaterThanOrEqual(2);
+		});
+
+		it("should handle wikilink with heading correctly", () => {
+			const doc = "[[target#Heading]]";
+			const state = EditorState.create({
+				doc,
+				selection: EditorSelection.cursor(8), // Inside content
+			});
+
+			const ranges = computeHiddenRanges(state);
+			expect(ranges).toHaveLength(0);
+		});
+
+		it("should handle multiple links - only hide link when cursor is outside", () => {
+			const doc = "Link to [[folder/file#Heading|Alias]] and [[other/note]]";
+			const state = EditorState.create({
+				doc,
+				selection: EditorSelection.cursor(15), // Inside first link content
+			});
+
+			// First link should not be hidden, second should still be hidden
+			const ranges = computeHiddenRanges(state);
+			expect(ranges.length).toBe(2);
+			// The second link starts at position 42
+			expect(ranges[0].from).toBe(42);
+		});
+
+		it("should allow autocomplete trigger [[# when cursor inside link", () => {
+			// Simulate: user types [[# to trigger heading autocomplete
+			const doc = "[[#";
+			const state = EditorState.create({
+				doc,
+				selection: EditorSelection.cursor(3), // Inside incomplete link
+			});
+
+			const ranges = computeHiddenRanges(state);
+			// The link should NOT be hidden, allowing Obsidian to show autocomplete
+			expect(ranges).toHaveLength(0);
+		});
+
+		it("should allow autocomplete trigger [[## when cursor inside link", () => {
+			const doc = "[[##";
+			const state = EditorState.create({
+				doc,
+				selection: EditorSelection.cursor(4),
+			});
+
+			const ranges = computeHiddenRanges(state);
+			expect(ranges).toHaveLength(0);
+		});
+
+		it("should handle embedded image link when cursor inside", () => {
+			const doc = "![[file.png]]";
+			const state = EditorState.create({
+				doc,
+				selection: EditorSelection.cursor(5), // Inside content
+			});
+
+			const ranges = computeHiddenRanges(state);
+			expect(ranges).toHaveLength(0);
+		});
+
+		it("should handle multiline document with cursor on line with link", () => {
+			const doc = "Line one\n[[link]]\nLine three";
+			// Position 12 is inside the link on line 2
+			const state = EditorState.create({
+				doc,
+				selection: EditorSelection.cursor(12),
+			});
+
+			const ranges = computeHiddenRanges(state);
+			expect(ranges).toHaveLength(0);
+		});
 	});
 });
 
