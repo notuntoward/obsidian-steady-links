@@ -600,14 +600,26 @@ function listContinuation(lineText: string): string {
 		0,
 		lineText.length - trimmed.length,
 	);
-	// Matches: - , * , + , 1. , 1) , - [ ] , - [x] , etc.
-	const m = trimmed.match(
-		/^([-*+]|\d+[.)]) (?:(\[.\]) )?/,
-	);
-	if (!m) return "";
-	let prefix = indent + m[1] + " ";
-	if (m[2]) prefix += "[ ] ";
-	return prefix;
+
+	// Try ordered list first: "1. " or "1) " (with optional checkbox)
+	const orderedM = trimmed.match(/^(\d+)([.)]) (?:(\[.\]) )?/);
+	if (orderedM) {
+		const num = parseInt(orderedM[1], 10);
+		const sep = orderedM[2]; // "." or ")"
+		let prefix = indent + String(num + 1) + sep + " ";
+		if (orderedM[3]) prefix += "[ ] ";
+		return prefix;
+	}
+
+	// Try unordered bullet: "- ", "* ", "+ " (with optional checkbox)
+	const bulletM = trimmed.match(/^([-*+]) (?:(\[.\]) )?/);
+	if (bulletM) {
+		let prefix = indent + bulletM[1] + " ";
+		if (bulletM[2]) prefix += "[ ] ";
+		return prefix;
+	}
+
+	return "";
 }
 
 /**
@@ -617,7 +629,8 @@ function listContinuation(lineText: string): string {
  * key by inserting a newline (with list continuation) at line.to and
  * consuming the event.  This prevents any interaction between the
  * cursor position (which may be inside a replaced decoration) and
- * the default Enter handling.
+ * the default Enter handling (which can produce a spurious "]" when
+ * the cursor is logically inside hidden wikilink syntax).
  */
 const enterAtLinkEndKeymap = keymap.of([
 	{
@@ -640,7 +653,7 @@ const enterAtLinkEndKeymap = keymap.of([
 				// Only act when the trailing range reaches the line end
 				if (h.to !== line.to) continue;
 
-				// Compute insert text with list continuation
+				// Compute insert text with list continuation (handles ordered lists)
 				const continuation = listContinuation(line.text);
 				const insert = "\n" + continuation;
 
@@ -674,6 +687,35 @@ const enterAtLinkEndFix = EditorState.transactionFilter.of((tr) => {
 	if (startSel.ranges.length !== 1) return tr;
 	const range = startSel.ranges[0];
 	if (!range.empty) return tr;
+
+	// If the cursor is already at the line end, OR the insertion is already
+	// at the line end, don't intercept.
+	//
+	// Case 1: enterAtLinkEndKeymap pre-positions the cursor to line.to before
+	// returning false; we must not redirect that Enter or ordered-list numbering
+	// (and other smart-Enter behaviours) will break.
+	//
+	// Case 2: enterAtLinkEndFix itself produces a redirected transaction by
+	// calling tr.startState.update({changes: {from: line.to, ...}}).  That
+	// redirected transaction is run through the filter pipeline again — we must
+	// not intercept it or we'll loop forever.
+	{
+		const lineAtHead = tr.startState.doc.lineAt(range.head);
+		if (range.head === lineAtHead.to) return tr;
+		// Guard against self-loop: if the insertion is already positioned at
+		// line.to (the redirect destination), pass through.
+		// "insertFrom" is computed below; use the raw change data here.
+		let firstInsertFrom = -1;
+		let hasNewline = false;
+		tr.changes.iterChanges((fromA, _toA, _fromB, _toB, inserted) => {
+			const text = inserted.toString();
+			if (text.includes("\n") && firstInsertFrom === -1) {
+				firstInsertFrom = fromA;
+				hasNewline = true;
+			}
+		});
+		if (hasNewline && firstInsertFrom === lineAtHead.to) return tr;
+	}
 
 	let insertText: string | undefined;
 	let insertFrom = -1;
@@ -788,6 +830,65 @@ const insertAtLinkStartFix = EditorState.transactionFilter.of((tr) => {
 		return tr.startState.update({
 			changes: { from: h.from, to: h.from, insert: insertText },
 			selection: EditorSelection.cursor(h.from + insertText.length),
+			scrollIntoView: true,
+			userEvent,
+		});
+	}
+
+	return tr;
+});
+
+/**
+ * When the cursor is at h.to (the right edge of a leading hidden range,
+ * i.e., just after "[[" or "[") and the user presses Backspace, the natural
+ * delete target is the last character of the leading range (e.g. one of the
+ * "[" brackets).  protectSyntaxFilter would block this.
+ *
+ * Instead, redirect the deletion to remove the character immediately before
+ * the link (h.from - 1), which is what the user intends — deleting whatever
+ * text precedes the link syntax.
+ *
+ * Only applies to a single-character backspace (toA - fromA === 1) whose
+ * range falls entirely within a leading hidden range.
+ */
+const deleteAtLinkStartFix = EditorState.transactionFilter.of((tr) => {
+	if (!tr.docChanged) return tr;
+	if (!tr.isUserEvent("delete")) return tr;
+	if (!tr.startState.field(syntaxHiderEnabledField, false)) return tr;
+
+	const hidden = tr.startState.field(hiddenRangesField, false);
+	if (!hidden || hidden.length === 0) return tr;
+
+	const startSel = tr.startState.selection;
+	if (startSel.ranges.length !== 1) return tr;
+	const range = startSel.ranges[0];
+	if (!range.empty) return tr; // Only single-cursor (no selection) deletes
+
+	// Collect the change (expect exactly one)
+	let deleteFrom = -1;
+	let deleteTo = -1;
+	let deleteCount = 0;
+	tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+		if (inserted.length !== 0) return; // Not a pure delete
+		deleteCount += 1;
+		deleteFrom = fromA;
+		deleteTo = toA;
+	});
+
+	if (deleteCount !== 1) return tr;
+	if (deleteTo - deleteFrom !== 1) return tr; // Only single-char backspace
+
+	// Check if the deletion falls entirely inside a leading hidden range
+	for (const h of hidden) {
+		if (h.side !== "leading") continue;
+		if (deleteFrom < h.from || deleteTo > h.to) continue;
+		// Deletion is inside [h.from, h.to) — it would delete part of leading syntax.
+		// Redirect to delete the character before the link.
+		if (h.from === 0) return tr; // Nothing before the link to delete
+		const userEvent = tr.annotation(Transaction.userEvent) ?? undefined;
+		return tr.startState.update({
+			changes: { from: h.from - 1, to: h.from, insert: "" },
+			selection: EditorSelection.cursor(h.from - 1),
 			scrollIntoView: true,
 			userEvent,
 		});
@@ -942,7 +1043,12 @@ export function createLinkSyntaxHiderExtension() {
 		Prec.highest(enterAtLinkEndKeymap),
 		Prec.highest(enterAtLinkEndFix),
 		Prec.highest(insertAtLinkStartFix),
+		// deleteAtLinkStartFix must come AFTER protectSyntaxFilter in the array
+		// because CM6 applies transactionFilters in reverse registration order
+		// (last registered runs first). deleteAtLinkStartFix must run before
+		// protectSyntaxFilter so it can redirect the delete before protect blocks it.
 		Prec.highest(protectSyntaxFilter),
+		Prec.highest(deleteAtLinkStartFix),
 	];
 }
 
@@ -955,5 +1061,10 @@ export {
 	findLinkEndAtPos,
 	setTemporarilyVisibleLink,
 	temporarilyVisibleLinkField,
+	enterAtLinkEndFix,
+	deleteAtLinkStartFix,
+	syntaxHiderEnabledField,
+	hiddenRangesField,
+	setSyntaxHiderEnabled,
 };
 export type { HiddenRange, LinkRange };
