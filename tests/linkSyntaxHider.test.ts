@@ -164,6 +164,40 @@ describe("findWikiLinkSyntaxRanges", () => {
 		expect(ranges[0]).toEqual({ from: 0, to: 2, side: "leading" });
 		expect(ranges[1]).toEqual({ from: 3, to: 5, side: "trailing" });
 	});
+
+	// ── BUG GUARD: wikilink syntax hidden regardless of cursor position ──────
+	//
+	// This invariant has been broken twice (commits 9bafa8e, f8ffc5a) by adding
+	// an optional cursorPos parameter that suppresses hiding when the cursor is
+	// inside the link content. It was fixed twice (97d1df7, current commit).
+	//
+	// The mistake: "cursor inside link content" is the NORMAL state when the
+	// user navigates to a wikilink. Suppressing hidden ranges defeats the entire
+	// "keep links steady" feature.
+	//
+	// findWikiLinkSyntaxRanges MUST take exactly 2 required arguments and MUST
+	// return hidden ranges for any complete [[...]] link regardless of where the
+	// cursor is. If a 3rd cursorPos argument is re-added and used to skip hiding,
+	// the computeHiddenRanges tests below (which pass cursor inside a link) will
+	// catch it — as will these tests if the function signature is changed back.
+
+	it("hides [[target]] when called — cursor position is irrelevant", () => {
+		// Any complete wikilink must always be hidden.
+		// (There is no cursorPos argument to this function.)
+		expect(findWikiLinkSyntaxRanges("[[target]]", 0)).toHaveLength(2);
+	});
+
+	it("hides [[target|Alias]] (aliased link) unconditionally", () => {
+		const ranges = findWikiLinkSyntaxRanges("[[target|Alias]]", 0);
+		expect(ranges).toHaveLength(2);
+		expect(ranges[0]).toEqual({ from: 0, to: 9, side: "leading" }); // [[target|
+		expect(ranges[1]).toEqual({ from: 14, to: 16, side: "trailing" }); // ]]
+	});
+
+	it("hides [[folder/file#Heading]] (path with heading) unconditionally", () => {
+		const ranges = findWikiLinkSyntaxRanges("[[folder/file#Heading]]", 0);
+		expect(ranges).toHaveLength(2);
+	});
 });
 
 // ============================================================================

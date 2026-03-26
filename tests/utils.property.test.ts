@@ -179,7 +179,14 @@ describe('link parsing properties', () => {
 						!s.startsWith('http://') &&
 						!s.startsWith('https://') &&
 						!s.startsWith('www.') &&
-						s.length > 0
+						s.length > 0 &&
+						// Exclude strings that already contain %XX sequences.
+						// wikiToMarkdown only encodes ' ' → %20 and '^' → %5E.
+						// markdownToWiki uses decodeURIComponent which would
+						// expand any pre-existing %XX escape (e.g. %00 → \u0000),
+						// breaking the round-trip for inputs that were not
+						// produced by wikiToMarkdown itself.
+						!/%[0-9a-fA-F]{2}/.test(s)
 					),
 					(dest: string) => {
 						const converted = wikiToMarkdown(dest);
