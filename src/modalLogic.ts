@@ -45,6 +45,46 @@ export function parseClipboardFlags(conversionNotice: string | null | undefined)
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Provisional text check
+// ──────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Parameters for determining whether the link text field is still "provisional"
+ * (i.e. safe for an alias suggestion to overwrite).
+ */
+export interface IsTextProvisionalParams {
+	/** True once the user has typed into the text field */
+	textModifiedByUser: boolean;
+	/** Current value of the text input */
+	currentText: string;
+	/** Whether the text field was autofilled from clipboard text */
+	clipboardUsedText: boolean;
+	/** Whether the destination field was autofilled from clipboard */
+	clipboardUsedDest: boolean;
+	/** The text value that was set when the modal opened (link.text) */
+	linkText: string;
+}
+
+/**
+ * Returns true if the link text field has not been deliberately set by the user
+ * and can safely be replaced by an alias suggestion.
+ *
+ * "Not deliberately set" means:
+ *   - The field is empty, OR
+ *   - Its value came from clipboard-as-text-only autofill (the "used text from
+ *     clipboard" case) and the user has not edited it since the modal opened.
+ */
+export function isTextProvisional(params: IsTextProvisionalParams): boolean {
+	if (params.textModifiedByUser) return false;
+	const t = params.currentText.trim();
+	if (!t) return true;
+	if (params.clipboardUsedText && !params.clipboardUsedDest) {
+		return t === params.linkText.trim();
+	}
+	return false;
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Initial focus
 // ──────────────────────────────────────────────────────────────────────────────
 

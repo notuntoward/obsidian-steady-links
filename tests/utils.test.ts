@@ -904,6 +904,71 @@ describe('determineLinkFromContext', () => {
 		expect(result.destination).toBe('');
 	});
 
+	it('should leave both fields empty when no selection, no URL, clipboard has plain text (whitespace)', () => {
+		const context = {
+			selection: '',
+			clipboardText: '   ',
+			cursorUrl: null,
+			line: '',
+			cursorCh: 0
+		};
+		const result = determineLinkFromContext(context);
+		expect(result.text).toBe('');
+		expect(result.destination).toBe('');
+		expect(result.isWiki).toBe(true);
+		expect(result.shouldSelectText).toBe(false);
+		expect(result.conversionNotice).toBeNull();
+	});
+
+	it('should leave both fields empty when clipboard is empty', () => {
+		const context = {
+			selection: '',
+			clipboardText: '',
+			cursorUrl: null,
+			line: '',
+			cursorCh: 0
+		};
+		const result = determineLinkFromContext(context);
+		expect(result.text).toBe('');
+		expect(result.destination).toBe('');
+		expect(result.isWiki).toBe(true);
+		expect(result.shouldSelectText).toBe(false);
+		expect(result.conversionNotice).toBeNull();
+	});
+
+	it('should use clipboard plain text as destination when selection is present', () => {
+		// When there IS a selection, clipboard plain text goes to destination (unchanged)
+		const context = {
+			selection: 'My Link Text',
+			clipboardText: 'simple-dest',
+			cursorUrl: null,
+			line: '',
+			cursorCh: 0
+		};
+		const result = determineLinkFromContext(context);
+		expect(result.text).toBe('My Link Text');
+		expect(result.destination).toBe('simple-dest');
+		expect(result.isWiki).toBe(true);
+		expect(result.shouldSelectText).toBe(false);
+		expect(result.conversionNotice).toBeNull();
+	});
+
+	it('should use wikilink from clipboard when no selection', () => {
+		// Only the no-selection+plain-text case changed; links still work
+		const context = {
+			selection: '',
+			clipboardText: '[[My Note]]',
+			cursorUrl: null,
+			line: '',
+			cursorCh: 0
+		};
+		const result = determineLinkFromContext(context);
+		expect(result.text).toBe('My Note');
+		expect(result.destination).toBe('My Note');
+		expect(result.isWiki).toBe(true);
+		expect(result.conversionNotice).toBe('Used text & destination from link in clipboard');
+	});
+
 	it('should set shouldSelectText flag for URLs', () => {
 		const context = {
 			selection: 'https://example.com',

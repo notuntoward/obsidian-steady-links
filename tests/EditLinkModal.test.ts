@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { validateSubmission, parseClipboardFlags, computeConversionNotice } from '../src/modalLogic';
+import { validateSubmission, parseClipboardFlags, computeConversionNotice, isTextProvisional } from '../src/modalLogic';
 import { normalizeUrl, isUrl, validateLinkDestination } from '../src/utils';
 import { LinkInfo } from '../src/types';
 
@@ -514,5 +514,105 @@ describe('onCancel Callback Behavior', () => {
 		
 		// This should not throw when passed undefined
 		expect(() => maybeCall(undefined)).not.toThrow();
+	});
+});
+
+// ============================================================================
+// Unit tests for isTextProvisional() — pure function from modalLogic.ts
+//
+// isTextProvisional() depends on:
+//   1. textModifiedByUser flag
+//   2. current text field value (empty → provisional)
+//   3. clipboardUsedText / clipboardUsedDest flags (from conversionNotice)
+//   4. whether current text still matches link.text (the autofilled value)
+// ============================================================================
+
+describe('isTextProvisional() logic', () => {
+	it('returns true when text field is empty', () => {
+		expect(isTextProvisional({
+			textModifiedByUser: false,
+			currentText: '',
+			clipboardUsedText: false,
+			clipboardUsedDest: false,
+			linkText: '',
+		})).toBe(true);
+	});
+
+	it('returns true when text field contains only whitespace', () => {
+		expect(isTextProvisional({
+			textModifiedByUser: false,
+			currentText: '   ',
+			clipboardUsedText: false,
+			clipboardUsedDest: false,
+			linkText: '',
+		})).toBe(true);
+	});
+
+	it('returns false when textModifiedByUser is true (even with empty text)', () => {
+		expect(isTextProvisional({
+			textModifiedByUser: true,
+			currentText: '',
+			clipboardUsedText: false,
+			clipboardUsedDest: false,
+			linkText: '',
+		})).toBe(false);
+	});
+
+	it('returns false when text has content and no clipboard flags', () => {
+		// Text came from a selection — not provisional
+		expect(isTextProvisional({
+			textModifiedByUser: false,
+			currentText: 'Selected Text',
+			clipboardUsedText: false,
+			clipboardUsedDest: false,
+			linkText: 'Selected Text',
+		})).toBe(false);
+	});
+
+	it('returns true when text matches clipboard-text-only autofill and not modified', () => {
+		// conversionNotice = "Used text from link in clipboard" → clipboardUsedText=true, clipboardUsedDest=false
+		const flags = parseClipboardFlags('Used text from link in clipboard');
+		expect(isTextProvisional({
+			textModifiedByUser: false,
+			currentText: 'ClipText',
+			clipboardUsedText: flags.clipboardUsedText,
+			clipboardUsedDest: flags.clipboardUsedDest,
+			linkText: 'ClipText',
+		})).toBe(true);
+	});
+
+	it('returns false when clipboard text was autofilled but user has since modified it', () => {
+		const flags = parseClipboardFlags('Used text from link in clipboard');
+		expect(isTextProvisional({
+			textModifiedByUser: true,
+			currentText: 'ClipText',
+			clipboardUsedText: flags.clipboardUsedText,
+			clipboardUsedDest: flags.clipboardUsedDest,
+			linkText: 'ClipText',
+		})).toBe(false);
+	});
+
+	it('returns false when both text AND dest came from clipboard (full link autofill)', () => {
+		// conversionNotice = "Used text & destination from link in clipboard" → both true
+		const flags = parseClipboardFlags('Used text & destination from link in clipboard');
+		expect(isTextProvisional({
+			textModifiedByUser: false,
+			currentText: 'SomeText',
+			clipboardUsedText: flags.clipboardUsedText,
+			clipboardUsedDest: flags.clipboardUsedDest,
+			linkText: 'SomeText',
+		})).toBe(false);
+	});
+
+	it('returns false when clipboard text changed from autofilled value', () => {
+		// User has cleared and retyped something different — no longer matches link.text
+		const flags = parseClipboardFlags('Used text from link in clipboard');
+		expect(isTextProvisional({
+			textModifiedByUser: false, // event not fired, but value changed externally
+			currentText: 'New text',
+			clipboardUsedText: flags.clipboardUsedText,
+			clipboardUsedDest: flags.clipboardUsedDest,
+			linkText: 'OriginalClipText',
+		})).toBe(false);
 	});
 });

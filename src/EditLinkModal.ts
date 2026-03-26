@@ -11,6 +11,7 @@ import {
 } from "./utils";
 import {
 	parseClipboardFlags,
+	isTextProvisional,
 	determineInitialFocus,
 	handleDestChange,
 	computeConversionNotice,
@@ -519,22 +520,16 @@ export class EditLinkModal extends Modal {
 	 * Returns true if the link text field has not been deliberately set by the user
 	 * and can safely be replaced by an alias suggestion.
 	 *
-	 * "Not deliberately set" means:
-	 *   - The field is empty, OR
-	 *   - Its value came from clipboard-as-text-only autofill (the "used text from
-	 *     clipboard" case) and the user has not edited it since the modal opened.
+	 * Delegates to the pure {@link isTextProvisional} function in modalLogic.ts.
 	 */
 	isTextProvisional(): boolean {
-		if (this.textModifiedByUser) return false;
-		const currentText = this.textInput.getValue().trim();
-		if (!currentText) return true;
-		// The text came from clipboard alone (not from a selection or existing link)
-		// if clipboardUsedText is true but clipboardUsedDest is false, AND the value
-		// still matches what was autofilled (i.e., link.text, which was set at open time).
-		if (this.clipboardUsedText && !this.clipboardUsedDest) {
-			return currentText === this.link.text.trim();
-		}
-		return false;
+		return isTextProvisional({
+			textModifiedByUser: this.textModifiedByUser,
+			currentText: this.textInput.getValue(),
+			clipboardUsedText: this.clipboardUsedText,
+			clipboardUsedDest: this.clipboardUsedDest,
+			linkText: this.link.text,
+		});
 	}
 
 	showAliasNotice(aliasText: string): void {
