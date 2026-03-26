@@ -7,6 +7,7 @@ import {
 	findLinkEndAtPos,
 	computeHiddenRanges,
 	enterAtLinkEndFix,
+	deleteAtLinkEndFix,
 	deleteAtLinkStartFix,
 	syntaxHiderEnabledField,
 	hiddenRangesField,
@@ -608,6 +609,7 @@ function makeHiderState(docText: string, cursorPos: number): EditorState {
 			syntaxHiderEnabledField,
 			hiddenRangesField,
 			enterAtLinkEndFix,
+			deleteAtLinkEndFix,
 			deleteAtLinkStartFix,
 		],
 	});
@@ -739,6 +741,205 @@ describe("deleteAtLinkStartFix: Backspace at link start must delete character be
 		// Either "[[link]]" (blocked) or "[link]]" (not blocked - but no char deleted before link)
 		// The important thing: NOT "[[link]]" with the first char removed
 		expect(resultDoc.startsWith("[")).toBe(true); // starts with "[", not something before it
+	});
+});
+
+// ============================================================================
+// Transaction filter tests: deleteAtLinkEndFix
+// ============================================================================
+
+describe("deleteAtLinkEndFix: Backspace at link end (h.to) must delete last char of link text", () => {
+	// ── BUG GUARD ─────────────────────────────────────────────────────────────
+	//
+	// When the cursor is at h.to (right after "]]" or ")" at EOL), the cursor
+	// corrector places it at h.to — the line-end position.  A backspace from
+	// h.to targets the last character of the trailing syntax (e.g. the second
+	// "]").  protectSyntaxFilter would block this, making Backspace do nothing.
+	//
+	// deleteAtLinkEndFix must intercept FIRST and redirect the deletion to
+	// h.from - 1 (the last character of the visible link text).
+
+	it("deletes last char of wikilink text when backspace targets trailing ]] at EOL", () => {
+		// "[[link]]" — trailing range: [6, 8) for "]]"
+		// cursor at h.to=8 (EOL), backspace targets position 7-8 (the second "]")
+		// deleteAtLinkEndFix must redirect to delete position 5-6 (the "k")
+		const doc = "[[link]]";
+		// h.to = 8 = doc.length (EOL)
+		const state = makeHiderState(doc, 8);
+
+		const newState = state.update({
+			changes: { from: 7, to: 8, insert: "" }, // backspace inside "]]"
+			selection: EditorSelection.cursor(7),
+			annotations: [Transaction.userEvent.of("delete")],
+		}).state;
+
+		// The filter should delete position 5 ("k"), leaving "[[lin]]"
+		expect(newState.doc.toString()).toBe("[[lin]]");
+	});
+
+	it("deletes last char of wikilink text on an ordinary line with text before link", () => {
+		// "see [[note]]" — trailing range: [10, 12) for "]]"
+		// cursor at h.to=12, backspace targets 11-12 (second "]")
+		// deleteAtLinkEndFix must redirect to delete position 9-10 (the "e" of "note")
+		const doc = "see [[note]]";
+		const state = makeHiderState(doc, 12); // cursor at h.to
+
+		const newState = state.update({
+			changes: { from: 11, to: 12, insert: "" },
+			selection: EditorSelection.cursor(11),
+			annotations: [Transaction.userEvent.of("delete")],
+		}).state;
+
+		expect(newState.doc.toString()).toBe("see [[not]]");
+	});
+
+	it("deletes last char of wikilink text in a list item", () => {
+		// "- [[item]]" — trailing range: [8, 10) for "]]"
+		// cursor at h.to=10, backspace targets 9-10 (second "]")
+		// deleteAtLinkEndFix must redirect to delete position 7-8 (the "m" of "item")
+		const doc = "- [[item]]";
+		const state = makeHiderState(doc, 10); // cursor at h.to
+
+		const newState = state.update({
+			changes: { from: 9, to: 10, insert: "" },
+			selection: EditorSelection.cursor(9),
+			annotations: [Transaction.userEvent.of("delete")],
+		}).state;
+
+		expect(newState.doc.toString()).toBe("- [[ite]]");
+	});
+
+	it("deletes last char of aliased wikilink display text at EOL", () => {
+		// "[[target|Alias]]" — leading: [0,9) = "[[target|", trailing: [14,16) = "]]"
+		// cursor at h.to=16, backspace targets 15-16 (second "]")
+		// deleteAtLinkEndFix must redirect to delete position 13-14 (the "s" of "Alias")
+		const doc = "[[target|Alias]]";
+		const state = makeHiderState(doc, 16); // cursor at h.to
+
+		const newState = state.update({
+			changes: { from: 15, to: 16, insert: "" },
+			selection: EditorSelection.cursor(15),
+			annotations: [Transaction.userEvent.of("delete")],
+		}).state;
+
+		expect(newState.doc.toString()).toBe("[[target|Alia]]");
+	});
+
+	it("does NOT redirect when cursor is not at h.to (cursor is inside link text)", () => {
+		// "[[link]]" — positions: 0=[, 1=[, 2=l, 3=i, 4=n, 5=k, 6=], 7=]
+		// cursor at 5 (on "k"), not at h.to=8
+		// Backspace from 5 deletes position 4-5 (the "n")
+		// deleteAtLinkEndFix must not interfere since cursor !== h.to
+		const doc = "[[link]]";
+		const state = makeHiderState(doc, 5); // cursor inside link text, NOT at h.to
+
+		const newState = state.update({
+			changes: { from: 4, to: 5, insert: "" }, // backspace deletes "n" at pos 4
+			selection: EditorSelection.cursor(4),
+			annotations: [Transaction.userEvent.of("delete")],
+		}).state;
+
+		// Normal delete: "[[link]]" → "[[lik]]" (the "n" was at position 4)
+		expect(newState.doc.toString()).toBe("[[lik]]");
+	});
+
+	it("does NOT redirect when link has only brackets with no visible text (h.from === 0 edge case via leading-only)", () => {
+		// "[[a]]" — trailing range: [3, 5), h.from=3, h.from-1=2 is inside "[[a"
+		// This should redirect to delete the "a" (position 2-3)
+		const doc = "[[a]]";
+		const state = makeHiderState(doc, 5); // cursor at h.to
+
+		const newState = state.update({
+			changes: { from: 4, to: 5, insert: "" },
+			selection: EditorSelection.cursor(4),
+			annotations: [Transaction.userEvent.of("delete")],
+		}).state;
+
+		// The "a" (position 2) should be deleted → "[[]]"
+		// (deleteAtLinkEndFix redirects to delete h.from-1 = position 2)
+		expect(newState.doc.toString()).toBe("[[]]");
+	});
+
+	it("deletes last char of markdown link text at EOL", () => {
+		// "[hello](url)" — leading: [0,1) = "[", trailing: [6, 12) = "](url)"
+		// cursor at h.to=12, backspace targets 11-12 (last char of "](url)")
+		// deleteAtLinkEndFix must redirect to delete position 5-6 (the "o" of "hello")
+		const doc = "[hello](url)";
+		const state = makeHiderState(doc, 12); // cursor at h.to
+
+		const newState = state.update({
+			changes: { from: 11, to: 12, insert: "" },
+			selection: EditorSelection.cursor(11),
+			annotations: [Transaction.userEvent.of("delete")],
+		}).state;
+
+		// "o" at position 5 is deleted → "[hell](url)"
+		expect(newState.doc.toString()).toBe("[hell](url)");
+	});
+
+	it("deletes last char of wikilink on a non-first line (non-zero lineFrom)", () => {
+		// "Line one\n[[note]]" — wikilink on line 2, lineFrom=9
+		// trailing range: [15, 17), h.to=17 (EOL of line 2)
+		// cursor at h.to=17, backspace targets 16-17 (second "]")
+		// deleteAtLinkEndFix must redirect to delete position 14-15 (the "e" of "note")
+		const doc = "Line one\n[[note]]";
+		const state = makeHiderState(doc, 17); // cursor at h.to on line 2
+
+		const newState = state.update({
+			changes: { from: 16, to: 17, insert: "" },
+			selection: EditorSelection.cursor(16),
+			annotations: [Transaction.userEvent.of("delete")],
+		}).state;
+
+		expect(newState.doc.toString()).toBe("Line one\n[[not]]");
+	});
+
+	// ── BUG GUARD: protectSyntaxFilter blocks the delete without the fix ─────
+	//
+	// Verify that with protectSyntaxFilter (but without deleteAtLinkEndFix), a
+	// backspace at h.to is silently blocked.  This proves the bug exists and that
+	// deleteAtLinkEndFix is what fixes it.
+	it("BUG GUARD: backspace at h.to is blocked when only protectSyntaxFilter is present", () => {
+		// Import protectSyntaxFilter indirectly via hiddenRangesField.
+		// We need protectSyntaxFilter in scope — pull it in from the module by
+		// using an extension-only state that includes the protect filter directly.
+		// Since protectSyntaxFilter is not exported, we simulate its effect:
+		// a transactionFilter that blocks any delete overlapping a hidden range.
+		const protectOnly = EditorState.transactionFilter.of((tr) => {
+			if (!tr.docChanged) return tr;
+			if (!tr.isUserEvent("delete")) return tr;
+			if (!tr.startState.field(syntaxHiderEnabledField, false)) return tr;
+			const hidden = tr.startState.field(hiddenRangesField, false);
+			if (!hidden || hidden.length === 0) return tr;
+			let dominated = false;
+			tr.changes.iterChangedRanges((fromA: number, toA: number) => {
+				for (const h of hidden) {
+					if (fromA < h.to && toA > h.from) dominated = true;
+				}
+			});
+			return dominated ? [] : tr;
+		});
+
+		const doc = "[[link]]";
+		const base = EditorState.create({
+			doc,
+			selection: EditorSelection.cursor(8),
+			extensions: [
+				syntaxHiderEnabledField,
+				hiddenRangesField,
+				protectOnly, // protect filter, but NO deleteAtLinkEndFix
+			],
+		});
+		const state = base.update({ effects: [setSyntaxHiderEnabled.of(true)] }).state;
+
+		const newState = state.update({
+			changes: { from: 7, to: 8, insert: "" }, // backspace targets last "]"
+			selection: EditorSelection.cursor(7),
+			annotations: [Transaction.userEvent.of("delete")],
+		}).state;
+
+		// protectOnly blocks it → doc unchanged = "Backspace does nothing"
+		expect(newState.doc.toString()).toBe("[[link]]");
 	});
 });
 

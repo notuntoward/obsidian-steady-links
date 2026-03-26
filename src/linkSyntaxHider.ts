@@ -839,6 +839,72 @@ const insertAtLinkStartFix = EditorState.transactionFilter.of((tr) => {
 });
 
 /**
+ * When the cursor is at h.to (the position after "]]" or ")" — the end of a
+ * trailing hidden range that coincides with the line end) and the user presses
+ * Backspace, the natural delete target is the last character of the trailing
+ * syntax (e.g. the second "]").  protectSyntaxFilter would block this, making
+ * Backspace appear to do nothing.
+ *
+ * Instead, redirect the deletion to remove the character immediately before
+ * the trailing syntax (h.from - 1), which is what the user intends — deleting
+ * the last visible character of the link text.
+ *
+ * Only applies when:
+ *  - The cursor is a single-cursor (no selection)
+ *  - The delete is a single-character backspace (toA - fromA === 1)
+ *  - The deleted range falls within the trailing hidden range
+ *  - The cursor was at h.to (the EOL position after the closing syntax)
+ *  - h.from > 0 (there is a visible character before the trailing syntax)
+ */
+const deleteAtLinkEndFix = EditorState.transactionFilter.of((tr) => {
+	if (!tr.docChanged) return tr;
+	if (!tr.isUserEvent("delete")) return tr;
+	if (!tr.startState.field(syntaxHiderEnabledField, false)) return tr;
+
+	const hidden = tr.startState.field(hiddenRangesField, false);
+	if (!hidden || hidden.length === 0) return tr;
+
+	const startSel = tr.startState.selection;
+	if (startSel.ranges.length !== 1) return tr;
+	const range = startSel.ranges[0];
+	if (!range.empty) return tr; // Only single-cursor (no selection) deletes
+
+	// Collect the change (expect exactly one pure delete)
+	let deleteFrom = -1;
+	let deleteTo = -1;
+	let deleteCount = 0;
+	tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+		if (inserted.length !== 0) return; // Not a pure delete
+		deleteCount += 1;
+		deleteFrom = fromA;
+		deleteTo = toA;
+	});
+
+	if (deleteCount !== 1) return tr;
+	if (deleteTo - deleteFrom !== 1) return tr; // Only single-char backspace
+
+	// Check if the deletion falls within a trailing hidden range AND the
+	// cursor was at h.to (right after the closing syntax, i.e. at line end).
+	for (const h of hidden) {
+		if (h.side !== "trailing") continue;
+		if (deleteFrom < h.from || deleteTo > h.to) continue;
+		// The cursor must have been at h.to — the "right of link" position
+		if (range.head !== h.to) continue;
+		// Must have visible link text before the trailing syntax to delete into
+		if (h.from === 0) return tr;
+		const userEvent = tr.annotation(Transaction.userEvent) ?? undefined;
+		return tr.startState.update({
+			changes: { from: h.from - 1, to: h.from, insert: "" },
+			selection: EditorSelection.cursor(h.from - 1),
+			scrollIntoView: true,
+			userEvent,
+		});
+	}
+
+	return tr;
+});
+
+/**
  * When the cursor is at h.to (the right edge of a leading hidden range,
  * i.e., just after "[[" or "[") and the user presses Backspace, the natural
  * delete target is the last character of the leading range (e.g. one of the
@@ -1043,11 +1109,12 @@ export function createLinkSyntaxHiderExtension() {
 		Prec.highest(enterAtLinkEndKeymap),
 		Prec.highest(enterAtLinkEndFix),
 		Prec.highest(insertAtLinkStartFix),
-		// deleteAtLinkStartFix must come AFTER protectSyntaxFilter in the array
-		// because CM6 applies transactionFilters in reverse registration order
-		// (last registered runs first). deleteAtLinkStartFix must run before
-		// protectSyntaxFilter so it can redirect the delete before protect blocks it.
+		// deleteAtLinkStartFix and deleteAtLinkEndFix must come AFTER protectSyntaxFilter
+		// in the array because CM6 applies transactionFilters in reverse registration
+		// order (last registered runs first). Both must run before protectSyntaxFilter
+		// so they can redirect deletes before protect blocks them.
 		Prec.highest(protectSyntaxFilter),
+		Prec.highest(deleteAtLinkEndFix),
 		Prec.highest(deleteAtLinkStartFix),
 	];
 }
@@ -1062,6 +1129,7 @@ export {
 	setTemporarilyVisibleLink,
 	temporarilyVisibleLinkField,
 	enterAtLinkEndFix,
+	deleteAtLinkEndFix,
 	deleteAtLinkStartFix,
 	syntaxHiderEnabledField,
 	hiddenRangesField,
