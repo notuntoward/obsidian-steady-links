@@ -113,18 +113,28 @@ export function determineInitialFocus(
 	linkDest: string,
 	shouldSelectText: boolean,
 ): FocusAction {
+	// If the link text is empty, focus and select the text field
 	if (!linkText || linkText.length === 0) {
-		return "text-focus";
+		return "text-select";
 	}
+	
+	// If destination is empty, focus destination field
 	if (!linkDest || linkDest.length === 0) {
 		return "dest-focus";
 	}
-	if (linkDest.length > 500 || isAlmostUrl(linkDest)) {
-		return "dest-select";
-	}
+	
+	// If shouldSelectText is true (e.g., cursor was on a bare URL), prioritize focusing text
+	// This ensures the link text is focused and selected when editing bare URLs
 	if (shouldSelectText) {
 		return "text-select";
 	}
+	
+	// For very long destinations or almost-URLs without shouldSelectText flag,
+	// focus and select the destination field
+	if (linkDest.length > 500 || isAlmostUrl(linkDest)) {
+		return "dest-select";
+	}
+	
 	// Default: focus text and select (since text has content)
 	return "text-select";
 }

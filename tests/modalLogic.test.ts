@@ -78,8 +78,8 @@ describe('parseClipboardFlags', () => {
 // determineInitialFocus Tests
 // ============================================================================
 describe('determineInitialFocus', () => {
-	it('should focus text when text is empty', () => {
-		expect(determineInitialFocus('', 'dest', false)).toBe('text-focus');
+	it('should select text when text is empty', () => {
+		expect(determineInitialFocus('', 'dest', false)).toBe('text-select');
 	});
 
 	it('should focus dest when dest is empty and text has content', () => {
@@ -103,8 +103,51 @@ describe('determineInitialFocus', () => {
 		expect(determineInitialFocus('Text', 'dest', false)).toBe('text-select');
 	});
 
-	it('should prefer dest-select over text-select for almost-URLs even if shouldSelectText is true', () => {
-		expect(determineInitialFocus('Text', 'htp://example.com', true)).toBe('dest-select');
+	it('should select text when link text is empty but destination is a bare URL', () => {
+		expect(determineInitialFocus('', 'www.nytimes.com', false)).toBe('text-select');
+	});
+
+	it('should select text when link text is empty but destination is a URL with www', () => {
+		expect(determineInitialFocus('', 'www.example.com', false)).toBe('text-select');
+	});
+
+	it('should select text when link text is empty but destination is a URL with http', () => {
+		expect(determineInitialFocus('', 'http://example.com', false)).toBe('text-select');
+	});
+
+	it('should select text when link text is empty but destination is a URL with https', () => {
+		expect(determineInitialFocus('', 'https://example.com', false)).toBe('text-select');
+	});
+
+	it('should select text when link text is empty but destination is a URL with www and path', () => {
+		expect(determineInitialFocus('', 'www.nytimes.com/section/world', false)).toBe('text-select');
+	});
+
+	it('should select text when link text is empty but destination is a URL with query params', () => {
+		expect(determineInitialFocus('', 'https://example.com?foo=bar', false)).toBe('text-select');
+	});
+
+	it('should select TEXT (not dest) when shouldSelectText is true even if dest is a URL', () => {
+		// This is the key test for the bare URL case:
+		// When cursor is on a bare URL, shouldSelectText is true
+		// and we want to focus TEXT field (which has the URL), not dest field
+		expect(determineInitialFocus('www.nytimes.com', 'https://www.nytimes.com', true)).toBe('text-select');
+	});
+
+	it('should select TEXT when shouldSelectText is true with empty link text and URL dest', () => {
+		// Even with empty link text, if shouldSelectText is true, focus text
+		expect(determineInitialFocus('', 'https://example.com', true)).toBe('text-select');
+	});
+
+	it('should prefer dest-select over text-select for almost-URLs ONLY when shouldSelectText is false', () => {
+		// When shouldSelectText is false and dest is an almost-URL, prefer dest-select
+		expect(determineInitialFocus('Text', 'htp://example.com', false)).toBe('dest-select');
+	});
+
+	it('should NOT prefer dest-select when shouldSelectText is true even for almost-URLs', () => {
+		// When shouldSelectText is true, always prefer text-select
+		// This is the fix for the bare URL case
+		expect(determineInitialFocus('Text', 'htp://example.com', true)).toBe('text-select');
 	});
 });
 

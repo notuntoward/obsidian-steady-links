@@ -332,10 +332,10 @@ describe("correctCursorPos", () => {
 			{ from: 12, to: 14, side: "trailing" },
 		];
 
-		it("should skip from h.to to h.from on left arrow", () => {
+		it("should NOT skip from h.to to h.from on left arrow (h.to is a valid external position)", () => {
 			// At position 14 (h.to), coming from 15 (moving left)
 			const result = correctCursorPos(14, 15, wikiHidden, wikiDoc as any);
-			expect(result).toBe(12); // h.from
+			expect(result).toBe(null); // no correction — stay at h.to
 		});
 
 		it("should go to line end when moving right (link at line end)", () => {

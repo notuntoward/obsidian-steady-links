@@ -267,7 +267,8 @@ export function isAlmostUrl(str: string): boolean {
 	if (!str) return false;
 	const trimmed = str.trim();
         // Check for common typos: htp, htps, http, https, www
-        return /^(htp|htps|http|https|www)[:.a-zA-Z0-9-]/i.test(trimmed);
+        // Also check for bare URLs like www.nytimes.com
+        return /^(htp|htps|http|https|www)[:.a-zA-Z0-9-]|^(www\.)[a-zA-Z0-9-]/i.test(trimmed);
 }
 
 /**
@@ -558,13 +559,9 @@ export function determineLinkFromContext(context: LinkContext): LinkFromContext 
 		const original = cursorUrl.trim();
 		const normalized = normalizeUrl(original);
 
-		// If clipboard has non-link text, use it as the link text
-		const parsedLink = parseClipboardLink(clipboardText);
-		if (clipboardText && !parsedLink && !isUrl(clipboardText)) {
-			linkText = clipboardText;
-		} else {
-			linkText = original;
-		}
+		// When cursor is on a bare URL, the link text should be the URL itself,
+		// ignoring any non-link text in the clipboard.
+		linkText = original;
 
 		linkDest = normalized;
 		shouldBeMarkdown = true;

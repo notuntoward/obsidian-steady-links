@@ -847,7 +847,7 @@ describe('determineLinkFromContext', () => {
 		};
 		const result = determineLinkFromContext(context);
 		expect(result.destination).toBe('https://example.com');
-		expect(result.text).toBe('Link text');
+		expect(result.text).toBe('https://example.com');
 	});
 
 	it('should use selection as link text with clipboard destination', () => {
