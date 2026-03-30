@@ -958,6 +958,16 @@ const protectSyntaxFilter = EditorState.transactionFilter.of((tr) => {
 	if (!tr.isUserEvent("input") && !tr.isUserEvent("delete")) return tr;
 	if (!tr.startState.field(syntaxHiderEnabledField, false)) return tr;
 
+	// Allow deletions when the user has a non-empty selection.
+	// The protection is only needed for single-cursor edits where the user
+	// might accidentally modify hidden syntax via arrow keys / backspace.
+	// When the user explicitly selects text (possibly spanning multiple links)
+	// and presses delete/backspace, the deletion should proceed normally.
+	const startSel = tr.startState.selection;
+	if (tr.isUserEvent("delete") && startSel.ranges.some(r => !r.empty)) {
+		return tr;
+	}
+
 	const hidden = tr.startState.field(hiddenRangesField, false);
 	if (!hidden || hidden.length === 0) return tr;
 
