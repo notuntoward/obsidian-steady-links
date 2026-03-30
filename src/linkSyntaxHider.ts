@@ -410,9 +410,18 @@ function correctCursorPos(
 	for (const h of hidden) {
 		let inside: boolean;
 		if (h.side === "leading") {
-			const movingRight = pos >= oldPos;
-			if (!movingRight && pos === h.from) return null;
-			if (pos === h.from && pos === doc.lineAt(pos).from) return null;
+			// When the leading hidden range starts at the beginning of a line
+			// (e.g. "\n[[target]]"), position h.from is a valid line-start
+			// cursor stop for someone arriving from the previous line (moving
+			// right).  But if the user is pressing LEFT from h.to (the visible
+			// text edge), we must skip past the decoration to h.from - 1.
+			if (pos === h.from && pos === doc.lineAt(pos).from) {
+				const movingRight = pos >= oldPos;
+				if (movingRight) return null; // Arrived from prev line — stay
+				// Moving left: skip to before the link (end of prev line),
+				// or null if already at document start (nowhere to go).
+				return h.from > 0 ? h.from - 1 : null;
+			}
 			inside = pos >= h.from && pos < h.to;
 		} else {
 			inside = pos >= h.from && pos < h.to;
@@ -439,6 +448,22 @@ function correctCursorPos(
 				return h.to;
 			}
 			return Math.min(doc.length, h.to + 1);
+		}
+		// Moving left through trailing range.  For short trailing
+		// ranges at line end (e.g. "]]" for wikilinks — 2 chars),
+		// h.from and h.to are at the same visual position because the
+		// zero-width widget has no visible indicator.  Returning h.from
+		// would be an invisible no-op.  Skip to h.from - 1 instead.
+		//
+		// Longer trailing ranges (e.g. "](url)" for markdown links —
+		// 4+ chars) may have an external-link icon that provides visual
+		// width between h.from and h.to, making h.from a meaningful
+		// cursor stop.  Return h.from for those.
+		if (oldPos === h.to && h.from > 0) {
+			const lineEnd = doc.lineAt(pos).to;
+			if (h.to === lineEnd && h.to - h.from <= 2) {
+				return h.from - 1;
+			}
 		}
 		return h.from;
 	}
@@ -550,7 +575,7 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 
 		for (let pass = 0; pass < 3; pass++) {
 			const corrected = correctCursorPos(head, oldHead, hidden, state.doc, isPointer);
-			if (corrected === null) break;
+			if (corrected === null || corrected === head) break;
 			head = corrected;
 			needsAdjust = true;
 		}

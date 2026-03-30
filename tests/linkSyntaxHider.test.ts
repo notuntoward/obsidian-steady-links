@@ -229,8 +229,8 @@ describe("correctCursorPos", () => {
 
 		it("should skip left through leading range", () => {
 			const result = correctCursorPos(5, 6, mdHidden, mdDoc as any);
-			// Moving left from 6→5: h.from=5, movingRight=false, pos===h.from → null
-			expect(result).toBe(null);
+			// Moving left from 6→5: pos lands at h.from, skip to h.from - 1
+			expect(result).toBe(4);
 		});
 	});
 
@@ -247,20 +247,19 @@ describe("correctCursorPos", () => {
 			expect(result).toBe(10); // h.from
 		});
 
-		it("should NOT correct at h.to when moving left (h.to is a valid external position)", () => {
+		it("should NOT correct at h.to when moving left (h.to is outside the range)", () => {
 			// At h.to (26), old pos was 27 → moving left from just past the link.
-			// h.to is NOT inside [h.from, h.to) — it is the position immediately
-			// after the hidden syntax.  Pressing LEFT from 27 → 26 should stop
-			// the cursor at 26 (the right edge of the link, visible cursor position).
-			// A second LEFT will enter the range (26-1 = 25, inside [10,26)) and
-			// snap correctly to h.from.
+			// h.to is NOT inside [h.from, h.to) — no correction fires here.
+			// The cursor stays at h.to.  On the NEXT left press, CM6 skips
+			// the decoration to h.from, and then the oldPos===h.to check
+			// triggers the skip to h.from-1.
 			const result = correctCursorPos(26, 27, mdHidden, mdDoc as any);
-			expect(result).toBe(null); // no correction — stay at h.to
+			expect(result).toBe(null);
 		});
 
 		it("should not correct at h.to when moving right", () => {
 			// At h.to (26) coming from 10 → moving right. Not inside.
-			// New fix: h.to, pos < oldPos? 26 < 10? No. → no correction
+			// h.to skip only applies when moving LEFT, not right.
 			const result = correctCursorPos(26, 10, mdHidden, mdDoc as any);
 			expect(result).toBe(null);
 		});
@@ -332,10 +331,13 @@ describe("correctCursorPos", () => {
 			{ from: 12, to: 14, side: "trailing" },
 		];
 
-		it("should NOT skip from h.to to h.from on left arrow (h.to is a valid external position)", () => {
-			// At position 14 (h.to), coming from 15 (moving left)
+		it("should NOT correct at h.to on left arrow (h.to is outside the range)", () => {
+			// At position 14 (h.to), coming from 15 (moving left).
+			// h.to is NOT inside [h.from, h.to) — no correction here.
+			// On the next left press CM6 delivers h.from and the
+			// oldPos===h.to check will skip to h.from-1.
 			const result = correctCursorPos(14, 15, wikiHidden, wikiDoc as any);
-			expect(result).toBe(null); // no correction — stay at h.to
+			expect(result).toBe(null);
 		});
 
 		it("should go to line end when moving right (link at line end)", () => {
@@ -343,6 +345,219 @@ describe("correctCursorPos", () => {
 			const result = correctCursorPos(12, 11, wikiHidden, wikiDoc as any);
 			// h.to (14) === line.to (14), so returns h.to = 14
 			expect(result).toBe(14);
+		});
+	});
+
+	// ── BUG FIX: left arrow at left edge of line-start wikilinks ──
+	//
+	// When [[target]] starts at the *beginning* of a line, the leading
+	// hidden range's h.from equals the line start.  CM6 delivers pos=h.from
+	// when pressing left from h.to (the visible text edge).  The correction
+	// must push the cursor to h.from - 1 (end of previous line) — NOT
+	// return null, which would leave the cursor stuck at h.from where it
+	// looks identical to h.to (zero-width widget between them).
+	describe("line-start wikilink: left arrow from visible text edge", () => {
+		// Document: "prev line\n[[target]]"
+		//            0123456789 0123456789
+		// Line 1: "prev line" (from=0, to=9)
+		// Newline at position 9
+		// Line 2: "[[target]]" (from=10, to=20)
+		// Leading: {from: 10, to: 12}  Trailing: {from: 18, to: 20}
+		const doc = makeDoc("prev line\n[[target]]");
+		const hidden: HiddenRange[] = [
+			{ from: 10, to: 12, side: "leading" },
+			{ from: 18, to: 20, side: "trailing" },
+		];
+
+		it("left arrow: should skip from h.from (line start) to end of previous line", () => {
+			// User cursor was at h.to=12 (visible "t" of "target").
+			// CM6 skips the replace decoration and delivers pos=h.from=10.
+			// Old code returned null → cursor stuck at 10 (same visual spot).
+			// Fixed code returns 9 → cursor moves to end of "prev line".
+			const result = correctCursorPos(10, 12, hidden, doc as any);
+			expect(result).toBe(9); // end of previous line
+		});
+
+		it("right arrow: should NOT skip past line start (arriving from prev line)", () => {
+			// User cursor was at 9 (end of prev line), pressed right.
+			// CM6 delivers pos=10 (line start, which is h.from).
+			// The user should stop at line start, NOT jump into the link.
+			const result = correctCursorPos(10, 9, hidden, doc as any);
+			expect(result).toBe(null); // stay at line start
+		});
+	});
+
+	describe("first-line wikilink: left arrow at document start", () => {
+		// Document: "[[target]]"  (link starts at position 0, first line)
+		// Leading: {from: 0, to: 2}  Trailing: {from: 8, to: 10}
+		const doc = makeDoc("[[target]]");
+		const hidden: HiddenRange[] = [
+			{ from: 0, to: 2, side: "leading" },
+			{ from: 8, to: 10, side: "trailing" },
+		];
+
+		it("left arrow: returns null at document start (nowhere to go)", () => {
+			// Cursor at h.to=2, user presses left, CM6 delivers pos=0.
+			// h.from=0, can't go further left → null (correct: start of doc).
+			const result = correctCursorPos(0, 2, hidden, doc as any);
+			expect(result).toBe(null);
+		});
+
+		it("right arrow from pos 0: should skip to h.to (into link text)", () => {
+			// Not really right arrow from prev line — this is pos=0, oldPos=0.
+			// movingRight = 0 >= 0 = true → return null (stay at line start).
+			// Actually, this means the user is "already there" — no correction.
+			const result = correctCursorPos(0, 0, hidden, doc as any);
+			expect(result).toBe(null);
+		});
+	});
+
+	describe("mid-line wikilink: left arrow skips decoration", () => {
+		// Document: "Hello [[target]]"
+		// Leading: {from: 6, to: 8}  Trailing: {from: 14, to: 16}
+		const doc = makeDoc("Hello [[target]]");
+		const hidden: HiddenRange[] = [
+			{ from: 6, to: 8, side: "leading" },
+			{ from: 14, to: 16, side: "trailing" },
+		];
+
+		it("left arrow: should skip from h.from to h.from-1 in one keypress", () => {
+			// Cursor at h.to=8 ("t" of target). User presses left.
+			// CM6 delivers pos=6 (h.from). NOT at line start (line starts at 0).
+			// Normal path: inside=true, movingRight=false → return h.from-1=5.
+			const result = correctCursorPos(6, 8, hidden, doc as any);
+			expect(result).toBe(5);
+		});
+	});
+
+	// ── BUG FIX: left arrow at RIGHT edge of trailing hidden range ──
+	//
+	// The trailing ]] is replaced by a zero-width widget.  Positions
+	// h.from (text boundary) and h.to (after syntax) are at the same
+	// visual location.  When the user presses left arrow, the cursor
+	// must NOT pause at both h.to and h.from — that creates an invisible
+	// stop that requires two presses to cross.  Two fixes:
+	//
+	// 1. h.to → h.from: When CM6 delivers pos=h.to (mid-line case where
+	//    h.to is not the line end), skip to h.from immediately.
+	//
+	// 2. h.from with oldPos=h.to: When CM6 delivers pos=h.from (line-end
+	//    case where CM6 skips the decoration), and the user was at h.to,
+	//    skip one further to h.from-1 (last visible character).
+	describe("right edge trailing fix: left arrow produces visible movement", () => {
+		// ─── End-of-line wikilink: "see [[target]]" ───
+		// Trailing: {from: 12, to: 14}, h.to = line.to = 14
+		describe("end-of-line: see [[target]]", () => {
+			const doc = makeDoc("see [[target]]");
+			const hidden: HiddenRange[] = [
+				{ from: 4, to: 6, side: "leading" },
+				{ from: 12, to: 14, side: "trailing" },
+			];
+
+			it("left from h.to (line end): CM6 skips to h.from, correction goes to h.from-1", () => {
+				// Cursor at 14 (line end). CM6 skips decoration → pos=12, oldPos=14.
+				// h.to === lineEnd → skip to h.from-1 = 11 (the 't' of target).
+				const result = correctCursorPos(12, 14, hidden, doc as any);
+				expect(result).toBe(11);
+			});
+
+			it("right into trailing: should jump to h.to (line end)", () => {
+				// Moving right from last visible char → should jump to line end.
+				const result = correctCursorPos(12, 11, hidden, doc as any);
+				expect(result).toBe(14); // h.to = line.to
+			});
+		});
+
+		// ─── Mid-line wikilink: "see [[target]] more" ───
+		// Trailing: {from: 12, to: 14}, h.to ≠ line.to
+		describe("mid-line wikilink: see [[target]] more", () => {
+			const doc = makeDoc("see [[target]] more");
+			const hidden: HiddenRange[] = [
+				{ from: 4, to: 6, side: "leading" },
+				{ from: 12, to: 14, side: "trailing" },
+			];
+
+			it("left to h.to from space: no correction (h.to is outside range)", () => {
+				const result = correctCursorPos(14, 15, hidden, doc as any);
+				expect(result).toBe(null);
+			});
+
+			it("left through trailing at non-line-end: returns h.from (valid stop)", () => {
+				// CM6 delivers h.from=12, oldPos=14=h.to.
+				// h.to (14) !== lineEnd (19) → return h.from (not h.from-1).
+				// h.from is a valid, visually distinct stop for mid-line links.
+				const result = correctCursorPos(12, 14, hidden, doc as any);
+				expect(result).toBe(12); // h.from — NOT h.from-1
+			});
+
+			it("right from h.to: no correction (moving right past the range)", () => {
+				const result = correctCursorPos(14, 12, hidden, doc as any);
+				expect(result).toBe(null);
+			});
+		});
+
+		// ─── Mid-line markdown link: "[link text](url) more" ───
+		// Ensures we don't skip the last character for markdown links.
+		describe("mid-line markdown link: [link text](url) more", () => {
+			const doc = makeDoc("[link text](url) more");
+			const hidden: HiddenRange[] = [
+				{ from: 0, to: 1, side: "leading" },
+				{ from: 10, to: 16, side: "trailing" },
+			];
+
+			it("left through trailing at non-line-end: returns h.from (visible boundary)", () => {
+				// Cursor was at h.to=16. CM6 delivers h.from=10.
+				// h.to (16) !== lineEnd (21) → return h.from=10 (not h.from-1=9).
+				const result = correctCursorPos(10, 16, hidden, doc as any);
+				expect(result).toBe(10); // text boundary, NOT 9
+			});
+		});
+
+		// ─── End-of-line markdown link: "[link text](url)" ───
+		// Markdown trailing ranges are long (e.g. "](url)" = 6 chars).
+		// The external-link icon may create visual width, so h.from
+		// is a valid stop even at line end.  Should NOT skip to h.from-1.
+		describe("end-of-line markdown link: [link text](url)", () => {
+			const doc = makeDoc("[link text](url)");
+			const hidden: HiddenRange[] = [
+				{ from: 0, to: 1, side: "leading" },
+				{ from: 10, to: 16, side: "trailing" },
+			];
+
+			it("left at EOL: returns h.from (icon provides visual separation)", () => {
+				// h.to=16=lineEnd, h.to - h.from = 6 > 2.
+				// The length check prevents h.from-1 skip.
+				const result = correctCursorPos(10, 16, hidden, doc as any);
+				expect(result).toBe(10); // text boundary (h.from), NOT 9
+			});
+		});
+
+		// ─── End-of-line only link: "[[link]]" ───
+		describe("bare wikilink at line start: [[link]]", () => {
+			const doc = makeDoc("[[link]]");
+			const hidden: HiddenRange[] = [
+				{ from: 0, to: 2, side: "leading" },
+				{ from: 6, to: 8, side: "trailing" },
+			];
+
+			it("left from h.to=8=line end: CM6 skips to h.from=6, correction goes to 5", () => {
+				const result = correctCursorPos(6, 8, hidden, doc as any);
+				expect(result).toBe(5); // last char of "link"
+			});
+		});
+
+		// ─── Pointer click at h.to: should NOT apply h.to skip ───
+		describe("pointer clicks should NOT trigger h.to skip", () => {
+			const doc = makeDoc("see [[target]]");
+			const hidden: HiddenRange[] = [
+				{ from: 4, to: 6, side: "leading" },
+				{ from: 12, to: 14, side: "trailing" },
+			];
+
+			it("click at h.to: no correction (pointer, not keyboard)", () => {
+				const result = correctCursorPos(14, 0, hidden, doc as any, true);
+				expect(result).toBe(null); // h.to is not inside [h.from, h.to)
+			});
 		});
 	});
 });
