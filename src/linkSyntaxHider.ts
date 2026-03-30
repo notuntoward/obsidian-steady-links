@@ -418,16 +418,6 @@ function correctCursorPos(
 			inside = pos >= h.from && pos < h.to;
 		}
 		if (!inside) {
-			// When moving left (or clicking), treat the position at h.to
-			// (zero-width widget boundary) as needing correction so the
-			// cursor skips directly into the visible link text.
-			if (
-				h.side === "trailing" &&
-				pos === h.to &&
-				(pos < oldPos || isPointer)
-			) {
-				return h.from;
-			}
 			continue;
 		}
 

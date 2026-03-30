@@ -247,10 +247,15 @@ describe("correctCursorPos", () => {
 			expect(result).toBe(10); // h.from
 		});
 
-		it("should skip h.to directly to h.from when moving left", () => {
-			// At h.to (26), old pos was 27 → moving left
+		it("should NOT correct at h.to when moving left (h.to is a valid external position)", () => {
+			// At h.to (26), old pos was 27 → moving left from just past the link.
+			// h.to is NOT inside [h.from, h.to) — it is the position immediately
+			// after the hidden syntax.  Pressing LEFT from 27 → 26 should stop
+			// the cursor at 26 (the right edge of the link, visible cursor position).
+			// A second LEFT will enter the range (26-1 = 25, inside [10,26)) and
+			// snap correctly to h.from.
 			const result = correctCursorPos(26, 27, mdHidden, mdDoc as any);
-			expect(result).toBe(10); // h.from (the double-left fix)
+			expect(result).toBe(null); // no correction — stay at h.to
 		});
 
 		it("should not correct at h.to when moving right", () => {
@@ -267,9 +272,29 @@ describe("correctCursorPos", () => {
 			expect(result).toBe(10);
 		});
 
-		it("should go to h.from when clicking at h.to", () => {
+		it("should NOT correct when clicking at h.to (outside the hidden range)", () => {
+			// h.to (26) is the position immediately after the closing syntax.
+			// It is NOT inside the hidden range [10, 26) — it is the position
+			// AFTER the decoration.  Clicking there means "I want to be just
+			// outside / to the right of the link" and must not snap the cursor
+			// back inside the link text.
 			const result = correctCursorPos(26, 0, mdHidden, mdDoc as any, true);
-			expect(result).toBe(10);
+			expect(result).toBe(null); // no correction — stay at h.to
+		});
+
+		it("should NOT correct when clicking at h.to of a mid-line link", () => {
+			// Mid-line link: "hello [link](url) world"
+			// Trailing: [11, 18)  h.to=18, lineEnd=23 (h.to !== lineEnd)
+			// Clicking at 18 (just after ")") should land the cursor at 18,
+			// not snap it back inside the link to h.from=11.
+			const midLine = "hello [link](url) world";
+			const midDoc = makeDoc(midLine);
+			const midHidden: HiddenRange[] = [
+				{ from: 6, to: 7, side: "leading" },
+				{ from: 11, to: 18, side: "trailing" },
+			];
+			const result = correctCursorPos(18, 0, midHidden, midDoc as any, true);
+			expect(result).toBe(null); // no correction — stay outside the link
 		});
 	});
 
