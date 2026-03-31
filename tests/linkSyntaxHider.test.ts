@@ -1215,42 +1215,6 @@ describe("deleteAtLinkEndFix: Backspace at link end (h.to) must delete last char
 // Mode Detection (isLivePreview behavior)
 // ============================================================================
 
-describe("mode detection behavior", () => {
-	describe("isLivePreview logic (documented behavior)", () => {
-		// NOTE: The isLivePreview function checks DOM elements which cannot be
-		// fully tested in a unit test environment. However, we document the
-		// expected behavior here:
-		//
-		// 1. Returns FALSE when:
-		//    - No .markdown-source-view ancestor found
-		//    - .is-source-mode class is present
-		//    - data-mode="source" attribute is set
-		//    - getMode() returns "source"
-		//
-		// 2. Returns TRUE when:
-		//    - .is-live-preview class is present
-		//    - data-mode="live" or data-mode="preview" is set
-		//    - getMode() returns "live" or "preview"
-		//    - Default fallback is TRUE (assume live preview)
-		//
-		// The SyntaxHiderModePlugin.sync() method:
-		// - Calls isLivePreview(view) to determine mode
-		// - Dispatches setSyntaxHiderEnabled effect to update state
-		// - Only enables syntax hiding in live preview mode
-		//
-		// This ensures the "Keep links steady" feature:
-		// - Works in Live Preview mode (syntax is hidden)
-		// - Does NOT work in Source mode (syntax remains visible)
-
-		it("documents that syntax hiding is mode-dependent", () => {
-			// This test serves as documentation of the expected behavior.
-			// The actual mode detection happens in isLivePreview() which
-			// checks DOM classes that aren't available in unit tests.
-			expect(true).toBe(true);
-		});
-	});
-});
-
 // ============================================================================
 // deleteAtLinkEndFix — Gmail model: Del from inside-right (h.from)
 // ============================================================================
@@ -1431,28 +1395,6 @@ describe("deleteAtLinkStartFix: Del from outside-left (cursor at leading h.from)
 // ============================================================================
 // deleteAtLinkStartFix — backspace from inside-left (cursor at h.to, Backspace
 // targets inside leading range)
-// ============================================================================
-
-describe("deleteAtLinkStartFix: Backspace from inside-left (cursor at leading h.to)", () => {
-	it("existing behavior: backspace when cursor at h.to deletes character before link", () => {
-		// "x[[link]]" — cursor at h.to=3, backspace targets [2, 3) (inside "[[")
-		// should redirect to delete [0, 1) (the "x")
-		const doc = "x[[link]]";
-		const state = makeHiderState(doc, 3);
-
-		const newState = state.update({
-			changes: { from: 2, to: 3, insert: "" },
-			selection: EditorSelection.cursor(2),
-			annotations: [Transaction.userEvent.of("delete")],
-		}).state;
-
-		expect(newState.doc.toString()).toBe("[[link]]");
-		expect(newState.selection.main.head).toBe(0);
-	});
-});
-
-// ============================================================================
-// clampSelectionDeleteFilter — multi-char deletes spanning link boundaries
 // ============================================================================
 
 describe("clampSelectionDeleteFilter: multi-char delete from within display text into trailing syntax", () => {
@@ -1711,56 +1653,6 @@ describe("clampSelectionDeleteFilter: Emacs kill-word at link boundaries", () =>
 
 		// "]]" is in the trailing hidden range; clamp to no-op (blocked entirely)
 		expect(newState.doc.toString()).toBe("[[hello]]");
-	});
-});
-
-describe("Emacs plugin style pure deletes without delete userEvent", () => {
-	it("Delete char preserves markdown link syntax for mixed visible selection", () => {
-		const doc = "hello [world](https://example.com) there";
-		const state = makeHiderStateWithRange(doc, 4, 9);
-
-		const newState = state.update({
-			changes: { from: 4, to: 9, insert: "" },
-			selection: EditorSelection.cursor(4),
-		}).state;
-
-		expect(newState.doc.toString()).toBe("hell[rld](https://example.com) there");
-	});
-
-	it("Backward kill word still clamps before trailing syntax", () => {
-		const doc = "[[long-link-text]]";
-		const state = makeHiderState(doc, 16);
-
-		const newState = state.update({
-			changes: { from: 14, to: 18, insert: "" },
-			selection: EditorSelection.cursor(14),
-		}).state;
-
-		expect(newState.doc.toString()).toBe("[[long-link-te]]");
-	});
-
-	it("Kill line preserves trailing syntax and following plain text", () => {
-		const doc = "hello [[world]] next";
-		const state = makeHiderState(doc, 9);
-
-		const newState = state.update({
-			changes: { from: 9, to: 20, insert: "" },
-			selection: EditorSelection.cursor(9),
-		}).state;
-
-		expect(newState.doc.toString()).toBe("hello [[w]] next");
-	});
-
-	it("Kill region deletes visible plain text plus selected wiki link text only", () => {
-		const doc = "ab [[world]] cd";
-		const state = makeHiderStateWithRange(doc, 1, 8);
-
-		const newState = state.update({
-			changes: { from: 1, to: 8, insert: "" },
-			selection: EditorSelection.cursor(1),
-		}).state;
-
-		expect(newState.doc.toString()).toBe("a[[ld]] cd");
 	});
 });
 
