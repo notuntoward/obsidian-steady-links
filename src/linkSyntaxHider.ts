@@ -47,6 +47,17 @@ interface LinkRange {
 	to: number;
 }
 
+interface LinkSpan extends LinkRange {
+	textFrom: number;
+	textTo: number;
+}
+
+interface ChangeSpec {
+	from: number;
+	to: number;
+	insert: string;
+}
+
 const setSyntaxHiderEnabled = StateEffect.define<boolean>();
 
 // StateEffect attached to delete-redirect transactions (from deleteAtLinkEndFix
@@ -54,6 +65,7 @@ const setSyntaxHiderEnabled = StateEffect.define<boolean>();
 // cursor away from the [[ boundary, suppressing Obsidian's link suggest popup.
 // The value is the cursor position to move to after the delete.
 const suppressSuggestAfterDelete = StateEffect.define<number>();
+const rewrittenSelectionDelete = StateEffect.define<null>();
 
 // State effect to temporarily show a specific link's syntax
 const setTemporarilyVisibleLink = StateEffect.define<LinkRange | null>();
@@ -1144,37 +1156,243 @@ const deleteAtLinkStartFix = EditorState.transactionFilter.of((tr) => {
 });
 
 /**
- * Clamps multi-character or selection-spanning delete transactions so they
- * never touch characters inside hidden syntax ranges.
- *
- * This covers:
- *  - Emacs kill-word / backward-kill-word
- *  - Emacs kill-line / kill-region
- *  - Any selection-delete that spans plain text and part of a link
- *
- * For each change in the transaction the filter:
- *  1. Checks whether the change range overlaps any hidden range.
- *  2. If it does, clips the deletion boundaries to stay outside the hidden
- *     characters:
- *     - If a forward-delete would enter a leading range: stop at h.from.
- *     - If a forward-delete would enter a trailing range (from display text):
- *       stop at h.from (= right edge of display text).
- *     - If the change starts inside a leading range: push fromA to h.to.
- *     - If the change starts inside a trailing range: push fromA past h.to.
- *  3. After clamping, if fromA >= toA the change is dropped (nothing left).
- *
- * Single-character deletes are left to deleteAtLinkEndFix / deleteAtLinkStartFix.
+	 * Rewrites multi-character or selection-spanning deletes so hidden syntax is
+	 * never deleted directly while link display text still behaves like Gmail:
+	 *
+	 *  - Partial display-text selections delete only the selected visible text.
+	 *  - Mixed plain-text + link-text selections delete both visible portions
+	 *    while skipping hidden syntax.
+	 *  - If a selection covers all visible text of a link, the entire link
+	 *    (including destination / syntax) is deleted.
+	 *
+	 * Single-character cursor deletes are left to deleteAtLinkEndFix /
+	 * deleteAtLinkStartFix.
  */
+function buildLinkSpans(hidden: HiddenRange[]): LinkSpan[] {
+	const links: LinkSpan[] = [];
+
+	for (let i = 0; i < hidden.length - 1; i += 1) {
+		const lead = hidden[i];
+		const trail = hidden[i + 1];
+		if (lead.side !== "leading" || trail.side !== "trailing") continue;
+
+		links.push({
+			from: lead.from,
+			to: trail.to,
+			textFrom: lead.to,
+			textTo: trail.from,
+		});
+		i += 1;
+	}
+
+	return links;
+}
+
+function rewriteDeleteChangeForLinks(
+	change: ChangeSpec,
+	links: LinkSpan[],
+): ChangeSpec[] {
+	if (change.insert !== "" || change.from >= change.to) {
+		return [change];
+	}
+
+	const overlappingLinks = links.filter(
+		(link) => change.from < link.to && change.to > link.from,
+	);
+	if (overlappingLinks.length === 0) {
+		return [change];
+	}
+
+	const rewritten: ChangeSpec[] = [];
+	let cursor = change.from;
+
+	for (const link of overlappingLinks) {
+		if (cursor < link.from) {
+			const plainTo = Math.min(change.to, link.from);
+			if (cursor < plainTo) {
+				rewritten.push({ from: cursor, to: plainTo, insert: "" });
+			}
+		}
+
+		const selectedDisplayFrom = Math.max(change.from, link.textFrom);
+		const selectedDisplayTo = Math.min(change.to, link.textTo);
+		const overlapsDisplay = selectedDisplayFrom < selectedDisplayTo;
+		const deletesEntireDisplay =
+			overlapsDisplay &&
+			selectedDisplayFrom <= link.textFrom &&
+			selectedDisplayTo >= link.textTo;
+
+		if (deletesEntireDisplay) {
+			rewritten.push({ from: link.from, to: link.to, insert: "" });
+		} else if (overlapsDisplay) {
+			rewritten.push({
+				from: selectedDisplayFrom,
+				to: selectedDisplayTo,
+				insert: "",
+			});
+		}
+
+		cursor = Math.max(cursor, link.to);
+	}
+
+	if (cursor < change.to) {
+		rewritten.push({ from: cursor, to: change.to, insert: "" });
+	}
+
+	return rewritten;
+}
+
+function clampDeleteChangeAgainstHidden(
+	change: ChangeSpec,
+	hidden: HiddenRange[],
+): ChangeSpec[] {
+	let { from, to } = change;
+
+	for (const h of hidden) {
+		if (from >= to) break;
+
+		if (h.side === "leading") {
+			if (from >= h.from && from < h.to) {
+				from = h.to;
+			} else if (from < h.from && to > h.from) {
+				to = Math.min(to, h.from);
+			}
+		} else {
+			if (from >= h.from && from < h.to) {
+				from = h.to;
+			} else if (from < h.from && to > h.from) {
+				to = Math.min(to, h.from);
+			}
+		}
+	}
+
+	return from < to ? [{ from, to, insert: change.insert }] : [];
+}
+
+function rewriteDeleteChanges(
+	changes: ChangeSpec[],
+	hidden: HiddenRange[],
+	links: LinkSpan[],
+	hasSelectionDelete: boolean,
+): ChangeSpec[] {
+	const rewritten: ChangeSpec[] = [];
+
+	for (const c of changes) {
+		if (hasSelectionDelete) {
+			rewritten.push(...rewriteDeleteChangeForLinks(c, links));
+		} else {
+			rewritten.push(...clampDeleteChangeAgainstHidden(c, hidden));
+		}
+	}
+
+	return rewritten;
+}
+
+function changesInteractWithLinks(changes: ChangeSpec[], links: LinkSpan[]): boolean {
+	for (const c of changes) {
+		for (const link of links) {
+			if (c.from < link.to && c.to > link.from) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+const deleteSelectionKeymap = keymap.of([
+	{
+		key: "Backspace",
+		run(view) {
+			if (!view.state.field(syntaxHiderEnabledField, false)) return false;
+			const sel = view.state.selection;
+			if (sel.ranges.every((r) => r.empty)) return false;
+
+			const hidden = view.state.field(hiddenRangesField, false);
+			if (!hidden || hidden.length === 0) return false;
+			const links = buildLinkSpans(hidden);
+			if (links.length === 0) return false;
+
+			const changes = sel.ranges
+				.filter((r) => !r.empty)
+				.map((r) => ({
+					from: Math.min(r.anchor, r.head),
+					to: Math.max(r.anchor, r.head),
+					insert: "",
+				}));
+
+			if (!changesInteractWithLinks(changes, links)) return false;
+
+			const rewritten = rewriteDeleteChanges(changes, hidden, links, true);
+			if (rewritten.length === 0) {
+				view.dispatch({
+					selection: EditorSelection.cursor(sel.main.from),
+					scrollIntoView: true,
+				});
+				return true;
+			}
+
+			view.dispatch({
+				changes: rewritten,
+				selection: EditorSelection.cursor(rewritten[0].from),
+				scrollIntoView: true,
+			});
+			return true;
+		},
+	},
+	{
+		key: "Delete",
+		run(view) {
+			if (!view.state.field(syntaxHiderEnabledField, false)) return false;
+			const sel = view.state.selection;
+			if (sel.ranges.every((r) => r.empty)) return false;
+
+			const hidden = view.state.field(hiddenRangesField, false);
+			if (!hidden || hidden.length === 0) return false;
+			const links = buildLinkSpans(hidden);
+			if (links.length === 0) return false;
+
+			const changes = sel.ranges
+				.filter((r) => !r.empty)
+				.map((r) => ({
+					from: Math.min(r.anchor, r.head),
+					to: Math.max(r.anchor, r.head),
+					insert: "",
+				}));
+
+			if (!changesInteractWithLinks(changes, links)) return false;
+
+			const rewritten = rewriteDeleteChanges(changes, hidden, links, true);
+			if (rewritten.length === 0) {
+				view.dispatch({
+					selection: EditorSelection.cursor(sel.main.from),
+					scrollIntoView: true,
+				});
+				return true;
+			}
+
+			view.dispatch({
+				changes: rewritten,
+				selection: EditorSelection.cursor(rewritten[0].from),
+				scrollIntoView: true,
+			});
+			return true;
+		},
+	},
+]);
+
 const clampSelectionDeleteFilter = EditorState.transactionFilter.of((tr) => {
 	if (!tr.docChanged) return tr;
 	if (!tr.isUserEvent("delete")) return tr;
 	if (!tr.startState.field(syntaxHiderEnabledField, false)) return tr;
+	if (tr.effects.some((e) => e.is(rewrittenSelectionDelete))) return tr;
 
 	const hidden = tr.startState.field(hiddenRangesField, false);
 	if (!hidden || hidden.length === 0) return tr;
+	const links = buildLinkSpans(hidden);
+	if (links.length === 0) return tr;
+	const hasSelectionDelete = tr.startState.selection.ranges.some((r) => !r.empty);
 
 	// Collect all changes in the transaction
-	type ChangeSpec = { from: number; to: number; insert: string };
 	const changes: ChangeSpec[] = [];
 	let allSingleChar = true;
 
@@ -1184,57 +1402,16 @@ const clampSelectionDeleteFilter = EditorState.transactionFilter.of((tr) => {
 		changes.push({ from: fromA, to: toA, insert: inserted.toString() });
 	});
 
-	// If every change is ≤1 char, let the single-char filters handle it
-	if (allSingleChar) return tr;
+	// If every change is ≤1 char and this is not a selection delete,
+	// let the single-char boundary filters handle it.
+	if (allSingleChar && !hasSelectionDelete) return tr;
 
-	// Check if any change overlaps a hidden range
-	let anyOverlap = false;
-	for (const c of changes) {
-		for (const h of hidden) {
-			if (c.from < h.to && c.to > h.from) {
-				anyOverlap = true;
-				break;
-			}
-		}
-		if (anyOverlap) break;
-	}
-	if (!anyOverlap) return tr;
+	if (!changesInteractWithLinks(changes, links)) return tr;
 
-	// Rebuild the changes with clamping.
-	// Hidden ranges are sorted by position, so a single linear pass suffices.
-	const clampedChanges: ChangeSpec[] = [];
-
-	for (const c of changes) {
-		let { from, to } = c;
-
-		for (const h of hidden) {
-			if (from >= to) break; // already empty
-
-			if (h.side === "leading") {
-				// Change starts inside a leading range: skip past it
-				if (from >= h.from && from < h.to) {
-					from = h.to;
-				} else if (from < h.from && to > h.from) {
-					// Change would enter a leading range from the left: stop before it
-					to = Math.min(to, h.from);
-				}
-			} else {
-				// trailing range
-				// Change starts inside a trailing range: skip past it
-				if (from >= h.from && from < h.to) {
-					from = h.to;
-				} else if (from < h.from && to > h.from) {
-					// Change would enter a trailing range: stop at h.from (end of display text)
-					to = Math.min(to, h.from);
-				}
-			}
-		}
-
-		if (from < to) {
-			clampedChanges.push({ from, to, insert: c.insert });
-		}
-		// if from >= to: change collapses — drop it
-	}
+	// Rebuild the changes. For selection deletes, preserve Gmail-style visible
+	// semantics. For non-selection multi-char deletes, keep the old clamping
+	// behavior used by kill-word / kill-line style commands.
+	const clampedChanges = rewriteDeleteChanges(changes, hidden, links, hasSelectionDelete);
 
 	// If all changes were dropped, return a no-op
 	if (clampedChanges.length === 0) return [];
@@ -1264,6 +1441,7 @@ const clampSelectionDeleteFilter = EditorState.transactionFilter.of((tr) => {
 		selection: EditorSelection.cursor(cursorPos),
 		scrollIntoView: true,
 		userEvent,
+		effects: hasSelectionDelete ? [rewrittenSelectionDelete.of(null)] : undefined,
 	});
 });
 
@@ -1439,6 +1617,7 @@ export function createLinkSyntaxHiderExtension() {
 		temporarilyVisibleLinkField,
 		Prec.highest(hiddenSyntaxReplacePlugin),
 		Prec.highest(cursorCorrector),
+		Prec.highest(deleteSelectionKeymap),
 		Prec.highest(deleteInLinkTextKeymap),
 		Prec.highest(enterAtLinkEndKeymap),
 		Prec.highest(enterAtLinkEndFix),

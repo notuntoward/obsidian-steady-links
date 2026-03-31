@@ -1507,7 +1507,7 @@ describe("clampSelectionDeleteFilter: selection-spanning delete (plain text + li
 		// "[world](https://example.com)" — leading: [6,7), display: [7,12), trailing: [12,34)
 		// Selection: "o [wo" — positions [4, 9) spans plain "o [" and "wo" from display text
 		// After delete: "hell[rld](https://example.com) there"
-		// Note: markdown link [world](url) — "[" is pos 6, "world" is [7,12)
+		// Hidden leading syntax must be preserved, but the visible "wo" must be deleted.
 		const doc = "hello [world](https://example.com) there";
 		// leading=[6,7), display=[7,12), trailing=[12,34)
 		const state = makeHiderStateWithRange(doc, 4, 9); // select "o [wo"
@@ -1518,13 +1518,7 @@ describe("clampSelectionDeleteFilter: selection-spanning delete (plain text + li
 			annotations: [Transaction.userEvent.of("delete")],
 		}).state;
 
-		// The "[" leading char is at pos 6. The change from=4 to=9:
-		// - Plain text "o " at [4,6): safe to delete
-		// - Leading "[" at [6,7): clamp to stop at h.from=6
-		// So only "o " is deleted, yielding "hell[world](https://example.com) there"
-		// Wait — the change enters leading range [6,7) at pos 6, so clamped to [4,6).
-		// "o " deleted → "hell[world](https://example.com) there"
-		expect(newState.doc.toString()).toBe("hell[world](https://example.com) there");
+		expect(newState.doc.toString()).toBe("hell[rld](https://example.com) there");
 	});
 
 	it("selection spanning display text and into trailing syntax is clipped", () => {
@@ -1559,6 +1553,46 @@ describe("clampSelectionDeleteFilter: selection-spanning delete (plain text + li
 		// "ello " deleted → "[[hworld]]"
 		expect(newState.doc.toString()).toBe("[[hworld]]");
 	});
+
+	it("selection containing all markdown link text deletes the entire link", () => {
+		const doc = "hello [world](https://example.com) there";
+		const state = makeHiderStateWithRange(doc, 7, 12); // select exactly "world"
+
+		const newState = state.update({
+			changes: { from: 7, to: 12, insert: "" },
+			selection: EditorSelection.cursor(7),
+			annotations: [Transaction.userEvent.of("delete")],
+		}).state;
+
+		expect(newState.doc.toString()).toBe("hello  there");
+		expect(newState.selection.main.head).toBe(6);
+	});
+
+	it("selection spanning plain text and all wiki link text deletes the entire link", () => {
+		const doc = "ab [[world]] cd";
+		const state = makeHiderStateWithRange(doc, 1, 10); // select "b [[world"
+
+		const newState = state.update({
+			changes: { from: 1, to: 10, insert: "" },
+			selection: EditorSelection.cursor(1),
+			annotations: [Transaction.userEvent.of("delete")],
+		}).state;
+
+		expect(newState.doc.toString()).toBe("a cd");
+	});
+
+	it("selection from link text through following plain text deletes both visible portions", () => {
+		const doc = "hello [[world]] next";
+		const state = makeHiderStateWithRange(doc, 9, 19); // select "rld]] next"
+
+		const newState = state.update({
+			changes: { from: 9, to: 19, insert: "" },
+			selection: EditorSelection.cursor(9),
+			annotations: [Transaction.userEvent.of("delete")],
+		}).state;
+
+		expect(newState.doc.toString()).toBe("hello [[w]]t");
+	});
 });
 
 describe("clampSelectionDeleteFilter: multi-char delete from plain text into leading syntax", () => {
@@ -1582,7 +1616,8 @@ describe("clampSelectionDeleteFilter: multi-char delete from plain text into lea
 	it("kill-region spanning plain text through leading range and into display text", () => {
 		// "abc [[note]]" — leading: [4,6) for "[["
 		// kill-region [2, 8) would delete "c [[no"
-		// Clamped: stops at h.from=4, deletes "c " only
+		// Gmail-style selection delete removes the visible plain text and the
+		// visible display-text prefix while preserving hidden syntax.
 		const doc = "abc [[note]]";
 		const state = makeHiderStateWithRange(doc, 2, 8);
 
@@ -1592,8 +1627,8 @@ describe("clampSelectionDeleteFilter: multi-char delete from plain text into lea
 			annotations: [Transaction.userEvent.of("delete")],
 		}).state;
 
-		// Only "c " (positions 2-4) deleted, rest preserved → "ab[[note]]"
-		expect(newState.doc.toString()).toBe("ab[[note]]");
+		// Visible "c no" deleted → "ab[[te]]"
+		expect(newState.doc.toString()).toBe("ab[[te]]");
 	});
 });
 
