@@ -944,6 +944,25 @@ describe("enterAtLinkEndFix: Enter at line end must not be intercepted", () => {
 		// Result doc: "See [[link]]\n" (newline at the end, not inside "]]")
 		expect(newState.doc.toString()).toBe("See [[link]]\n");
 	});
+
+	it("does NOT redirect Enter when cursor is at h.to of a mid-line trailing range", () => {
+		// "see [[target]] more" — trailing range [12, 14), h.to=14
+		// cursor at position 14 (just after "]]", h.to of trailing)
+		// enterAtLinkEndFix must NOT redirect because h.to !== line.to (line.to=19)
+		const doc = "see [[target]] more";
+		const state = makeHiderState(doc, 14); // cursor at h.to of mid-line trailing
+
+		const newState = state.update({
+			changes: { from: 14, to: 14, insert: "\n" },
+			selection: EditorSelection.cursor(15),
+			annotations: [Transaction.userEvent.of("input")],
+		}).state;
+
+		// The filter should NOT have redirected; insertion at 14
+		// Result doc: "see [[target]]\n more"
+		expect(newState.doc.toString()).toBe("see [[target]]\n more");
+		expect(newState.selection.main.head).toBe(15);
+	});
 });
 
 describe("deleteAtLinkStartFix: Backspace at link start must delete character before link", () => {

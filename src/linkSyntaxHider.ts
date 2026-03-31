@@ -1089,6 +1089,9 @@ const enterAtLinkEndFix = EditorState.transactionFilter.of((tr) => {
 
 	if (!matchedTrailing) return tr;
 
+	// Only redirect newlines when the trailing range reaches the line end
+	if (matchedTrailing.to !== line.to) return tr;
+
 	let finalInsertText = insertText;
 	if (insertText === "\n" && line.text.trimStart().startsWith("- ")) {
 		finalInsertText = "\n- ";
