@@ -670,6 +670,30 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 				: oldSel.main.head;
 		let head = range.head;
 
+		// CM6 vertical motion can legitimately arrive at the line-start position of
+		// a hidden leading range with a remembered goal column, and then follow up
+		// with a normalization step from the visible-text edge back to line start.
+		// Treat that as successful vertical motion, not as a LEFT-arrow-style move
+		// that should bounce back to the previous line.
+		if (oldSel.main.goalColumn !== undefined) {
+			for (let hiddenIndex = 0; hiddenIndex < hidden.length; hiddenIndex += 1) {
+				const h = hidden[hiddenIndex];
+				if (h.side !== "leading") continue;
+				if (head !== h.from) continue;
+				if (head !== state.doc.lineAt(head).from) continue;
+
+				const trailing = hidden
+					.slice(hiddenIndex + 1)
+					.find((candidate) => candidate.side === "trailing");
+				const textEnd = trailing?.from ?? h.to;
+				if (oldHead < h.to || oldHead > textEnd) continue;
+
+				head = oldHead;
+				needsAdjust = true;
+				break;
+			}
+		}
+
 		for (let pass = 0; pass < 3; pass++) {
 			const corrected = correctCursorPos(head, oldHead, hidden, state.doc, isPointer);
 			if (corrected === null || corrected === head) break;

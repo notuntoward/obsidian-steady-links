@@ -174,6 +174,22 @@ describe("Integration: cursor correction with real CM6 state", () => {
 		});
 	});
 
+	describe("leading range: line-start heading wikilink", () => {
+		it("selection arriving from a blank line above to [[#heading]] lands in visible text", () => {
+			view = createTestView("# h2\n\n[[#h1.2]]", 5);
+
+			expect(dispatchSelection(view, 9, "select")).toBe(9);
+		});
+	});
+
+	describe("leading range: line-start markdown link after blank line", () => {
+		it("selection arriving from a blank line above to a line-start markdown link lands in visible text", () => {
+			view = createTestView("\n[text](url)", 0);
+
+			expect(dispatchSelection(view, 1)).toBe(2);
+		});
+	});
+
 	describe("pointer-initiated corrections", () => {
 		it("pointer selection inside trailing syntax snaps to the text boundary", () => {
 			view = createTestView("see [[target]]", 11);
