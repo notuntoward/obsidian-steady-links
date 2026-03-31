@@ -663,7 +663,7 @@ const deleteInLinkTextKeymap = keymap.of([
 				const textFrom = lead.to;
 				const textTo = trail.from;
 
-				// Cursor inside display text or at the right edge (textTo)
+				// Case 1: cursor inside display text or at the right edge (textTo)
 				if (head > textFrom && head <= textTo) {
 					if (head - 1 < textFrom) return false; // nothing to delete
 					view.dispatch({
@@ -672,6 +672,18 @@ const deleteInLinkTextKeymap = keymap.of([
 						scrollIntoView: true,
 					});
 					return true; // consume key — Obsidian never sees Backspace
+				}
+
+				// Case 2: cursor at trail.to (just past the closing syntax, e.g. after "]]")
+				// Backspace would target [trail.to-1, trail.to) = inside trailing syntax.
+				// Redirect to delete the last display char (textTo - 1).
+				if (head === trail.to && textTo > textFrom) {
+					view.dispatch({
+						changes: { from: textTo - 1, to: textTo, insert: "" },
+						selection: EditorSelection.cursor(textTo - 1),
+						scrollIntoView: true,
+					});
+					return true;
 				}
 			}
 			return false;
