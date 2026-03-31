@@ -1593,6 +1593,18 @@ describe("clampSelectionDeleteFilter: selection-spanning delete (plain text + li
 
 		expect(newState.doc.toString()).toBe("hello [[w]]t");
 	});
+
+	it("kill-region style pure delete without delete userEvent still preserves link syntax", () => {
+		const doc = "abc [[note]]";
+		const state = makeHiderStateWithRange(doc, 2, 8);
+
+		const newState = state.update({
+			changes: { from: 2, to: 8, insert: "" },
+			selection: EditorSelection.cursor(2),
+		}).state;
+
+		expect(newState.doc.toString()).toBe("ab[[te]]");
+	});
 });
 
 describe("clampSelectionDeleteFilter: multi-char delete from plain text into leading syntax", () => {
@@ -1699,6 +1711,56 @@ describe("clampSelectionDeleteFilter: Emacs kill-word at link boundaries", () =>
 
 		// "]]" is in the trailing hidden range; clamp to no-op (blocked entirely)
 		expect(newState.doc.toString()).toBe("[[hello]]");
+	});
+});
+
+describe("Emacs plugin style pure deletes without delete userEvent", () => {
+	it("Delete char preserves markdown link syntax for mixed visible selection", () => {
+		const doc = "hello [world](https://example.com) there";
+		const state = makeHiderStateWithRange(doc, 4, 9);
+
+		const newState = state.update({
+			changes: { from: 4, to: 9, insert: "" },
+			selection: EditorSelection.cursor(4),
+		}).state;
+
+		expect(newState.doc.toString()).toBe("hell[rld](https://example.com) there");
+	});
+
+	it("Backward kill word still clamps before trailing syntax", () => {
+		const doc = "[[long-link-text]]";
+		const state = makeHiderState(doc, 16);
+
+		const newState = state.update({
+			changes: { from: 14, to: 18, insert: "" },
+			selection: EditorSelection.cursor(14),
+		}).state;
+
+		expect(newState.doc.toString()).toBe("[[long-link-te]]");
+	});
+
+	it("Kill line preserves trailing syntax and following plain text", () => {
+		const doc = "hello [[world]] next";
+		const state = makeHiderState(doc, 9);
+
+		const newState = state.update({
+			changes: { from: 9, to: 20, insert: "" },
+			selection: EditorSelection.cursor(9),
+		}).state;
+
+		expect(newState.doc.toString()).toBe("hello [[w]] next");
+	});
+
+	it("Kill region deletes visible plain text plus selected wiki link text only", () => {
+		const doc = "ab [[world]] cd";
+		const state = makeHiderStateWithRange(doc, 1, 8);
+
+		const newState = state.update({
+			changes: { from: 1, to: 8, insert: "" },
+			selection: EditorSelection.cursor(1),
+		}).state;
+
+		expect(newState.doc.toString()).toBe("a[[ld]] cd");
 	});
 });
 

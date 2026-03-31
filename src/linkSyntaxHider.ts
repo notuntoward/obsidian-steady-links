@@ -940,6 +940,25 @@ const enterAtLinkEndFix = EditorState.transactionFilter.of((tr) => {
 	});
 });
 
+function isPureDeleteTransaction(tr: Transaction): boolean {
+	if (!tr.docChanged) return false;
+
+	let sawDeletion = false;
+	let pureDelete = true;
+
+	tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+		if (inserted.length !== 0) {
+			pureDelete = false;
+			return;
+		}
+		if (toA > fromA) {
+			sawDeletion = true;
+		}
+	});
+
+	return pureDelete && sawDeletion;
+}
+
 const insertAtLinkStartFix = EditorState.transactionFilter.of((tr) => {
 	if (!tr.docChanged) return tr;
 	if (!tr.isUserEvent("input")) return tr;
@@ -1009,8 +1028,7 @@ const insertAtLinkStartFix = EditorState.transactionFilter.of((tr) => {
  *  - h.from > 0 (there is a visible character before the trailing syntax)
  */
 const deleteAtLinkEndFix = EditorState.transactionFilter.of((tr) => {
-	if (!tr.docChanged) return tr;
-	if (!tr.isUserEvent("delete")) return tr;
+	if (!isPureDeleteTransaction(tr)) return tr;
 	if (!tr.startState.field(syntaxHiderEnabledField, false)) return tr;
 
 	const hidden = tr.startState.field(hiddenRangesField, false);
@@ -1079,8 +1097,7 @@ const deleteAtLinkEndFix = EditorState.transactionFilter.of((tr) => {
  * range falls entirely within a leading hidden range.
  */
 const deleteAtLinkStartFix = EditorState.transactionFilter.of((tr) => {
-	if (!tr.docChanged) return tr;
-	if (!tr.isUserEvent("delete")) return tr;
+	if (!isPureDeleteTransaction(tr)) return tr;
 	if (!tr.startState.field(syntaxHiderEnabledField, false)) return tr;
 
 	const hidden = tr.startState.field(hiddenRangesField, false);
@@ -1381,8 +1398,7 @@ const deleteSelectionKeymap = keymap.of([
 ]);
 
 const clampSelectionDeleteFilter = EditorState.transactionFilter.of((tr) => {
-	if (!tr.docChanged) return tr;
-	if (!tr.isUserEvent("delete")) return tr;
+	if (!isPureDeleteTransaction(tr)) return tr;
 	if (!tr.startState.field(syntaxHiderEnabledField, false)) return tr;
 	if (tr.effects.some((e) => e.is(rewrittenSelectionDelete))) return tr;
 
@@ -1447,7 +1463,8 @@ const clampSelectionDeleteFilter = EditorState.transactionFilter.of((tr) => {
 
 const protectSyntaxFilter = EditorState.transactionFilter.of((tr) => {
 	if (!tr.docChanged) return tr;
-	if (!tr.isUserEvent("input") && !tr.isUserEvent("delete")) return tr;
+	const isPureDelete = isPureDeleteTransaction(tr);
+	if (!tr.isUserEvent("input") && !isPureDelete) return tr;
 	if (!tr.startState.field(syntaxHiderEnabledField, false)) return tr;
 
 	// Note: We no longer unconditionally bypass protection for non-empty
@@ -1458,7 +1475,7 @@ const protectSyntaxFilter = EditorState.transactionFilter.of((tr) => {
 	// Only bypass if the selection-delete does NOT overlap any hidden range —
 	// in that case it's safe plain-text editing and needs no clamping.
 	const startSel = tr.startState.selection;
-	if (tr.isUserEvent("delete") && startSel.ranges.some(r => !r.empty)) {
+	if (isPureDelete && startSel.ranges.some(r => !r.empty)) {
 		const hidden = tr.startState.field(hiddenRangesField, false);
 		if (!hidden || hidden.length === 0) return tr;
 		let overlaps = false;
