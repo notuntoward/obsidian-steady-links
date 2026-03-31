@@ -220,4 +220,23 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			expect(view.state.selection.main.head).toBe(3);
 		});
 	});
+
+	describe("selection delete with the full extension", () => {
+		it("deletes a fully selected line that contains a link", () => {
+			view = createTestView("[[target]]\nafter", 0);
+
+			view.dispatch({
+				selection: EditorSelection.range(0, 11),
+			});
+
+			view.dispatch({
+				changes: { from: 0, to: 11, insert: "" },
+				selection: EditorSelection.cursor(0),
+				annotations: [Transaction.userEvent.of("delete")],
+			});
+
+			expect(view.state.doc.toString()).toBe("after");
+			expect(view.state.selection.main.head).toBe(0);
+		});
+	});
 });

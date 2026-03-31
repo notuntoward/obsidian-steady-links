@@ -1768,6 +1768,7 @@ const protectSyntaxFilter = EditorState.transactionFilter.of((tr) => {
 	const isPureDelete = isPureDeleteTransaction(tr);
 	if (!tr.isUserEvent("input") && !isPureDelete) return tr;
 	if (!tr.startState.field(syntaxHiderEnabledField, false)) return tr;
+	if (tr.effects.some((e) => e.is(rewrittenSelectionDelete))) return tr;
 
 	// Note: We no longer unconditionally bypass protection for non-empty
 	// selections.  clampSelectionDeleteFilter (which runs first) handles
