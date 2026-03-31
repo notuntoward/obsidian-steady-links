@@ -66,6 +66,7 @@ const setSyntaxHiderEnabled = StateEffect.define<boolean>();
 // The value is the cursor position to move to after the delete.
 const suppressSuggestAfterDelete = StateEffect.define<number>();
 const rewrittenSelectionDelete = StateEffect.define<null>();
+const setSuppressNextBoundaryInput = StateEffect.define<number | null>();
 
 // State effect to temporarily show a specific link's syntax
 const setTemporarilyVisibleLink = StateEffect.define<LinkRange | null>();
@@ -107,6 +108,32 @@ const syntaxHiderEnabledField = StateField.define<boolean>({
 				value = effect.value;
 			}
 		}
+		return value;
+	},
+});
+
+const suppressNextBoundaryInputField = StateField.define<number | null>({
+	create() {
+		return null;
+	},
+	update(value, tr) {
+		for (const effect of tr.effects) {
+			if (effect.is(setSuppressNextBoundaryInput)) {
+				return effect.value;
+			}
+		}
+
+		if (tr.docChanged) {
+			return null;
+		}
+
+		if (tr.selection && value !== null) {
+			const main = tr.state.selection.main;
+			if (!main.empty || main.head !== value) {
+				return null;
+			}
+		}
+
 		return value;
 	},
 });
@@ -648,6 +675,61 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 	}
 });
 
+const suppressSuggestAfterDeleteListener = EditorView.updateListener.of(
+	(update) => {
+		if (!update.state.field(syntaxHiderEnabledField, false)) return;
+
+		let targetPos: number | null = null;
+		for (const tr of update.transactions) {
+			for (const effect of tr.effects) {
+				if (effect.is(suppressSuggestAfterDelete)) {
+					targetPos = effect.value;
+				}
+			}
+		}
+
+		if (targetPos === null) return;
+
+		window.setTimeout(() => {
+			if (!update.view.dom.isConnected) return;
+
+			const current = update.view.state.selection.main;
+			if (!current.empty || current.head !== targetPos) return;
+
+			update.view.dispatch({
+				selection: EditorSelection.cursor(targetPos),
+				scrollIntoView: true,
+			});
+		}, 0);
+	},
+);
+
+const boundaryInputSuppressor = EditorView.domEventHandlers({
+	keydown(event, view) {
+		if (!view.state.field(syntaxHiderEnabledField, false)) return false;
+		if (event.defaultPrevented) return false;
+		if (event.ctrlKey || event.metaKey || event.altKey) return false;
+		if (event.isComposing) return false;
+		if (event.key.length !== 1) return false;
+
+		const sel = view.state.selection;
+		if (sel.ranges.length !== 1 || !sel.main.empty) return false;
+
+		const suppressPos = view.state.field(suppressNextBoundaryInputField, false);
+		if (suppressPos === null || suppressPos !== sel.main.head) return false;
+
+		event.preventDefault();
+		const nextPos = suppressPos + event.key.length;
+		view.dispatch({
+			changes: { from: suppressPos, to: suppressPos, insert: event.key },
+			selection: EditorSelection.cursor(nextPos),
+			scrollIntoView: true,
+			effects: [setSuppressNextBoundaryInput.of(nextPos)],
+		});
+		return true;
+	},
+});
+
 
 
 // ---------------------------------------------------------------------------
@@ -717,6 +799,7 @@ const deleteInLinkTextKeymap = keymap.of([
 						changes: { from: textTo - 1, to: textTo, insert: "" },
 						selection: EditorSelection.cursor(textTo - 1),
 						scrollIntoView: true,
+						effects: [setSuppressNextBoundaryInput.of(textTo - 1)],
 					});
 					return true;
 				}
@@ -751,6 +834,19 @@ const deleteInLinkTextKeymap = keymap.of([
 						scrollIntoView: true,
 					});
 					return true; // consume key — Obsidian never sees Delete
+				}
+
+				// Cursor at the outside-left edge (lead.from), where a raw Delete would
+				// target the leading syntax (e.g. the first '[' of a wikilink). Redirect
+				// to delete the first visible display character and consume the key so
+				// Obsidian's link completion never sees the Delete press.
+				if (head === lead.from && textFrom < textTo) {
+					view.dispatch({
+						changes: { from: textFrom, to: textFrom + 1, insert: "" },
+						selection: EditorSelection.cursor(textFrom),
+						scrollIntoView: true,
+					});
+					return true;
 				}
 			}
 			return false;
@@ -1089,16 +1185,19 @@ const deleteAtLinkEndFix = EditorState.transactionFilter.of((tr) => {
 		if (range.head !== h.to && range.head !== h.from) continue;
 
 		const userEvent = tr.annotation(Transaction.userEvent) ?? undefined;
-		return tr.startState.update({
-			changes: { from: h.from - 1, to: h.from, insert: "" },
-			selection: EditorSelection.cursor(h.from - 1),
-			scrollIntoView: true,
-			userEvent,
-			// Attach effect so suppressSuggestAfterDeleteListener can dispatch
-			// a selection-only follow-up, resetting Obsidian's suggest trigger.
-			effects: [suppressSuggestAfterDelete.of(h.from - 1)],
-		});
-	}
+			return tr.startState.update({
+				changes: { from: h.from - 1, to: h.from, insert: "" },
+				selection: EditorSelection.cursor(h.from - 1),
+				scrollIntoView: true,
+				userEvent,
+				// Attach effect so suppressSuggestAfterDeleteListener can dispatch
+				// a selection-only follow-up, resetting Obsidian's suggest trigger.
+				effects: [
+					suppressSuggestAfterDelete.of(h.from - 1),
+					setSuppressNextBoundaryInput.of(h.from - 1),
+				],
+			});
+		}
 
 	return tr;
 });
@@ -1163,7 +1262,10 @@ const deleteAtLinkStartFix = EditorState.transactionFilter.of((tr) => {
 				selection: EditorSelection.cursor(h.from - 1),
 				scrollIntoView: true,
 				userEvent,
-				effects: [suppressSuggestAfterDelete.of(h.from - 1)],
+				effects: [
+					suppressSuggestAfterDelete.of(h.from - 1),
+					setSuppressNextBoundaryInput.of(h.from - 1),
+				],
 			});
 		}
 
@@ -1651,12 +1753,15 @@ export function createLinkSyntaxHiderExtension() {
 	// To achieve this, list them in REVERSE order in the array:
 	return [
 		syntaxHiderEnabledField,
+		suppressNextBoundaryInputField,
 		syntaxHiderModePlugin,
 		hiddenRangesField,
 		bodyClassPlugin,
 		temporarilyVisibleLinkField,
 		Prec.highest(hiddenSyntaxReplacePlugin),
 		Prec.highest(cursorCorrector),
+		Prec.highest(suppressSuggestAfterDeleteListener),
+		Prec.highest(boundaryInputSuppressor),
 		Prec.highest(deleteSelectionKeymap),
 		Prec.highest(deleteInLinkTextKeymap),
 		Prec.highest(enterAtLinkEndKeymap),
