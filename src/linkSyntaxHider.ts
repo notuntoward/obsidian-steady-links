@@ -49,6 +49,12 @@ interface LinkRange {
 
 const setSyntaxHiderEnabled = StateEffect.define<boolean>();
 
+// StateEffect attached to delete-redirect transactions (from deleteAtLinkEndFix
+// / deleteAtLinkStartFix) so that a follow-up listener can re-position the
+// cursor away from the [[ boundary, suppressing Obsidian's link suggest popup.
+// The value is the cursor position to move to after the delete.
+const suppressSuggestAfterDelete = StateEffect.define<number>();
+
 // State effect to temporarily show a specific link's syntax
 const setTemporarilyVisibleLink = StateEffect.define<LinkRange | null>();
 
@@ -460,8 +466,17 @@ function correctCursorPos(
 		// width between h.from and h.to, making h.from a meaningful
 		// cursor stop.  Return h.from for those.
 		if (oldPos === h.to && h.from > 0) {
-			const lineEnd = doc.lineAt(pos).to;
-			if (h.to === lineEnd && h.to - h.from <= 2) {
+			// For short trailing ranges (e.g. "]]" — 2 chars or fewer), the
+			// zero-width widget occupies no visual space, so h.from and h.to
+			// appear at the same cursor position.  Stopping at h.from would
+			// create an invisible extra keypress.  Skip directly to h.from - 1
+			// regardless of whether this is an EOL link or a mid-line link.
+			//
+			// Longer trailing ranges (e.g. "](url)" for markdown links — 4+
+			// chars) may display an external-link icon that provides real visual
+			// width, making h.from a meaningful cursor stop.  Keep h.from for
+			// those so the user can land between the text and the icon.
+			if (h.to - h.from <= 2) {
 				return h.from - 1;
 			}
 		}
@@ -599,6 +614,102 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 });
 
 
+
+// ---------------------------------------------------------------------------
+// Backspace / Delete inside link display text — high-precedence keymap
+// ---------------------------------------------------------------------------
+
+/**
+ * Handle Backspace and Delete when the cursor is inside the display-text
+ * region of a hidden link.
+ *
+ * By owning these keys at high precedence (same approach as `enterAtLinkEndKeymap`
+ * for Enter), we consume the keypress before Obsidian's handler ever sees it.
+ * This prevents Obsidian's `LinkTextSuggest.onTrigger` from firing (it is
+ * evaluated on each raw keypress), which is the only reliable way to stop the
+ * completion popup from appearing.
+ *
+ * The dispatch is intentionally plain (no userEvent annotation) so it looks
+ * like a programmatic edit to Obsidian — the suggest trigger is not activated.
+ *
+ * Handles the same boundary cases as `deleteAtLinkEndFix` /
+ * `deleteAtLinkStartFix`:
+ *
+ * Backspace:
+ *  - Cursor strictly inside display text [textFrom, textTo): delete char before cursor.
+ *  - Cursor at the right edge of display text (= textTo = trail.from): delete
+ *    the last display char (head - 1).
+ *
+ * Delete:
+ *  - Cursor strictly inside display text or at the left edge (= textFrom = lead.to):
+ *    delete char at cursor.
+ */
+const deleteInLinkTextKeymap = keymap.of([
+	{
+		key: "Backspace",
+		run(view) {
+			if (!view.state.field(syntaxHiderEnabledField, false)) return false;
+			const sel = view.state.selection;
+			if (sel.ranges.length !== 1 || !sel.main.empty) return false;
+
+			const head = sel.main.head;
+			const hidden = computeHiddenRanges(view.state);
+
+			for (let i = 0; i < hidden.length - 1; i++) {
+				const lead = hidden[i];
+				const trail = hidden[i + 1];
+				if (lead.side !== "leading" || trail.side !== "trailing") continue;
+
+				const textFrom = lead.to;
+				const textTo = trail.from;
+
+				// Cursor inside display text or at the right edge (textTo)
+				if (head > textFrom && head <= textTo) {
+					if (head - 1 < textFrom) return false; // nothing to delete
+					view.dispatch({
+						changes: { from: head - 1, to: head, insert: "" },
+						selection: EditorSelection.cursor(head - 1),
+						scrollIntoView: true,
+					});
+					return true; // consume key — Obsidian never sees Backspace
+				}
+			}
+			return false;
+		},
+	},
+	{
+		key: "Delete",
+		run(view) {
+			if (!view.state.field(syntaxHiderEnabledField, false)) return false;
+			const sel = view.state.selection;
+			if (sel.ranges.length !== 1 || !sel.main.empty) return false;
+
+			const head = sel.main.head;
+			const hidden = computeHiddenRanges(view.state);
+
+			for (let i = 0; i < hidden.length - 1; i++) {
+				const lead = hidden[i];
+				const trail = hidden[i + 1];
+				if (lead.side !== "leading" || trail.side !== "trailing") continue;
+
+				const textFrom = lead.to;
+				const textTo = trail.from;
+
+				// Cursor inside display text or at the left edge (textFrom)
+				if (head >= textFrom && head < textTo) {
+					if (head + 1 > textTo) return false; // nothing to delete
+					view.dispatch({
+						changes: { from: head, to: head + 1, insert: "" },
+						selection: EditorSelection.cursor(head),
+						scrollIntoView: true,
+					});
+					return true; // consume key — Obsidian never sees Delete
+				}
+			}
+			return false;
+		},
+	},
+]);
 
 // ---------------------------------------------------------------------------
 // Enter key at link end
@@ -854,21 +965,23 @@ const insertAtLinkStartFix = EditorState.transactionFilter.of((tr) => {
 });
 
 /**
- * When the cursor is at h.to (the position after "]]" or ")" — the end of a
- * trailing hidden range that coincides with the line end) and the user presses
- * Backspace, the natural delete target is the last character of the trailing
- * syntax (e.g. the second "]").  protectSyntaxFilter would block this, making
- * Backspace appear to do nothing.
+ * Handles two cases at the RIGHT boundary of a link (trailing range):
  *
- * Instead, redirect the deletion to remove the character immediately before
- * the trailing syntax (h.from - 1), which is what the user intends — deleting
- * the last visible character of the link text.
+ * 1. **Backspace from outside-right** — cursor is at h.to (just after the
+ *    closing syntax, e.g. after "]]").  The natural delete target lands inside
+ *    the trailing syntax.  Redirect to delete h.from - 1 (last display char).
+ *
+ * 2. **Del from inside-right** — cursor is at h.from (just before the
+ *    trailing syntax, e.g. before "]]").  A forward delete would consume the
+ *    first character of the trailing syntax.  Redirect to delete h.from - 1
+ *    (last display char — same target as case 1, since the character at
+ *    h.from - 1 is the last visible character of the link text).
  *
  * Only applies when:
- *  - The cursor is a single-cursor (no selection)
- *  - The delete is a single-character backspace (toA - fromA === 1)
+ *  - Single cursor, no selection
+ *  - Exactly one single-character pure delete in the transaction
  *  - The deleted range falls within the trailing hidden range
- *  - The cursor was at h.to (the EOL position after the closing syntax)
+ *  - cursor was at h.to (backspace) or h.from (Del)
  *  - h.from > 0 (there is a visible character before the trailing syntax)
  */
 const deleteAtLinkEndFix = EditorState.transactionFilter.of((tr) => {
@@ -896,23 +1009,29 @@ const deleteAtLinkEndFix = EditorState.transactionFilter.of((tr) => {
 	});
 
 	if (deleteCount !== 1) return tr;
-	if (deleteTo - deleteFrom !== 1) return tr; // Only single-char backspace
+	if (deleteTo - deleteFrom !== 1) return tr; // Only single-char delete
 
-	// Check if the deletion falls within a trailing hidden range AND the
-	// cursor was at h.to (right after the closing syntax, i.e. at line end).
+	// Check if the deletion falls within a trailing hidden range.
 	for (const h of hidden) {
 		if (h.side !== "trailing") continue;
 		if (deleteFrom < h.from || deleteTo > h.to) continue;
-		// The cursor must have been at h.to — the "right of link" position
-		if (range.head !== h.to) continue;
 		// Must have visible link text before the trailing syntax to delete into
 		if (h.from === 0) return tr;
+
+		// Case 1: Backspace from outside-right — cursor was at h.to
+		// Case 2: Del from inside-right — cursor was at h.from (about to delete
+		//         the first character of the trailing syntax forward)
+		if (range.head !== h.to && range.head !== h.from) continue;
+
 		const userEvent = tr.annotation(Transaction.userEvent) ?? undefined;
 		return tr.startState.update({
 			changes: { from: h.from - 1, to: h.from, insert: "" },
 			selection: EditorSelection.cursor(h.from - 1),
 			scrollIntoView: true,
 			userEvent,
+			// Attach effect so suppressSuggestAfterDeleteListener can dispatch
+			// a selection-only follow-up, resetting Obsidian's suggest trigger.
+			effects: [suppressSuggestAfterDelete.of(h.from - 1)],
 		});
 	}
 
@@ -920,16 +1039,19 @@ const deleteAtLinkEndFix = EditorState.transactionFilter.of((tr) => {
 });
 
 /**
- * When the cursor is at h.to (the right edge of a leading hidden range,
- * i.e., just after "[[" or "[") and the user presses Backspace, the natural
- * delete target is the last character of the leading range (e.g. one of the
- * "[" brackets).  protectSyntaxFilter would block this.
+	* Handles two cases at the LEFT boundary of a link (leading range):
  *
- * Instead, redirect the deletion to remove the character immediately before
- * the link (h.from - 1), which is what the user intends — deleting whatever
- * text precedes the link syntax.
+ * 1. **Del from outside-left** — cursor is at h.from (just before the
+ *    opening syntax, e.g. before "[[").  A forward delete would consume the
+ *    first character of the leading syntax.  Redirect to delete h.to
+ *    (first display char — the character immediately after the leading range).
  *
- * Only applies to a single-character backspace (toA - fromA === 1) whose
+ * 2. **Backspace from inside-left** — cursor is at h.to (just after the
+ *    leading syntax, e.g. after "[[").  The natural backspace targets the last
+ *    character of the leading syntax.  Redirect to delete h.from - 1 (the
+ *    character before the link).
+ *
+ * Only applies to a single-character delete (toA - fromA === 1) whose
  * range falls entirely within a leading hidden range.
  */
 const deleteAtLinkStartFix = EditorState.transactionFilter.of((tr) => {
@@ -957,25 +1079,180 @@ const deleteAtLinkStartFix = EditorState.transactionFilter.of((tr) => {
 	});
 
 	if (deleteCount !== 1) return tr;
-	if (deleteTo - deleteFrom !== 1) return tr; // Only single-char backspace
+	if (deleteTo - deleteFrom !== 1) return tr; // Only single-char delete
+
+	const doc = tr.startState.doc;
+	const userEvent = tr.annotation(Transaction.userEvent) ?? undefined;
 
 	// Check if the deletion falls entirely inside a leading hidden range
 	for (const h of hidden) {
 		if (h.side !== "leading") continue;
 		if (deleteFrom < h.from || deleteTo > h.to) continue;
 		// Deletion is inside [h.from, h.to) — it would delete part of leading syntax.
-		// Redirect to delete the character before the link.
-		if (h.from === 0) return tr; // Nothing before the link to delete
-		const userEvent = tr.annotation(Transaction.userEvent) ?? undefined;
+
+		// Case 2: Backspace from inside-left — cursor at h.to, deletion targets [h.to-1, h.to)
+		// Redirect to delete the character before the link (h.from - 1).
+		if (range.head === h.to) {
+			if (h.from === 0) return tr; // Nothing before the link to delete
+			return tr.startState.update({
+				changes: { from: h.from - 1, to: h.from, insert: "" },
+				selection: EditorSelection.cursor(h.from - 1),
+				scrollIntoView: true,
+				userEvent,
+				effects: [suppressSuggestAfterDelete.of(h.from - 1)],
+			});
+		}
+
+		// Case 1: Del from outside-left — cursor at h.from, deletion targets [h.from, h.from+1)
+		// Redirect to delete the first display character (h.to).
+		if (range.head === h.from) {
+			if (h.to >= doc.length) return tr; // Nothing after the leading syntax to delete
+			return tr.startState.update({
+				changes: { from: h.to, to: h.to + 1, insert: "" },
+				selection: EditorSelection.cursor(h.to),
+				scrollIntoView: true,
+				userEvent,
+				effects: [suppressSuggestAfterDelete.of(h.to)],
+			});
+		}
+
+		// Deletion inside the range but cursor not at a recognized boundary:
+		// redirect to delete char before link (same as backspace-from-inside-left).
+		if (h.from === 0) return tr;
 		return tr.startState.update({
 			changes: { from: h.from - 1, to: h.from, insert: "" },
 			selection: EditorSelection.cursor(h.from - 1),
 			scrollIntoView: true,
 			userEvent,
+			effects: [suppressSuggestAfterDelete.of(h.from - 1)],
 		});
 	}
 
 	return tr;
+});
+
+/**
+ * Clamps multi-character or selection-spanning delete transactions so they
+ * never touch characters inside hidden syntax ranges.
+ *
+ * This covers:
+ *  - Emacs kill-word / backward-kill-word
+ *  - Emacs kill-line / kill-region
+ *  - Any selection-delete that spans plain text and part of a link
+ *
+ * For each change in the transaction the filter:
+ *  1. Checks whether the change range overlaps any hidden range.
+ *  2. If it does, clips the deletion boundaries to stay outside the hidden
+ *     characters:
+ *     - If a forward-delete would enter a leading range: stop at h.from.
+ *     - If a forward-delete would enter a trailing range (from display text):
+ *       stop at h.from (= right edge of display text).
+ *     - If the change starts inside a leading range: push fromA to h.to.
+ *     - If the change starts inside a trailing range: push fromA past h.to.
+ *  3. After clamping, if fromA >= toA the change is dropped (nothing left).
+ *
+ * Single-character deletes are left to deleteAtLinkEndFix / deleteAtLinkStartFix.
+ */
+const clampSelectionDeleteFilter = EditorState.transactionFilter.of((tr) => {
+	if (!tr.docChanged) return tr;
+	if (!tr.isUserEvent("delete")) return tr;
+	if (!tr.startState.field(syntaxHiderEnabledField, false)) return tr;
+
+	const hidden = tr.startState.field(hiddenRangesField, false);
+	if (!hidden || hidden.length === 0) return tr;
+
+	// Collect all changes in the transaction
+	type ChangeSpec = { from: number; to: number; insert: string };
+	const changes: ChangeSpec[] = [];
+	let allSingleChar = true;
+
+	tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+		const changeLen = toA - fromA;
+		if (changeLen > 1) allSingleChar = false;
+		changes.push({ from: fromA, to: toA, insert: inserted.toString() });
+	});
+
+	// If every change is ≤1 char, let the single-char filters handle it
+	if (allSingleChar) return tr;
+
+	// Check if any change overlaps a hidden range
+	let anyOverlap = false;
+	for (const c of changes) {
+		for (const h of hidden) {
+			if (c.from < h.to && c.to > h.from) {
+				anyOverlap = true;
+				break;
+			}
+		}
+		if (anyOverlap) break;
+	}
+	if (!anyOverlap) return tr;
+
+	// Rebuild the changes with clamping.
+	// Hidden ranges are sorted by position, so a single linear pass suffices.
+	const clampedChanges: ChangeSpec[] = [];
+
+	for (const c of changes) {
+		let { from, to } = c;
+
+		for (const h of hidden) {
+			if (from >= to) break; // already empty
+
+			if (h.side === "leading") {
+				// Change starts inside a leading range: skip past it
+				if (from >= h.from && from < h.to) {
+					from = h.to;
+				} else if (from < h.from && to > h.from) {
+					// Change would enter a leading range from the left: stop before it
+					to = Math.min(to, h.from);
+				}
+			} else {
+				// trailing range
+				// Change starts inside a trailing range: skip past it
+				if (from >= h.from && from < h.to) {
+					from = h.to;
+				} else if (from < h.from && to > h.from) {
+					// Change would enter a trailing range: stop at h.from (end of display text)
+					to = Math.min(to, h.from);
+				}
+			}
+		}
+
+		if (from < to) {
+			clampedChanges.push({ from, to, insert: c.insert });
+		}
+		// if from >= to: change collapses — drop it
+	}
+
+	// If all changes were dropped, return a no-op
+	if (clampedChanges.length === 0) return [];
+
+	// If nothing changed after clamping, pass through
+	if (clampedChanges.length === changes.length) {
+		let identical = true;
+		for (let i = 0; i < changes.length; i++) {
+			if (
+				clampedChanges[i].from !== changes[i].from ||
+				clampedChanges[i].to !== changes[i].to ||
+				clampedChanges[i].insert !== changes[i].insert
+			) {
+				identical = false;
+				break;
+			}
+		}
+		if (identical) return tr;
+	}
+
+	// Place cursor at the start of the first clamped change
+	const cursorPos = clampedChanges[0].from;
+	const userEvent = tr.annotation(Transaction.userEvent) ?? undefined;
+
+	return tr.startState.update({
+		changes: clampedChanges,
+		selection: EditorSelection.cursor(cursorPos),
+		scrollIntoView: true,
+		userEvent,
+	});
 });
 
 const protectSyntaxFilter = EditorState.transactionFilter.of((tr) => {
@@ -983,14 +1260,25 @@ const protectSyntaxFilter = EditorState.transactionFilter.of((tr) => {
 	if (!tr.isUserEvent("input") && !tr.isUserEvent("delete")) return tr;
 	if (!tr.startState.field(syntaxHiderEnabledField, false)) return tr;
 
-	// Allow deletions when the user has a non-empty selection.
-	// The protection is only needed for single-cursor edits where the user
-	// might accidentally modify hidden syntax via arrow keys / backspace.
-	// When the user explicitly selects text (possibly spanning multiple links)
-	// and presses delete/backspace, the deletion should proceed normally.
+	// Note: We no longer unconditionally bypass protection for non-empty
+	// selections.  clampSelectionDeleteFilter (which runs first) handles
+	// selection-spanning deletes by clipping them to display-text only.
+	// protectSyntaxFilter is the last-resort safety net.
+	//
+	// Only bypass if the selection-delete does NOT overlap any hidden range —
+	// in that case it's safe plain-text editing and needs no clamping.
 	const startSel = tr.startState.selection;
 	if (tr.isUserEvent("delete") && startSel.ranges.some(r => !r.empty)) {
-		return tr;
+		const hidden = tr.startState.field(hiddenRangesField, false);
+		if (!hidden || hidden.length === 0) return tr;
+		let overlaps = false;
+		tr.changes.iterChangedRanges((fromA: number, toA: number) => {
+			for (const h of hidden) {
+				if (fromA < h.to && toA > h.from) overlaps = true;
+			}
+		});
+		if (!overlaps) return tr; // safe: doesn't touch any hidden syntax
+		// Falls through to the protection / blocking logic below
 	}
 
 	const hidden = tr.startState.field(hiddenRangesField, false);
@@ -1123,6 +1411,14 @@ export function findLinkRangeAtPos(
 // ---------------------------------------------------------------------------
 
 export function createLinkSyntaxHiderExtension() {
+	// CM6 applies transactionFilters in REVERSE registration order
+	// (last registered runs first). Desired execution order:
+	//   1. deleteAtLinkEndFix   — single-char backspace/del at right edge
+	//   2. deleteAtLinkStartFix — single-char backspace/del at left edge
+	//   3. clampSelectionDeleteFilter — multi-char and selection deletes
+	//   4. protectSyntaxFilter  — last-resort safety net
+	//
+	// To achieve this, list them in REVERSE order in the array:
 	return [
 		syntaxHiderEnabledField,
 		syntaxHiderModePlugin,
@@ -1131,14 +1427,12 @@ export function createLinkSyntaxHiderExtension() {
 		temporarilyVisibleLinkField,
 		Prec.highest(hiddenSyntaxReplacePlugin),
 		Prec.highest(cursorCorrector),
+		Prec.highest(deleteInLinkTextKeymap),
 		Prec.highest(enterAtLinkEndKeymap),
 		Prec.highest(enterAtLinkEndFix),
 		Prec.highest(insertAtLinkStartFix),
-		// deleteAtLinkStartFix and deleteAtLinkEndFix must come AFTER protectSyntaxFilter
-		// in the array because CM6 applies transactionFilters in reverse registration
-		// order (last registered runs first). Both must run before protectSyntaxFilter
-		// so they can redirect deletes before protect blocks them.
 		Prec.highest(protectSyntaxFilter),
+		Prec.highest(clampSelectionDeleteFilter),
 		Prec.highest(deleteAtLinkEndFix),
 		Prec.highest(deleteAtLinkStartFix),
 	];
@@ -1156,6 +1450,7 @@ export {
 	enterAtLinkEndFix,
 	deleteAtLinkEndFix,
 	deleteAtLinkStartFix,
+	clampSelectionDeleteFilter,
 	syntaxHiderEnabledField,
 	hiddenRangesField,
 	setSyntaxHiderEnabled,

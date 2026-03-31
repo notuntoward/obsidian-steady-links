@@ -131,11 +131,21 @@ export function wikiToMarkdown(dest: string): string {
 export function markdownToWiki(dest: string): string | null {
 	if (!dest) return dest;
 
+	// If the original destination is a URL (including percent-encoded URLs),
+	// it cannot be converted to a wikilink — return null immediately.
+	// Check BEFORE decoding so that e.g. "http://a.aa/%09" is caught by the
+	// https?:// prefix test before decodeURIComponent can turn %09 into a
+	// tab character that breaks the \S+ URL regex.
+	if (/^https?:\/\//i.test(dest) || /^www\./i.test(dest)) return null;
+
 	// Remove angle brackets if present
 	let cleaned = dest;
 	if (dest.startsWith("<") && dest.endsWith(">")) {
 		cleaned = dest.slice(1, -1);
 	}
+
+	// Also reject angle-bracket-wrapped URLs
+	if (/^https?:\/\//i.test(cleaned) || /^www\./i.test(cleaned)) return null;
 
 	// Decode URL encoding
 	try {
@@ -144,9 +154,6 @@ export function markdownToWiki(dest: string): string | null {
 		// If decode fails, manually decode common cases
 		cleaned = cleaned.replace(/%20/g, " ").replace(/%5E/gi, "^");
 	}
-
-	// If it's a URL (including bare URLs), cannot convert to wikilink
-	if (/^https?:\/\/\S+$|^www\.\S+$/i.test(cleaned)) return null;
 
 	return cleaned;
 }

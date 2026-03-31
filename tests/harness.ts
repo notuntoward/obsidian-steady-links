@@ -8,7 +8,7 @@
 import { App, Editor, TFile, createTestApp, createMockEditor, EditorState } from './__mocks__/obsidian';
 import { PluginSettings } from '../src/types';
 import { createSettings } from './factories';
-import { ClipboardService, createMockClipboard, MockClipboardOptions } from '../src/services/clipboard';
+import { ClipboardService, createMockClipboard, MockClipboardOptions } from '../src/clipboard';
 
 // ============================================================================
 // Test Harness

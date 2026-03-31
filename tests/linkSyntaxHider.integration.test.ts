@@ -173,11 +173,12 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			expect(result.final).toBe(14);
 		});
 
-		it("left arrow from h.to (14): CM6 skips to h.from, returns h.from", () => {
+		it("left arrow from h.to (14): CM6 skips to h.from, skips to h.from-1 (short range)", () => {
 			const result = simulateLeftArrowCorrection(view, 14);
 			expect(result.cmDelivered).toBe(12);
-			// h.to (14) !== lineEnd (19), so returns h.from=12
-			expect(result.final).toBe(12);
+			// h.to - h.from = 2 (short "]]" range, zero-width widget)
+			// → invisible stop at h.from=12 skipped → returns h.from-1 = 11
+			expect(result.final).toBe(11);
 		});
 	});
 
