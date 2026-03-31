@@ -1,5 +1,5 @@
 import { Plugin, Editor, MarkdownView } from "obsidian";
-import { Extension } from "@codemirror/state";
+import { Extension, EditorSelection } from "@codemirror/state";
 import { EditLinkModal } from "./EditLinkModal";
 import { SteadyLinksSettingTab } from "./SettingTab";
 import { PluginSettings, LinkInfo } from "./types";
@@ -27,6 +27,43 @@ export default class SteadyLinksPlugin extends Plugin {
 	 * toggles the link-syntax-hider extension at runtime.
 	 */
 	private syntaxHiderExtensions: Extension[] = [];
+
+	private restoreCursorAfterModalClose(
+		editor: Editor,
+		cursorPos: { line: number; ch: number },
+	): void {
+		const restore = () => {
+			const cm6View = (editor as any).cm as EditorView | undefined;
+			if (!cm6View) {
+				editor.setCursor(cursorPos);
+				return;
+			}
+
+			const line = cm6View.state.doc.line(cursorPos.line + 1);
+			const head = Math.max(
+				line.from,
+				Math.min(line.to, line.from + cursorPos.ch),
+			);
+
+			cm6View.focus();
+			editor.setCursor(cursorPos);
+			cm6View.dispatch({
+				selection: EditorSelection.cursor(head),
+				scrollIntoView: true,
+			});
+		};
+
+		window.setTimeout(() => {
+			if (typeof window.requestAnimationFrame === "function") {
+				window.requestAnimationFrame(() => {
+					restore();
+				});
+				return;
+			}
+
+			restore();
+		}, 0);
+	}
 
 	/**
 	 * Check if the current view is in source mode (as opposed to live preview).
@@ -206,7 +243,6 @@ export default class SteadyLinksPlugin extends Plugin {
 			prevLineLength: line > 0 ? editor.getLine(line - 1).length : 0,
 		});
 
-		editor.setCursor(cursorPos);
 		return cursorPos;
 	}
 
@@ -388,9 +424,9 @@ export default class SteadyLinksPlugin extends Plugin {
 						lineCount: editor.lineCount(),
 						prevLineLength: cursor.line > 0 ? editor.getLine(cursor.line - 1).length : 0,
 					});
-					editor.setCursor(skipPos);
+					this.restoreCursorAfterModalClose(editor, skipPos);
 				} else {
-					editor.setCursor(originalCursor);
+					this.restoreCursorAfterModalClose(editor, originalCursor);
 				}
 			},
 			false, // shouldSelectText
@@ -409,9 +445,9 @@ export default class SteadyLinksPlugin extends Plugin {
 						lineCount: editor.lineCount(),
 						prevLineLength: cursor.line > 0 ? editor.getLine(cursor.line - 1).length : 0,
 					});
-					editor.setCursor(skipPos);
+					this.restoreCursorAfterModalClose(editor, skipPos);
 				} else {
-					editor.setCursor(originalCursor);
+					this.restoreCursorAfterModalClose(editor, originalCursor);
 				}
 			}
 		).open();
@@ -478,8 +514,7 @@ export default class SteadyLinksPlugin extends Plugin {
 					result,
 					true // enteredFromLeft
 				);
-				// Re-assert cursor after modal closes so the link collapses in live preview
-				setTimeout(() => editor.setCursor(cursorPos), 0);
+				this.restoreCursorAfterModalClose(editor, cursorPos);
 			},
 			linkContext.shouldSelectText,
 			linkContext.conversionNotice,
