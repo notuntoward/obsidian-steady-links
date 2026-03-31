@@ -102,7 +102,7 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			expect(anchor.style.lineHeight).toBe("inherit");
 			expect(anchor.style.marginRight).toBe("-1px");
 			expect(anchor.style.opacity).toBe("0");
-			expect(anchor.style.pointerEvents).toBe("none");
+			expect(anchor.style.pointerEvents).toBe("auto");
 			expect(anchor.style.verticalAlign).toBe("text-bottom");
 		});
 	});
@@ -166,6 +166,12 @@ describe("Integration: cursor correction with real CM6 state", () => {
 
 			expect(dispatchSelection(view, 10)).toBe(10);
 		});
+
+		it("selection arriving from a blank line above to a line-start wikilink snaps to visible text", () => {
+			view = createTestView("\n[[target]]", 0);
+
+			expect(dispatchSelection(view, 1)).toBe(3);
+		});
 	});
 
 	describe("pointer-initiated corrections", () => {
@@ -173,6 +179,29 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			view = createTestView("see [[target]]", 11);
 
 			expect(dispatchSelection(view, 13, "select.pointer")).toBe(12);
+		});
+	});
+
+	describe("visible-text delete followed by typing", () => {
+		it("rewrites the next text input after an emacs-style visible-text delete inside a wikilink", () => {
+			view = createTestView("[[target]]", 2);
+
+			view.dispatch({
+				changes: { from: 2, to: 3, insert: "" },
+				selection: EditorSelection.cursor(2),
+				annotations: [Transaction.userEvent.of("delete")],
+			});
+
+			expect(view.state.doc.toString()).toBe("[[arget]]");
+
+			view.dispatch({
+				changes: { from: 2, to: 2, insert: "x" },
+				selection: EditorSelection.cursor(3),
+				annotations: [Transaction.userEvent.of("input.type")],
+			});
+
+			expect(view.state.doc.toString()).toBe("[[xarget]]");
+			expect(view.state.selection.main.head).toBe(3);
 		});
 	});
 });

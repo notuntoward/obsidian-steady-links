@@ -68,6 +68,10 @@ const suppressSuggestAfterDelete = StateEffect.define<number>();
 const rewrittenSelectionDelete = StateEffect.define<null>();
 const setSuppressNextBoundaryInput = StateEffect.define<number | null>();
 
+// Marks a rewritten follow-up text insertion so the suppress-next-input filter
+// does not recursively rewrite its own transaction.
+const suppressSuggestAfterVisibleDelete = StateEffect.define<null>();
+
 // State effect to temporarily show a specific link's syntax
 const setTemporarilyVisibleLink = StateEffect.define<LinkRange | null>();
 
@@ -195,7 +199,12 @@ function createHiddenSyntaxAnchor(): HTMLSpanElement {
 	span.style.marginRight = "-1px";
 	span.style.overflow = "hidden";
 	span.style.opacity = "0";
-	span.style.pointerEvents = "none";
+	// Keep hit-testing enabled so vertical cursor motion can still resolve a
+	// target at line start when hidden link syntax is represented by this anchor.
+	// With pointer-events disabled, moving down from a blank line onto a line
+	// that starts with hidden link syntax can fail because there is no hittable
+	// geometry at the goal column.
+	span.style.pointerEvents = "auto";
 	span.style.verticalAlign = "text-bottom";
 
 	return span;
@@ -485,7 +494,18 @@ function correctCursorPos(
 			// text edge), we must skip past the decoration to h.from - 1.
 			if (pos === h.from && pos === doc.lineAt(pos).from) {
 				const movingRight = pos >= oldPos;
-				if (movingRight) return null; // Arrived from prev line — stay
+				if (movingRight) {
+					// Arriving from a blank previous line can leave the caret visually
+					// ambiguous at the start-of-line hidden anchor. Prefer the visible
+					// text edge so vertical movement clearly lands on the link line.
+					if (h.from > 0) {
+						const previousLine = doc.lineAt(h.from - 1);
+						if (previousLine.text.length === 0) {
+							return h.to;
+						}
+					}
+					return null; // Arrived from non-empty prev line — stay
+				}
 				// Moving left: skip to before the link (end of prev line),
 				// or null if already at document start (nowhere to go).
 				return h.from > 0 ? h.from - 1 : null;
@@ -1078,10 +1098,140 @@ function isPureDeleteTransaction(tr: Transaction): boolean {
 	return pureDelete && sawDeletion;
 }
 
+function isWikiLinkSpan(
+	state: EditorState,
+	link: LinkSpan,
+): boolean {
+	const prefix = state.doc.sliceString(link.from, Math.min(link.textFrom, link.to));
+	return prefix.startsWith("[[") || prefix.startsWith("![[");
+}
+
+function findLinkSpanContainingVisibleRange(
+	links: LinkSpan[],
+	from: number,
+	to: number,
+): LinkSpan | null {
+	for (const link of links) {
+		if (from >= link.textFrom && to <= link.textTo) {
+			return link;
+		}
+	}
+
+	return null;
+}
+
+const suppressSuggestAfterVisibleDeleteFilter = EditorState.transactionFilter.of(
+	(tr) => {
+		if (!isPureDeleteTransaction(tr)) return tr;
+		if (!tr.startState.field(syntaxHiderEnabledField, false)) return tr;
+		if (tr.effects.some((e) => e.is(suppressSuggestAfterVisibleDelete))) {
+			return tr;
+		}
+
+		const startSel = tr.startState.selection;
+		if (startSel.ranges.length !== 1) return tr;
+
+		const hidden = tr.startState.field(hiddenRangesField, false);
+		if (!hidden || hidden.length === 0) return tr;
+
+		const links = buildLinkSpans(hidden);
+		if (links.length === 0) return tr;
+
+		let deleteFrom = -1;
+		let deleteTo = -1;
+		let deleteCount = 0;
+		tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+			if (inserted.length !== 0) return;
+			deleteCount += 1;
+			deleteFrom = fromA;
+			deleteTo = toA;
+		});
+
+		if (deleteCount !== 1) return tr;
+		if (deleteFrom >= deleteTo) return tr;
+
+		const link = findLinkSpanContainingVisibleRange(links, deleteFrom, deleteTo);
+		if (!link) return tr;
+		if (!isWikiLinkSpan(tr.startState, link)) return tr;
+
+		const suppressPos = tr.newSelection.main.head;
+		const userEvent = tr.annotation(Transaction.userEvent) ?? undefined;
+
+		return tr.startState.update({
+			changes: tr.changes,
+			selection: tr.newSelection,
+			scrollIntoView: tr.scrollIntoView,
+			userEvent,
+			effects: [
+				...tr.effects,
+				suppressSuggestAfterVisibleDelete.of(null),
+				setSuppressNextBoundaryInput.of(suppressPos),
+			],
+		});
+	},
+);
+
+const suppressNextBoundaryInputFilter = EditorState.transactionFilter.of((tr) => {
+	if (!tr.docChanged) return tr;
+	if (!tr.isUserEvent("input")) return tr;
+	if (!tr.startState.field(syntaxHiderEnabledField, false)) return tr;
+	const suppressedInputPos = tr.startState.field(
+		suppressNextBoundaryInputField,
+		false,
+	);
+	if (suppressedInputPos === null) {
+		return tr;
+	}
+	if (tr.effects.some((e) => e.is(suppressSuggestAfterVisibleDelete))) {
+		return tr;
+	}
+
+	const startSel = tr.startState.selection;
+	if (startSel.ranges.length !== 1 || !startSel.main.empty) return tr;
+
+	const suppressPos = suppressedInputPos;
+	if (suppressPos !== startSel.main.head) return tr;
+
+	let insertText: string | undefined;
+	let insertFrom = -1;
+	let insertTo = -1;
+	let insertCount = 0;
+
+	tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+		const text = inserted.toString();
+		if (text.includes("\n")) return;
+		insertCount += 1;
+		insertText = text;
+		insertFrom = fromA;
+		insertTo = toA;
+	});
+
+	if (!insertText || insertCount !== 1) return tr;
+	if (insertFrom !== insertTo) return tr;
+	if (insertFrom !== suppressPos) return tr;
+
+	const nextPos = suppressPos + insertText.length;
+	return tr.startState.update({
+		changes: { from: suppressPos, to: suppressPos, insert: insertText },
+		selection: EditorSelection.cursor(nextPos),
+		scrollIntoView: tr.scrollIntoView,
+		effects: [
+			suppressSuggestAfterVisibleDelete.of(null),
+			setSuppressNextBoundaryInput.of(nextPos),
+		],
+	});
+});
+
 const insertAtLinkStartFix = EditorState.transactionFilter.of((tr) => {
 	if (!tr.docChanged) return tr;
 	if (!tr.isUserEvent("input")) return tr;
 	if (!tr.startState.field(syntaxHiderEnabledField, false)) return tr;
+	if (tr.startState.field(suppressNextBoundaryInputField, false) !== null) {
+		return tr;
+	}
+	if (tr.effects.some((e) => e.is(suppressSuggestAfterVisibleDelete))) {
+		return tr;
+	}
 	const startSel = tr.startState.selection;
 	if (startSel.ranges.length !== 1) return tr;
 	const range = startSel.ranges[0];
@@ -1766,6 +1916,8 @@ export function createLinkSyntaxHiderExtension() {
 		Prec.highest(deleteInLinkTextKeymap),
 		Prec.highest(enterAtLinkEndKeymap),
 		Prec.highest(enterAtLinkEndFix),
+		Prec.highest(suppressNextBoundaryInputFilter),
+		Prec.highest(suppressSuggestAfterVisibleDeleteFilter),
 		Prec.highest(insertAtLinkStartFix),
 		Prec.highest(protectSyntaxFilter),
 		Prec.highest(clampSelectionDeleteFilter),
