@@ -17,6 +17,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { EditorView } from "@codemirror/view";
 import { EditorState, EditorSelection, Prec } from "@codemirror/state";
 import {
+	createHiddenSyntaxAnchor,
 	correctCursorPos,
 	findWikiLinkSyntaxRanges,
 	findMarkdownLinkSyntaxRanges,
@@ -130,6 +131,27 @@ describe("Integration: cursor correction with real CM6 state", () => {
 
 	afterEach(() => {
 		view?.destroy();
+	});
+
+	describe("custom cursor compatibility", () => {
+		it("creates a measurable hidden-syntax anchor for link-edge cursor overlays", () => {
+			const anchor = createHiddenSyntaxAnchor();
+
+			expect(anchor.className).toBe("le-hidden-syntax-anchor");
+			expect(anchor.getAttribute("aria-hidden")).toBe("true");
+			expect(anchor.getAttribute("data-steady-links-anchor")).toBe(
+				"hidden-syntax",
+			);
+			expect(anchor.style.display).toBe("inline-block");
+			expect(anchor.style.width).toBe("1px");
+			expect(anchor.style.minWidth).toBe("1px");
+			expect(anchor.style.height).toBe("1lh");
+			expect(anchor.style.lineHeight).toBe("inherit");
+			expect(anchor.style.marginRight).toBe("-1px");
+			expect(anchor.style.opacity).toBe("0");
+			expect(anchor.style.pointerEvents).toBe("none");
+			expect(anchor.style.verticalAlign).toBe("text-bottom");
+		});
 	});
 
 	// ── Wikilink at end of line ───────────────────────────────────────

@@ -149,11 +149,34 @@ function getModeForView(
 // Decorations
 // ---------------------------------------------------------------------------
 
+function createHiddenSyntaxAnchor(): HTMLSpanElement {
+	const span = document.createElement("span");
+	span.className = "le-hidden-syntax-anchor";
+	span.setAttribute("aria-hidden", "true");
+	span.setAttribute("data-steady-links-anchor", "hidden-syntax");
+
+	// Keep a measurable inline box for custom-cursor plugins such as
+	// Visible Cursor. A fully 0×0 replacement widget can cause external cursor
+	// overlays to disappear when the caret lands on a link boundary because
+	// there is no usable DOM rect to anchor to. The negative margin keeps the
+	// anchor layout-neutral while still leaving a 1px caret target.
+	span.style.display = "inline-block";
+	span.style.width = "1px";
+	span.style.minWidth = "1px";
+	span.style.height = "1lh";
+	span.style.lineHeight = "inherit";
+	span.style.marginRight = "-1px";
+	span.style.overflow = "hidden";
+	span.style.opacity = "0";
+	span.style.pointerEvents = "none";
+	span.style.verticalAlign = "text-bottom";
+
+	return span;
+}
+
 class HiddenSyntaxWidget extends WidgetType {
 	toDOM(): HTMLElement {
-		const span = document.createElement("span");
-		span.className = "le-hidden-syntax-anchor";
-		return span;
+		return createHiddenSyntaxAnchor();
 	}
 
 	ignoreEvent(): boolean {
@@ -1651,6 +1674,7 @@ export {
 	findWikiLinkSyntaxRanges,
 	computeHiddenRanges,
 	correctCursorPos,
+	createHiddenSyntaxAnchor,
 	listContinuation,
 	findLinkEndAtPos,
 	setTemporarilyVisibleLink,

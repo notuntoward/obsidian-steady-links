@@ -57,11 +57,7 @@
  * .cm-formatting) is intentionally NOT hidden so it remains editable.
  */
 body.le-keep-links-steady .le-hidden-syntax-anchor {
-  display: inline-block;
-  width: 0;
-  height: 0;
-  overflow: hidden;
-  pointer-events: auto;
+  pointer-events: none;
 }
 
 /* Ensure cursor remains visible when inside hidden link syntax.
