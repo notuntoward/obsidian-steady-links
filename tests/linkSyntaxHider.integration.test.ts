@@ -219,6 +219,24 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			expect(view.state.doc.toString()).toBe("[[xarget]]");
 			expect(view.state.selection.main.head).toBe(3);
 		});
+
+		it("rewrites typing at the left visual edge of a piped wikilink to outside the link", () => {
+			const doc = "abcdefg [[Note-08|test link]] defg";
+			const linkStart = doc.indexOf("[[Note-08|test link]]");
+			const visibleTextStart = doc.indexOf("test link");
+			view = createTestView(doc, visibleTextStart);
+
+			view.dispatch({
+				changes: { from: visibleTextStart, to: visibleTextStart, insert: "X" },
+				selection: EditorSelection.cursor(visibleTextStart + 1),
+				annotations: [Transaction.userEvent.of("input.type")],
+			});
+
+			expect(view.state.doc.toString()).toBe(
+				"abcdefg X[[Note-08|test link]] defg",
+			);
+			expect(view.state.selection.main.head).toBe(linkStart + 1);
+		});
 	});
 
 	describe("selection delete with the full extension", () => {

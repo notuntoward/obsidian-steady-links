@@ -1285,10 +1285,8 @@ const insertAtLinkStartFix = EditorState.transactionFilter.of((tr) => {
 	const hidden = computeHiddenRanges(tr.startState);
 	if (hidden.length === 0) return tr;
 
-	const line = tr.startState.doc.lineAt(insertFrom);
 	for (const h of hidden) {
 		if (h.side !== "leading") continue;
-		if (h.from !== line.from) continue;
 		if (insertFrom !== h.to) continue;
 
 		const userEvent = tr.annotation(Transaction.userEvent) ?? undefined;

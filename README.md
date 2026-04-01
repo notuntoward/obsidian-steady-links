@@ -25,6 +25,17 @@ Your cursor jumps, your place in the text shifts, and if the link is long, you c
 
 **Works how you work.** Prefer Obsidian's default link behavior? Skip the setting and use the standalone commands to show, hide, or toggle link syntax on demand. Steady Links adapts to your workflow, not the other way around.
 
+## Editing Policy for Hidden Links
+
+When **Keep links steady** is on, the visible link text behaves like a protected inline token—similar to editing a linked chip in Gmail.
+
+- Typing **inside** the visible link text edits the visible text.
+- Typing at the **left edge** of the visible link inserts **before** the entire link, not into the first character of the link text.
+- Typing at the **right edge** of the visible link inserts **after** the entire link.
+- If you want to change the hidden parts of the link—destination, alias boundaries, wiki-vs-markdown format, embed state—use **Edit Link** instead of typing through the hidden syntax.
+
+This is intentional. The goal is to make hidden links feel stable and predictable: edge typing goes outside the link, while changes to the link's structure go through the link editor.
+
 ## Getting Started
 
 Install the plugin, then open Settings → Steady Links.
