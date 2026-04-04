@@ -87,40 +87,38 @@ export class EditLinkModal extends Modal {
 		this.wasUrl = initialState.wasUrl;
 
 		// Link Text
-		new Setting(contentEl)
-			.setName("Link Text")
-			.addText((text) => {
-				this.textInput = text;
-				text.setValue(this.link.text);
-				text.inputEl.style.width = "100%";
-				const textInputHandler = () => {
-					this.textModifiedByUser = true;
-					this.clearAliasNotice();
-					this.clearValidationErrors();
-					this.updateUIState();
-					this.updateConversionNotice();
-				};
-				text.inputEl.addEventListener("input", textInputHandler);
-				this.eventListeners.push([text.inputEl, "input", textInputHandler]);
-			});
+		new Setting(contentEl).setName("Link Text").addText((text) => {
+			this.textInput = text;
+			text.setValue(this.link.text);
+			text.inputEl.style.width = "100%";
+			const textInputHandler = () => {
+				this.textModifiedByUser = true;
+				this.clearAliasNotice();
+				this.clearValidationErrors();
+				this.updateUIState();
+				this.updateConversionNotice();
+			};
+			text.inputEl.addEventListener("input", textInputHandler);
+			this.eventListeners.push([text.inputEl, "input", textInputHandler]);
+		});
 
 		// Destination
 		const destSetting = new Setting(contentEl).setName("Destination");
 
-	destSetting.addText((text) => {
-		this.destInput = text;
-		text.setValue(this.link.destination);
-		text.inputEl.style.width = "100%";
+		destSetting.addText((text) => {
+			this.destInput = text;
+			text.setValue(this.link.destination);
+			text.inputEl.style.width = "100%";
 
-		this.fileSuggest = new FileSuggest(this.app, text.inputEl, this);
+			this.fileSuggest = new FileSuggest(this.app, text.inputEl, this);
 
-		const destInputHandler = () => {
-			this.handleDestInput();
-			this.updateConversionNotice();
-		};
-		text.inputEl.addEventListener("input", destInputHandler);
-		this.eventListeners.push([text.inputEl, "input", destInputHandler]);
-	});
+			const destInputHandler = () => {
+				this.handleDestInput();
+				this.updateConversionNotice();
+			};
+			text.inputEl.addEventListener("input", destInputHandler);
+			this.eventListeners.push([text.inputEl, "input", destInputHandler]);
+		});
 
 		// Warnings container
 		this.warningsContainer = contentEl.createDiv({ cls: "link-warnings-container" });
@@ -157,33 +155,40 @@ export class EditLinkModal extends Modal {
 					this.updateUIState();
 				});
 
-			toggle.toggleEl.setAttribute("tabindex", "0");
-			const typeToggleKeydownHandler = (e: KeyboardEvent) => {
-				// Only toggle with Space, let Enter propagate to submit
-				if (e.key === " " || e.key === "Spacebar") {
-					e.preventDefault();
-					const newValue = !toggle.getValue();
+				toggle.toggleEl.setAttribute("tabindex", "0");
+				const typeToggleKeydownHandler = (e: KeyboardEvent) => {
+					// Only toggle with Space, let Enter propagate to submit
+					if (e.key === " " || e.key === "Spacebar") {
+						e.preventDefault();
+						const newValue = !toggle.getValue();
 
-					const dest = this.destInput.getValue();
-					if (newValue && !this.isWiki) {
-						const converted = markdownToWiki(dest);
-						if (converted !== null && converted !== dest) {
-							this.destInput.setValue(converted);
+						const dest = this.destInput.getValue();
+						if (newValue && !this.isWiki) {
+							const converted = markdownToWiki(dest);
+							if (converted !== null && converted !== dest) {
+								this.destInput.setValue(converted);
+							}
+						} else if (!newValue && this.isWiki) {
+							const converted = wikiToMarkdown(dest);
+							if (converted !== dest) {
+								this.destInput.setValue(converted);
+							}
 						}
-					} else if (!newValue && this.isWiki) {
-						const converted = wikiToMarkdown(dest);
-						if (converted !== dest) {
-							this.destInput.setValue(converted);
-						}
+
+						toggle.setValue(newValue);
+						this.isWiki = newValue;
+						this.updateUIState();
 					}
-
-					toggle.setValue(newValue);
-					this.isWiki = newValue;
-					this.updateUIState();
-				}
-			};
-			toggle.toggleEl.addEventListener("keydown", typeToggleKeydownHandler as EventListener);
-			this.eventListeners.push([toggle.toggleEl, "keydown", typeToggleKeydownHandler as EventListener]);
+				};
+				toggle.toggleEl.addEventListener(
+					"keydown",
+					typeToggleKeydownHandler as EventListener
+				);
+				this.eventListeners.push([
+					toggle.toggleEl,
+					"keydown",
+					typeToggleKeydownHandler as EventListener,
+				]);
 			});
 
 		// Embed checkbox
@@ -193,33 +198,43 @@ export class EditLinkModal extends Modal {
 			.addToggle((toggle) => {
 				this.embedToggle = toggle;
 				toggle.setValue(this.link.isEmbed || false);
-				
+
 				toggle.onChange((value) => {
-					embedSetting.setDesc(value ? "Link contents shown in note" : "Link shown in note");
+					embedSetting.setDesc(
+						value ? "Link contents shown in note" : "Link shown in note"
+					);
 					this.updateUIState(); // Update warnings when embed state changes
 				});
 
-			toggle.toggleEl.setAttribute("tabindex", "0");
-			const embedToggleKeydownHandler = (e: KeyboardEvent) => {
-				// Only toggle with Space, let Enter propagate to submit
-				if (e.key === " " || e.key === "Spacebar") {
-					e.preventDefault();
-					const currentValue = toggle.getValue();
-					toggle.setValue(!currentValue);
-					embedSetting.setDesc(!currentValue ? "Link contents shown in note" : "Link shown in note");
-					this.updateUIState(); // Update warnings when embed state changes
-				}
-			};
-			toggle.toggleEl.addEventListener("keydown", embedToggleKeydownHandler as EventListener);
-			this.eventListeners.push([toggle.toggleEl, "keydown", embedToggleKeydownHandler as EventListener]);
+				toggle.toggleEl.setAttribute("tabindex", "0");
+				const embedToggleKeydownHandler = (e: KeyboardEvent) => {
+					// Only toggle with Space, let Enter propagate to submit
+					if (e.key === " " || e.key === "Spacebar") {
+						e.preventDefault();
+						const currentValue = toggle.getValue();
+						toggle.setValue(!currentValue);
+						embedSetting.setDesc(
+							!currentValue ? "Link contents shown in note" : "Link shown in note"
+						);
+						this.updateUIState(); // Update warnings when embed state changes
+					}
+				};
+				toggle.toggleEl.addEventListener(
+					"keydown",
+					embedToggleKeydownHandler as EventListener
+				);
+				this.eventListeners.push([
+					toggle.toggleEl,
+					"keydown",
+					embedToggleKeydownHandler as EventListener,
+				]);
 			});
 		embedSetting.settingEl.addClass("link-embed-checkbox");
 
 		// Apply button
 		new Setting(contentEl).addButton((btn) => {
 			this.applyBtn = btn;
-			btn
-				.setButtonText("Apply")
+			btn.setButtonText("Apply")
 				.setCta()
 				.onClick(() => {
 					this.submit();
@@ -254,7 +269,10 @@ export class EditLinkModal extends Modal {
 				nextElement.focus();
 
 				// Select text when focusing on text inputs
-				if (nextElement === this.textInput.inputEl || nextElement === this.destInput.inputEl) {
+				if (
+					nextElement === this.textInput.inputEl ||
+					nextElement === this.destInput.inputEl
+				) {
 					(nextElement as HTMLInputElement).select();
 				}
 
@@ -288,6 +306,7 @@ export class EditLinkModal extends Modal {
 		this.eventListeners.push([this.modalEl, "keydown", modalKeydownHandler as EventListener]);
 
 		this.updateUIState();
+		this.toggleComponent.setValue(this.isWiki);
 		this.populateFromClipboard();
 		this.setInitialFocus();
 	}
@@ -306,7 +325,7 @@ export class EditLinkModal extends Modal {
 		const action = determineInitialFocus(
 			this.link.text,
 			this.link.destination,
-			this.shouldSelectText,
+			this.shouldSelectText
 		);
 
 		switch (action) {
@@ -376,7 +395,8 @@ export class EditLinkModal extends Modal {
 	};
 
 	clearValidationErrors() {
-		const existingValidation = this.warningsContainer.querySelectorAll(".link-validation-error");
+		const existingValidation =
+			this.warningsContainer.querySelectorAll(".link-validation-error");
 		existingValidation.forEach((w) => w.remove());
 		this.textInput.inputEl.classList.remove("link-warning-highlight");
 		this.destInput.inputEl.classList.remove("link-warning-highlight");
@@ -391,7 +411,7 @@ export class EditLinkModal extends Modal {
 			this.link.text,
 			this.link.destination,
 			this.clipboardUsedText,
-			this.clipboardUsedDest,
+			this.clipboardUsedDest
 		);
 
 		if (noticeText === null) {
@@ -407,6 +427,9 @@ export class EditLinkModal extends Modal {
 	 * Uses the refactored validateLinkDestination function for cleaner code
 	 */
 	updateUIState() {
+		if (this.toggleComponent && this.toggleComponent.getValue() !== this.isWiki) {
+			this.toggleComponent.setValue(this.isWiki);
+		}
 		this.typeSetting.setDesc(this.isWiki ? "Wikilink" : "Markdown Link");
 
 		// Clear previous warnings (but keep conversion notices that aren't validation warnings)
@@ -421,15 +444,17 @@ export class EditLinkModal extends Modal {
 			const activeLeaf = this.app.workspace.activeLeaf;
 			const view = activeLeaf?.view as any;
 			const mode = view?.getMode?.();
-			
+
 			// Check if we're in a mode where link syntax might be hidden (live preview or reading view)
 			// In these modes, the ! prefix might not be visible/detectable
-			const isPreviewMode = mode === 'preview' || mode === 'live';
-			
+			const isPreviewMode = mode === "preview" || mode === "live";
+
 			// Remove any existing embed detection notice first
-			const existingNotice = this.warningsContainer.querySelector(".link-embed-detection-notice");
+			const existingNotice = this.warningsContainer.querySelector(
+				".link-embed-detection-notice"
+			);
 			if (existingNotice) existingNotice.remove();
-			
+
 			// Show notice if:
 			// 1. We're in preview/live mode AND the link wasn't detected as embedded
 			// 2. This helps users know they may need to manually check the embed box
@@ -450,12 +475,19 @@ export class EditLinkModal extends Modal {
 		const currentFilePath = activeFile?.path;
 
 		// Use the refactored validation function
-		const validationResult = validateLinkDestination(dest, linkText, this.isWiki, isEmbed, currentFilePath);
+		const validationResult = validateLinkDestination(
+			dest,
+			linkText,
+			this.isWiki,
+			isEmbed,
+			currentFilePath
+		);
 
 		// Display warnings
 		if (validationResult.warnings.length > 0) {
 			validationResult.warnings.forEach((warning) => {
-				const cls = warning.severity === 'error' ? 'link-warning-error' : 'link-warning-caution';
+				const cls =
+					warning.severity === "error" ? "link-warning-error" : "link-warning-caution";
 				this.warningsContainer.createEl("div", {
 					cls: `link-warning ${cls}`,
 					text: warning.text,
@@ -477,7 +509,7 @@ export class EditLinkModal extends Modal {
 		this.clearValidationErrors();
 
 		let destValue = this.destInput.getValue();
-		
+
 		// Normalize URLs before submitting (add https:// if needed)
 		if (!this.isWiki && destValue) {
 			const trimmed = destValue.trim();
@@ -487,10 +519,7 @@ export class EditLinkModal extends Modal {
 			}
 		}
 
-		const validation = validateSubmission(
-			this.textInput.getValue(),
-			destValue,
-		);
+		const validation = validateSubmission(this.textInput.getValue(), destValue);
 
 		if (!validation.valid) {
 			const errorDiv = this.warningsContainer.createEl("div", {

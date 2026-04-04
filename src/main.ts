@@ -8,10 +8,20 @@ import {
 	detectLinkAtCursor,
 	determineLinkFromContext,
 	urlAtCursor,
-	computeDisplayedTextRange
+	computeDisplayedTextRange,
 } from "./utils";
-import { buildLinkText, computeCloseCursorPosition, computeSkipCursorPosition, computeSkipLinkPosition } from "./modalLogic";
-import { createLinkSyntaxHiderExtension, findLinkRangeAtPos, setTemporarilyVisibleLink, temporarilyVisibleLinkField } from "./linkSyntaxHider";
+import {
+	buildLinkText,
+	computeCloseCursorPosition,
+	computeSkipCursorPosition,
+	computeSkipLinkPosition,
+} from "./modalLogic";
+import {
+	createLinkSyntaxHiderExtension,
+	findLinkRangeAtPos,
+	setTemporarilyVisibleLink,
+	temporarilyVisibleLinkField,
+} from "./linkSyntaxHider";
 import { EditorView } from "@codemirror/view";
 
 const DEFAULT_SETTINGS: PluginSettings = {
@@ -30,7 +40,7 @@ export default class SteadyLinksPlugin extends Plugin {
 
 	private restoreCursorAfterModalClose(
 		editor: Editor,
-		cursorPos: { line: number; ch: number },
+		cursorPos: { line: number; ch: number }
 	): void {
 		const restore = () => {
 			const cm6View = (editor as any).cm as EditorView | undefined;
@@ -40,10 +50,7 @@ export default class SteadyLinksPlugin extends Plugin {
 			}
 
 			const line = cm6View.state.doc.line(cursorPos.line + 1);
-			const head = Math.max(
-				line.from,
-				Math.min(line.to, line.from + cursorPos.ch),
-			);
+			const head = Math.max(line.from, Math.min(line.to, line.from + cursorPos.ch));
 
 			cm6View.focus();
 			editor.setCursor(cursorPos);
@@ -164,7 +171,7 @@ export default class SteadyLinksPlugin extends Plugin {
 
 				// Check if there's a temporarily visible link
 				const currentVisible = cm6View.state.field(temporarilyVisibleLinkField, false);
-				
+
 				if (currentVisible) {
 					// Link is shown, hide it
 					this.hideLinkSyntax(editor, view);
@@ -184,7 +191,7 @@ export default class SteadyLinksPlugin extends Plugin {
 
 				// Compute the displayed text range for the link at cursor
 				const displayedRange = computeDisplayedTextRange(line, cursor.ch);
-				
+
 				if (!displayedRange) {
 					// Cursor is not in or on the edge of a link - do nothing
 					return;
@@ -202,7 +209,7 @@ export default class SteadyLinksPlugin extends Plugin {
 					lineCount: editor.lineCount(),
 					prevLineLength: cursor.line > 0 ? editor.getLine(cursor.line - 1).length : 0,
 					isSourceMode: this.isSourceMode(view),
-					keepLinksSteady: this.settings.keepLinksSteady
+					keepLinksSteady: this.settings.keepLinksSteady,
 				});
 
 				if (skipPos) {
@@ -227,11 +234,7 @@ export default class SteadyLinksPlugin extends Plugin {
 	): { line: number; ch: number } {
 		const replacement = buildLinkText(result);
 
-		editor.replaceRange(
-			replacement,
-			{ line: line, ch: start },
-			{ line: line, ch: end }
-		);
+		editor.replaceRange(replacement, { line: line, ch: start }, { line: line, ch: end });
 
 		const cursorPos = computeCloseCursorPosition({
 			linkStart: start,
@@ -290,10 +293,10 @@ export default class SteadyLinksPlugin extends Plugin {
 
 		// Find the full link range (including syntax) using CM6 document positions
 		const docLine = cm6View.state.doc.line(cursor.line + 1); // CM6 lines are 1-indexed
-		
+
 		// Convert the editor line position to CM6 document position
 		const linkStartPos = docLine.from + existingLink.start;
-		
+
 		// Try to find the link range at the link's actual position
 		const linkRange = findLinkRangeAtPos(docLine.text, docLine.from, linkStartPos);
 
@@ -303,14 +306,14 @@ export default class SteadyLinksPlugin extends Plugin {
 
 		// Dispatch effect to temporarily show this link's syntax
 		cm6View.dispatch({
-			effects: setTemporarilyVisibleLink.of(linkRange)
+			effects: setTemporarilyVisibleLink.of(linkRange),
 		});
 	}
 
 	/**
 	 * Hide the link syntax at the current cursor position.
 	 * Used by both "Hide Link Syntax" and "Toggle Link Syntax" commands.
-	 * 
+	 *
 	 * When "keep links steady" is ON: cursor stays on link for easy toggling
 	 * When "keep links steady" is OFF: cursor skips off link to prevent re-expansion
 	 */
@@ -328,7 +331,7 @@ export default class SteadyLinksPlugin extends Plugin {
 		const cm6View = (editor as any).cm as EditorView;
 		if (cm6View) {
 			cm6View.dispatch({
-				effects: setTemporarilyVisibleLink.of(null)
+				effects: setTemporarilyVisibleLink.of(null),
 			});
 		}
 
@@ -358,9 +361,7 @@ export default class SteadyLinksPlugin extends Plugin {
 	applySyntaxHiderSetting() {
 		this.syntaxHiderExtensions.length = 0;
 		if (this.settings.keepLinksSteady) {
-			this.syntaxHiderExtensions.push(
-				...createLinkSyntaxHiderExtension(),
-			);
+			this.syntaxHiderExtensions.push(...createLinkSyntaxHiderExtension());
 		}
 		this.app.workspace.updateOptions();
 	}
@@ -422,7 +423,8 @@ export default class SteadyLinksPlugin extends Plugin {
 						lineLength: lineText.length,
 						line: cursor.line,
 						lineCount: editor.lineCount(),
-						prevLineLength: cursor.line > 0 ? editor.getLine(cursor.line - 1).length : 0,
+						prevLineLength:
+							cursor.line > 0 ? editor.getLine(cursor.line - 1).length : 0,
 					});
 					this.restoreCursorAfterModalClose(editor, skipPos);
 				} else {
@@ -443,7 +445,8 @@ export default class SteadyLinksPlugin extends Plugin {
 						lineLength: lineText.length,
 						line: cursor.line,
 						lineCount: editor.lineCount(),
-						prevLineLength: cursor.line > 0 ? editor.getLine(cursor.line - 1).length : 0,
+						prevLineLength:
+							cursor.line > 0 ? editor.getLine(cursor.line - 1).length : 0,
 					});
 					this.restoreCursorAfterModalClose(editor, skipPos);
 				} else {
@@ -478,7 +481,7 @@ export default class SteadyLinksPlugin extends Plugin {
 			clipboardText,
 			cursorUrl,
 			line,
-			cursorCh: cursor.ch
+			cursorCh: cursor.ch,
 		});
 
 		const link: LinkInfo = {
