@@ -2,6 +2,7 @@
 main.js
 main.js.map
 *.js.map
+tsconfig.tsbuildinfo
 
 # npm
 node_modules
