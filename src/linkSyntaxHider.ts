@@ -58,6 +58,34 @@ interface ChangeSpec {
 	insert: string;
 }
 
+function findPreviousWordBoundary(text: string, from: number, to: number): number {
+	let pos = Math.max(from, Math.min(to, text.length));
+
+	while (pos > from && /[\s\p{P}]/u.test(text.charAt(pos - 1))) {
+		pos -= 1;
+	}
+
+	while (pos > from && /[^\s\p{P}]/u.test(text.charAt(pos - 1))) {
+		pos -= 1;
+	}
+
+	return pos;
+}
+
+function findNextWordBoundary(text: string, from: number, to: number): number {
+	let pos = Math.max(from, Math.min(to, 0));
+
+	while (pos < text.length && pos < to && /[^\s\p{P}]/u.test(text.charAt(pos))) {
+		pos += 1;
+	}
+
+	while (pos < text.length && pos < to && /[\s\p{P}]/u.test(text.charAt(pos))) {
+		pos += 1;
+	}
+
+	return pos;
+}
+
 const setSyntaxHiderEnabled = StateEffect.define<boolean>();
 
 // StateEffect attached to delete-redirect transactions (from deleteAtLinkEndFix
@@ -471,9 +499,17 @@ function correctCursorPos(
 	doc: EditorState["doc"],
 	isPointer: boolean = false
 ): number | null {
+	const oldLine = doc.lineAt(Math.min(oldPos, doc.length));
+	const newLine = doc.lineAt(Math.min(pos, doc.length));
+	const isVerticalMotion = oldLine.number !== newLine.number;
+
 	for (const h of hidden) {
 		let inside: boolean;
 		if (h.side === "leading") {
+			if (pos === h.from && oldPos === h.from - 1 && !isPointer && !isVerticalMotion) {
+				return h.to;
+			}
+
 			// When the leading hidden range starts at the beginning of a line
 			// (e.g. "\n[[target]]"), position h.from is a valid line-start
 			// cursor stop for someone arriving from the previous line (moving
@@ -579,7 +615,6 @@ function computeHiddenRangesForPositions(
 }
 
 const CORRECTING = "__leSyntaxCorrecting";
-
 const cursorCorrector = EditorView.updateListener.of((update) => {
 	if (!update.selectionSet) return;
 	if ((update.view as any)[CORRECTING]) return;
@@ -588,7 +623,6 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 	const state = update.state;
 	const newSel = state.selection;
 	const oldSel = update.startState.selection;
-
 	const hidden = computeHiddenRangesForPositions(state.doc, newSel);
 	if (hidden.length === 0) return;
 
@@ -650,17 +684,64 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 		const oldHead = i < oldSel.ranges.length ? oldSel.ranges[i].head : oldSel.main.head;
 		let head = range.head;
 
+		if (!isPointer) {
+			for (let hiddenIndex = 0; hiddenIndex < hidden.length; hiddenIndex += 1) {
+				const leading = hidden[hiddenIndex];
+				if (leading.side !== "leading") continue;
+				if (head !== leading.from) continue;
+
+				const line = state.doc.lineAt(leading.from);
+				const trailing = hidden
+					.slice(hiddenIndex + 1)
+					.find(
+						(candidate) =>
+							candidate.side === "trailing" &&
+							candidate.from >= leading.to &&
+							candidate.to <= line.to
+					);
+				if (!trailing) continue;
+
+				const visibleTextEnd = trailing.from;
+				const visibleText = state.doc.sliceString(leading.to, visibleTextEnd);
+				const lineStartsWithLink = leading.from === line.from;
+
+				if (oldHead >= leading.to && oldHead <= visibleTextEnd) {
+					if (lineStartsWithLink) {
+						break;
+					}
+
+					const relativeOldHead = Math.max(
+						0,
+						Math.min(visibleText.length, oldHead - leading.to)
+					);
+					const nextVisibleBoundary = findNextWordBoundary(
+						visibleText,
+						relativeOldHead,
+						visibleText.length
+					);
+					head = leading.to + nextVisibleBoundary;
+					needsAdjust = true;
+					break;
+				}
+			}
+		}
+
 		// CM6 vertical motion can legitimately arrive at the line-start position of
 		// a hidden leading range with a remembered goal column, and then follow up
 		// with a normalization step from the visible-text edge back to line start.
 		// Treat that as successful vertical motion, not as a LEFT-arrow-style move
 		// that should bounce back to the previous line.
 		if (oldSel.main.goalColumn !== undefined) {
+			let allowLeadingBoundaryAdvance = false;
 			for (let hiddenIndex = 0; hiddenIndex < hidden.length; hiddenIndex += 1) {
 				const h = hidden[hiddenIndex];
 				if (h.side !== "leading") continue;
 				if (head !== h.from) continue;
 				if (head !== state.doc.lineAt(head).from) continue;
+				if (oldHead === h.from - 1) {
+					allowLeadingBoundaryAdvance = true;
+					break;
+				}
 
 				const trailing = hidden
 					.slice(hiddenIndex + 1)
@@ -671,6 +752,10 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 				head = oldHead;
 				needsAdjust = true;
 				break;
+			}
+
+			if (allowLeadingBoundaryAdvance) {
+				head = Math.min(state.doc.length, head + 1);
 			}
 		}
 

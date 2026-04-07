@@ -2,7 +2,7 @@
 
 Steady Links simplifies link syntax editing and optionally keeps links folded, hiding link syntax in Live Preview.
 
-### The Problem
+### Stock Obsidian Links
 
 When you arrow-key through a note in stock Obsidian, every link you touch expands, exposing its raw syntax: brackets, URLs, everything.
 
@@ -17,12 +17,12 @@ When you arrow-key through a note in stock Obsidian, every link you touch expand
   </figure>
 </div>
 
-Your cursor jumps, your place in the text shifts, and if the link is long, you can end up lines away from the link text you may or may not have wanted to edit. Besides the "where did my cursor go?" moment, editing link syntax is a messy
+Your cursor jumps, your place in the text shifts, and if the link is long, you can end up lines away from the link text you may or may not have wanted to edit. Besides the "where did my cursor go?" moment, cursoring through giant URLs and editing link syntax is a messy chore.
 
 ### What Steady Links Does
 
 **Links stay put.**
-Enable `Keep links steady` in this plugin's settings, and links in Live Preview stop expanding when your cursor enters them. You see only folded links, and you can can edit their text normally while the underlying link syntax and destination stay out of your way (similar to gmail). For a quick syntax check, or if you prefer to not `Keep links steady` see the useful [Steady Links Commands](#steady_links_commands).
+Enable `Keep links steady` in this plugin's settings, and links in Live Preview will stop expanding when your cursor touches them. You see only folded links; only the link text is visible. You can can edit their text normally, while the underlying link syntax and destination stay out of your way (similar to gmail). For a quick syntax check, or if you prefer to not `Keep links steady`, then see the still-useful [Steady Links Commands](#steady_links_commands).
 
 #### Link Editor: links without juggling brackets
 
@@ -33,7 +33,7 @@ Enable `Keep links steady` in this plugin's settings, and links in Live Preview 
   </figcaption>
 </figure>
 
-The `Edit Link` command opens a modal where you can change any link syntax. You can set the link text, and make the link destination a URL, file, heading, or block reference. You can set the link type to wikilink or markdown format, and chose to embed the link content in your page. No hand-editing. No mismatched brackets.
+The `Edit Link` command opens a modal where you can easily change the link your cursor, or if there is no link at your cursor, create a new one. You can set the link text, and make the link destination a URL, file, heading, or block reference. You can set the link type to wikilink or markdown format, and chose to embed the link content in your page. No hand-editing. No mismatched brackets.
 
 ##### Link Editor Defaults
 

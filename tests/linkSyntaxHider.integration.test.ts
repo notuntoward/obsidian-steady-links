@@ -123,6 +123,12 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			expect(dispatchSelection(view, 14)).toBe(14);
 		});
 
+		it("selection delivered to leading h.from from plain text is corrected to visible text", () => {
+			view = createTestView("see [[target]] more", 3);
+
+			expect(dispatchSelection(view, 4, "select")).toBe(6);
+		});
+
 		it("selection delivered to trailing h.from is corrected to h.from-1", () => {
 			view = createTestView("see [[target]] more", 14);
 
@@ -245,6 +251,32 @@ describe("Integration: cursor correction with real CM6 state", () => {
 
 			expect(view.state.doc.toString()).toBe("after");
 			expect(view.state.selection.main.head).toBe(0);
+		});
+	});
+
+	describe("Emacs-style navigation compatibility", () => {
+		it("forward-word style jumps do not get stuck at a wikilink leading edge", () => {
+			view = createTestView("see [[target]] more", 3);
+
+			expect(dispatchSelection(view, 4, "select")).toBe(6);
+		});
+
+		it("forward-word style bounce inside a multi-word wikilink lands at the next visible word boundary", () => {
+			view = createTestView("see [[two words here]] more", 16);
+
+			expect(dispatchSelection(view, 4)).toBe(23);
+		});
+
+		it("paragraph jumps onto a line-start wikilink land on visible text", () => {
+			view = createTestView("intro\n\n[[target]]\n\noutro", 6);
+
+			expect(dispatchSelection(view, 9, "select")).toBe(9);
+		});
+
+		it("backward paragraph jumps onto a line-start wikilink from below land on visible text", () => {
+			view = createTestView("intro\n\n[[target]]\n\noutro", 20);
+
+			expect(dispatchSelection(view, 6, "select")).toBe(6);
 		});
 	});
 });

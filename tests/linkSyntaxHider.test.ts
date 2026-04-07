@@ -228,6 +228,28 @@ describe("correctCursorPos", () => {
 			expect(result).toBe(6); // skip to text start
 		});
 
+		it("should skip right past a leading wikilink boundary for word-style jumps", () => {
+			const wikiDoc = makeDoc("see [[target]] more");
+			const wikiHidden: HiddenRange[] = [
+				{ from: 4, to: 6, side: "leading" },
+				{ from: 12, to: 14, side: "trailing" },
+			];
+
+			const result = correctCursorPos(4, 3, wikiHidden, wikiDoc as any);
+			expect(result).toBe(6);
+		});
+
+		it("should not pull paragraph-style landings past a line-start boundary", () => {
+			const doc = makeDoc("intro\n\n[[target]]\n\noutro");
+			const hidden: HiddenRange[] = [
+				{ from: 7, to: 9, side: "leading" },
+				{ from: 15, to: 17, side: "trailing" },
+			];
+
+			const result = correctCursorPos(9, 6, hidden, doc as any);
+			expect(result).toBe(null);
+		});
+
 		it("should skip left through leading range", () => {
 			const result = correctCursorPos(5, 6, mdHidden, mdDoc as any);
 			// Moving left from 6→5: pos lands at h.from, skip to h.from - 1
@@ -479,17 +501,17 @@ describe("correctCursorPos", () => {
 			];
 
 			it("left to h.to from space: no correction (h.to is outside range)", () => {
-					const result = correctCursorPos(14, 15, hidden, doc as any);
-					expect(result).toBe(null);
-				});
-	
-				it("left through trailing at non-line-end: skips to h.from-1 for short (2-char) trailing range", () => {
-					// CM6 delivers h.from=12, oldPos=14=h.to.
-					// h.to - h.from = 2 (short "]]" range) → zero-width widget creates
-					// invisible stop at h.from.  Skip to h.from-1=11 to avoid it.
-					const result = correctCursorPos(12, 14, hidden, doc as any);
-					expect(result).toBe(11); // h.from-1 — invisible stop skipped
-				});
+				const result = correctCursorPos(14, 15, hidden, doc as any);
+				expect(result).toBe(null);
+			});
+
+			it("left through trailing at non-line-end: skips to h.from-1 for short (2-char) trailing range", () => {
+				// CM6 delivers h.from=12, oldPos=14=h.to.
+				// h.to - h.from = 2 (short "]]" range) → zero-width widget creates
+				// invisible stop at h.from.  Skip to h.from-1=11 to avoid it.
+				const result = correctCursorPos(12, 14, hidden, doc as any);
+				expect(result).toBe(11); // h.from-1 — invisible stop skipped
+			});
 
 			it("right from h.to: no correction (moving right past the range)", () => {
 				const result = correctCursorPos(14, 12, hidden, doc as any);
@@ -673,19 +695,19 @@ describe("computeHiddenRanges", () => {
 		});
 
 		const ranges = computeHiddenRanges(state);
-		
+
 		// Should have leading and trailing ranges for the wikilink
 		expect(ranges.length).toBeGreaterThanOrEqual(2);
-		
+
 		// Find the leading range (should include "[[my-note|")
-		const leadingRange = ranges.find(r => r.side === "leading");
+		const leadingRange = ranges.find((r) => r.side === "leading");
 		expect(leadingRange).toBeDefined();
 		expect(leadingRange!.from).toBe(10); // Start of "[["
 		// Leading range ends where display text begins
 		expect(leadingRange!.to).toBeGreaterThan(leadingRange!.from);
-		
+
 		// Find the trailing range (should include "]]")
-		const trailingRange = ranges.find(r => r.side === "trailing");
+		const trailingRange = ranges.find((r) => r.side === "trailing");
 		expect(trailingRange).toBeDefined();
 		// Trailing range starts after display text and ends at end of link
 		expect(trailingRange!.to).toBeGreaterThan(trailingRange!.from);
@@ -702,7 +724,7 @@ describe("computeHiddenRanges", () => {
 		});
 
 		const ranges = computeHiddenRanges(state);
-		
+
 		// Should still have ranges because links are always hidden regardless of cursor position
 		expect(ranges.length).toBeGreaterThanOrEqual(2);
 	});
@@ -714,7 +736,7 @@ describe("computeHiddenRanges", () => {
 		});
 
 		const ranges = computeHiddenRanges(state);
-		
+
 		// No hidden ranges because cursor line has no links
 		expect(ranges).toEqual([]);
 	});
@@ -726,12 +748,12 @@ describe("computeHiddenRanges", () => {
 		});
 
 		const ranges = computeHiddenRanges(state);
-		
+
 		expect(ranges.length).toBe(2);
-		
+
 		// Leading range: "["
 		expect(ranges[0]).toEqual({ from: 6, to: 7, side: "leading" });
-		
+
 		// Trailing range: "](https://example.com)"
 		expect(ranges[1]).toEqual({ from: 11, to: 33, side: "trailing" });
 	});
@@ -743,7 +765,7 @@ describe("computeHiddenRanges", () => {
 		});
 
 		const ranges = computeHiddenRanges(state);
-		
+
 		// Should have 4 ranges: 2 for each wikilink (leading + trailing)
 		expect(ranges.length).toBe(4);
 	});
@@ -864,11 +886,7 @@ function makeHiderState(docText: string, cursorPos: number): EditorState {
  * Build an EditorState for selection-spanning delete tests.
  * Accepts a selection range [anchor, head] instead of a cursor.
  */
-function makeHiderStateWithRange(
-	docText: string,
-	anchor: number,
-	head: number,
-): EditorState {
+function makeHiderStateWithRange(docText: string, anchor: number, head: number): EditorState {
 	const base = EditorState.create({
 		doc: docText,
 		selection: EditorSelection.range(anchor, head),

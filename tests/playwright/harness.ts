@@ -1,31 +1,7 @@
 import { EditorState, EditorSelection } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { createLinkSyntaxHiderExtension, setSyntaxHiderEnabled } from "../../src/linkSyntaxHider";
-
-declare global {
-	interface Window {
-		__steadyLinksHarness?: {
-			setDoc(doc: string, cursorPos?: number): void;
-			setCursor(pos: number): void;
-			getDoc(): string;
-			getCursor(): number;
-			getLineTops(): number[];
-			getAnchorRect(): {
-				top: number;
-				left: number;
-				width: number;
-				height: number;
-			} | null;
-			getCursorRect(): {
-				top: number;
-				left: number;
-				width: number;
-				height: number;
-			} | null;
-			destroy(): void;
-		};
-	}
-}
+import type { SteadyLinksHarness } from "./harnessTypes";
 
 const root = document.createElement("div");
 root.className = "markdown-source-view is-live-preview steady-links-harness";
@@ -61,7 +37,7 @@ function replaceView(doc: string, cursorPos = 0): void {
 	view.focus();
 }
 
-window.__steadyLinksHarness = {
+const harness: SteadyLinksHarness = {
 	setDoc(doc: string, cursorPos = 0) {
 		replaceView(doc, cursorPos);
 	},
@@ -109,5 +85,7 @@ window.__steadyLinksHarness = {
 		view.destroy();
 	},
 };
+
+window.__steadyLinksHarness = harness;
 
 view.focus();
