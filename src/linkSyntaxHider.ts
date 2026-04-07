@@ -89,7 +89,7 @@ const temporarilyVisibleLinkField = StateField.define<LinkRange | null>({
 		if (tr.selection && value) {
 			const oldSel = tr.startState.selection.main;
 			const newSel = tr.state.selection.main;
-			
+
 			// If cursor moved, check if it's still within the link
 			if (oldSel.head !== newSel.head) {
 				// Clear if cursor is no longer within the temporarily visible link range
@@ -156,9 +156,7 @@ function isLivePreview(view: EditorView): boolean {
 	return true;
 }
 
-function getModeForView(
-	view: EditorView,
-): "source" | "preview" | "live" | null {
+function getModeForView(view: EditorView): "source" | "preview" | "live" | null {
 	const app = (window as any).app;
 	if (!app?.workspace?.getLeavesOfType) return null;
 	const leaves = app.workspace.getLeavesOfType("markdown");
@@ -194,8 +192,8 @@ function createHiddenSyntaxAnchor(): HTMLSpanElement {
 	span.style.display = "inline-block";
 	span.style.width = "1px";
 	span.style.minWidth = "1px";
-	span.style.height = "1lh";
-	span.style.lineHeight = "inherit";
+	span.style.height = "1em";
+	span.style.lineHeight = "1";
 	span.style.marginRight = "-1px";
 	span.style.overflow = "hidden";
 	span.style.opacity = "0";
@@ -205,7 +203,7 @@ function createHiddenSyntaxAnchor(): HTMLSpanElement {
 	// that starts with hidden link syntax can fail because there is no hittable
 	// geometry at the goal column.
 	span.style.pointerEvents = "auto";
-	span.style.verticalAlign = "text-bottom";
+	span.style.verticalAlign = "baseline";
 
 	return span;
 }
@@ -228,10 +226,7 @@ const hiddenSyntaxReplace = Decoration.replace({
 // Link detection (raw line text)
 // ---------------------------------------------------------------------------
 
-function findMarkdownLinkSyntaxRanges(
-	lineText: string,
-	lineFrom: number,
-): HiddenRange[] {
+function findMarkdownLinkSyntaxRanges(lineText: string, lineFrom: number): HiddenRange[] {
 	const ranges: HiddenRange[] = [];
 	const re = /(!?\[)([^\]]*)\]\(([^)]+)\)/g;
 	let m: RegExpExecArray | null;
@@ -244,18 +239,13 @@ function findMarkdownLinkSyntaxRanges(
 		const textEnd = textStart + textLen;
 		const fullEnd = fullStart + m[0].length;
 
-		if (fullStart < textStart)
-			ranges.push({ from: fullStart, to: textStart, side: "leading" });
-		if (textEnd < fullEnd)
-			ranges.push({ from: textEnd, to: fullEnd, side: "trailing" });
+		if (fullStart < textStart) ranges.push({ from: fullStart, to: textStart, side: "leading" });
+		if (textEnd < fullEnd) ranges.push({ from: textEnd, to: fullEnd, side: "trailing" });
 	}
 	return ranges;
 }
 
-function findWikiLinkSyntaxRanges(
-	lineText: string,
-	lineFrom: number,
-): HiddenRange[] {
+function findWikiLinkSyntaxRanges(lineText: string, lineFrom: number): HiddenRange[] {
 	const ranges: HiddenRange[] = [];
 	let searchIdx = 0;
 
@@ -344,7 +334,7 @@ const hiddenRangesField = StateField.define<HiddenRange[]>({
 	},
 	update(prev, tr) {
 		// Recompute if doc changed, selection changed, or temporarily visible link changed
-		const tempVisibleChanged = tr.effects.some(e => e.is(setTemporarilyVisibleLink));
+		const tempVisibleChanged = tr.effects.some((e) => e.is(setTemporarilyVisibleLink));
 		if (tr.docChanged || tr.selection || tempVisibleChanged) {
 			return computeHiddenRanges(tr.state);
 		}
@@ -397,10 +387,10 @@ class HiddenSyntaxReplacePlugin implements PluginValue {
 		// - Selection changed
 		// - Viewport changed
 		// - Temporarily visible link field changed
-		const tempVisibleChanged = update.transactions.some(tr =>
-			tr.effects.some(e => e.is(setTemporarilyVisibleLink))
+		const tempVisibleChanged = update.transactions.some((tr) =>
+			tr.effects.some((e) => e.is(setTemporarilyVisibleLink))
 		);
-		
+
 		if (
 			update.docChanged ||
 			update.selectionSet ||
@@ -428,12 +418,9 @@ class HiddenSyntaxReplacePlugin implements PluginValue {
 	destroy() {}
 }
 
-const hiddenSyntaxReplacePlugin = ViewPlugin.fromClass(
-	HiddenSyntaxReplacePlugin,
-	{
-		decorations: (v) => v.decorations,
-	},
-);
+const hiddenSyntaxReplacePlugin = ViewPlugin.fromClass(HiddenSyntaxReplacePlugin, {
+	decorations: (v) => v.decorations,
+});
 
 class SyntaxHiderModePlugin implements PluginValue {
 	private syncing = false;
@@ -482,7 +469,7 @@ function correctCursorPos(
 	oldPos: number,
 	hidden: HiddenRange[],
 	doc: EditorState["doc"],
-	isPointer: boolean = false,
+	isPointer: boolean = false
 ): number | null {
 	for (const h of hidden) {
 		let inside: boolean;
@@ -572,19 +559,19 @@ function computeHiddenRangesForPositions(
 		lineAt(pos: number): { number: number; from: number; text: string };
 		line(n: number): { from: number; text: string };
 	},
-	sel: EditorSelection,
+	sel: EditorSelection
 ): HiddenRange[] {
 	const ranges: HiddenRange[] = [];
 	const seenLines = new Set<number>();
 	for (const r of sel.ranges) {
 		seenLines.add(doc.lineAt(r.head).number);
 	}
-	
+
 	for (const lineNo of seenLines) {
 		const line = doc.line(lineNo);
 		ranges.push(
 			...findMarkdownLinkSyntaxRanges(line.text, line.from),
-			...findWikiLinkSyntaxRanges(line.text, line.from),
+			...findWikiLinkSyntaxRanges(line.text, line.from)
 		);
 	}
 	ranges.sort((a, b) => a.from - b.from || a.to - b.to);
@@ -606,9 +593,7 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 	if (hidden.length === 0) return;
 
 	// Detect pointer-initiated selection changes (clicks / taps)
-	const isPointer = update.transactions.some((tr) =>
-		tr.isUserEvent("select.pointer"),
-	);
+	const isPointer = update.transactions.some((tr) => tr.isUserEvent("select.pointer"));
 
 	let skipLeadingInsertionCorrection = false;
 	let skipTrailingInsertionCorrection = false;
@@ -643,17 +628,15 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 					(h) =>
 						h.side === "leading" &&
 						h.from === head &&
-						insertFrom === h.from - safeInsertText.length,
+						insertFrom === h.from - safeInsertText.length
 				);
-				
+
 				// Skip correction when typing at the trailing edge (h.from) of a trailing range.
 				// This is the position right before the trailing syntax (e.g., before "]]"),
 				// which is a valid editing position for typing link destinations.
 				// This allows Obsidian's native link autocomplete to work when typing inside [[...]]
 				skipTrailingInsertionCorrection = hidden.some(
-					(h) =>
-						h.side === "trailing" &&
-						head === h.from,
+					(h) => h.side === "trailing" && head === h.from
 				);
 			}
 		}
@@ -664,10 +647,7 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 	let needsAdjust = false;
 
 	const adjusted = newSel.ranges.map((range, i) => {
-		const oldHead =
-			i < oldSel.ranges.length
-				? oldSel.ranges[i].head
-				: oldSel.main.head;
+		const oldHead = i < oldSel.ranges.length ? oldSel.ranges[i].head : oldSel.main.head;
 		let head = range.head;
 
 		// CM6 vertical motion can legitimately arrive at the line-start position of
@@ -719,34 +699,32 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 	}
 });
 
-const suppressSuggestAfterDeleteListener = EditorView.updateListener.of(
-	(update) => {
-		if (!update.state.field(syntaxHiderEnabledField, false)) return;
+const suppressSuggestAfterDeleteListener = EditorView.updateListener.of((update) => {
+	if (!update.state.field(syntaxHiderEnabledField, false)) return;
 
-		let targetPos: number | null = null;
-		for (const tr of update.transactions) {
-			for (const effect of tr.effects) {
-				if (effect.is(suppressSuggestAfterDelete)) {
-					targetPos = effect.value;
-				}
+	let targetPos: number | null = null;
+	for (const tr of update.transactions) {
+		for (const effect of tr.effects) {
+			if (effect.is(suppressSuggestAfterDelete)) {
+				targetPos = effect.value;
 			}
 		}
+	}
 
-		if (targetPos === null) return;
+	if (targetPos === null) return;
 
-		window.setTimeout(() => {
-			if (!update.view.dom.isConnected) return;
+	window.setTimeout(() => {
+		if (!update.view.dom.isConnected) return;
 
-			const current = update.view.state.selection.main;
-			if (!current.empty || current.head !== targetPos) return;
+		const current = update.view.state.selection.main;
+		if (!current.empty || current.head !== targetPos) return;
 
-			update.view.dispatch({
-				selection: EditorSelection.cursor(targetPos),
-				scrollIntoView: true,
-			});
-		}, 0);
-	},
-);
+		update.view.dispatch({
+			selection: EditorSelection.cursor(targetPos),
+			scrollIntoView: true,
+		});
+	}, 0);
+});
 
 const boundaryInputSuppressor = EditorView.domEventHandlers({
 	keydown(event, view) {
@@ -773,8 +751,6 @@ const boundaryInputSuppressor = EditorView.domEventHandlers({
 		return true;
 	},
 });
-
-
 
 // ---------------------------------------------------------------------------
 // Backspace / Delete inside link display text — high-precedence keymap
@@ -909,10 +885,7 @@ const deleteInLinkTextKeymap = keymap.of([
  */
 function listContinuation(lineText: string): string {
 	const trimmed = lineText.trimStart();
-	const indent = lineText.substring(
-		0,
-		lineText.length - trimmed.length,
-	);
+	const indent = lineText.substring(0, lineText.length - trimmed.length);
 
 	// Try ordered list first: "1. " or "1) " (with optional checkbox)
 	const orderedM = trimmed.match(/^(\d+)([.)]) (?:(\[.\]) )?/);
@@ -949,11 +922,9 @@ const enterAtLinkEndKeymap = keymap.of([
 	{
 		key: "Enter",
 		run(view) {
-			if (!view.state.field(syntaxHiderEnabledField, false))
-				return false;
+			if (!view.state.field(syntaxHiderEnabledField, false)) return false;
 			const sel = view.state.selection;
-			if (sel.ranges.length !== 1 || !sel.main.empty)
-				return false;
+			if (sel.ranges.length !== 1 || !sel.main.empty) return false;
 
 			const head = sel.main.head;
 			const hidden = computeHiddenRanges(view.state);
@@ -976,9 +947,7 @@ const enterAtLinkEndKeymap = keymap.of([
 						to: line.to,
 						insert,
 					},
-					selection: EditorSelection.cursor(
-						line.to + insert.length,
-					),
+					selection: EditorSelection.cursor(line.to + insert.length),
 					scrollIntoView: true,
 				});
 				return true; // Consume Enter — we handled it
@@ -1125,10 +1094,7 @@ function isPureDeleteTransaction(tr: Transaction): boolean {
 	return pureDelete && sawDeletion;
 }
 
-function isWikiLinkSpan(
-	state: EditorState,
-	link: LinkSpan,
-): boolean {
+function isWikiLinkSpan(state: EditorState, link: LinkSpan): boolean {
 	const prefix = state.doc.sliceString(link.from, Math.min(link.textFrom, link.to));
 	return prefix.startsWith("[[") || prefix.startsWith("![[");
 }
@@ -1136,7 +1102,7 @@ function isWikiLinkSpan(
 function findLinkSpanContainingVisibleRange(
 	links: LinkSpan[],
 	from: number,
-	to: number,
+	to: number
 ): LinkSpan | null {
 	for (const link of links) {
 		if (from >= link.textFrom && to <= link.textTo) {
@@ -1147,65 +1113,60 @@ function findLinkSpanContainingVisibleRange(
 	return null;
 }
 
-const suppressSuggestAfterVisibleDeleteFilter = EditorState.transactionFilter.of(
-	(tr) => {
-		if (!isPureDeleteTransaction(tr)) return tr;
-		if (!tr.startState.field(syntaxHiderEnabledField, false)) return tr;
-		if (tr.effects.some((e) => e.is(suppressSuggestAfterVisibleDelete))) {
-			return tr;
-		}
+const suppressSuggestAfterVisibleDeleteFilter = EditorState.transactionFilter.of((tr) => {
+	if (!isPureDeleteTransaction(tr)) return tr;
+	if (!tr.startState.field(syntaxHiderEnabledField, false)) return tr;
+	if (tr.effects.some((e) => e.is(suppressSuggestAfterVisibleDelete))) {
+		return tr;
+	}
 
-		const startSel = tr.startState.selection;
-		if (startSel.ranges.length !== 1) return tr;
+	const startSel = tr.startState.selection;
+	if (startSel.ranges.length !== 1) return tr;
 
-		const hidden = tr.startState.field(hiddenRangesField, false);
-		if (!hidden || hidden.length === 0) return tr;
+	const hidden = tr.startState.field(hiddenRangesField, false);
+	if (!hidden || hidden.length === 0) return tr;
 
-		const links = buildLinkSpans(hidden);
-		if (links.length === 0) return tr;
+	const links = buildLinkSpans(hidden);
+	if (links.length === 0) return tr;
 
-		let deleteFrom = -1;
-		let deleteTo = -1;
-		let deleteCount = 0;
-		tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
-			if (inserted.length !== 0) return;
-			deleteCount += 1;
-			deleteFrom = fromA;
-			deleteTo = toA;
-		});
+	let deleteFrom = -1;
+	let deleteTo = -1;
+	let deleteCount = 0;
+	tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+		if (inserted.length !== 0) return;
+		deleteCount += 1;
+		deleteFrom = fromA;
+		deleteTo = toA;
+	});
 
-		if (deleteCount !== 1) return tr;
-		if (deleteFrom >= deleteTo) return tr;
+	if (deleteCount !== 1) return tr;
+	if (deleteFrom >= deleteTo) return tr;
 
-		const link = findLinkSpanContainingVisibleRange(links, deleteFrom, deleteTo);
-		if (!link) return tr;
-		if (!isWikiLinkSpan(tr.startState, link)) return tr;
+	const link = findLinkSpanContainingVisibleRange(links, deleteFrom, deleteTo);
+	if (!link) return tr;
+	if (!isWikiLinkSpan(tr.startState, link)) return tr;
 
-		const suppressPos = tr.newSelection.main.head;
-		const userEvent = tr.annotation(Transaction.userEvent) ?? undefined;
+	const suppressPos = tr.newSelection.main.head;
+	const userEvent = tr.annotation(Transaction.userEvent) ?? undefined;
 
-		return tr.startState.update({
-			changes: tr.changes,
-			selection: tr.newSelection,
-			scrollIntoView: tr.scrollIntoView,
-			userEvent,
-			effects: [
-				...tr.effects,
-				suppressSuggestAfterVisibleDelete.of(null),
-				setSuppressNextBoundaryInput.of(suppressPos),
-			],
-		});
-	},
-);
+	return tr.startState.update({
+		changes: tr.changes,
+		selection: tr.newSelection,
+		scrollIntoView: tr.scrollIntoView,
+		userEvent,
+		effects: [
+			...tr.effects,
+			suppressSuggestAfterVisibleDelete.of(null),
+			setSuppressNextBoundaryInput.of(suppressPos),
+		],
+	});
+});
 
 const suppressNextBoundaryInputFilter = EditorState.transactionFilter.of((tr) => {
 	if (!tr.docChanged) return tr;
 	if (!tr.isUserEvent("input")) return tr;
 	if (!tr.startState.field(syntaxHiderEnabledField, false)) return tr;
-	const suppressedInputPos = tr.startState.field(
-		suppressNextBoundaryInputField,
-		false,
-	);
+	const suppressedInputPos = tr.startState.field(suppressNextBoundaryInputField, false);
 	if (suppressedInputPos === null) {
 		return tr;
 	}
@@ -1360,25 +1321,25 @@ const deleteAtLinkEndFix = EditorState.transactionFilter.of((tr) => {
 		if (range.head !== h.to && range.head !== h.from) continue;
 
 		const userEvent = tr.annotation(Transaction.userEvent) ?? undefined;
-			return tr.startState.update({
-				changes: { from: h.from - 1, to: h.from, insert: "" },
-				selection: EditorSelection.cursor(h.from - 1),
-				scrollIntoView: true,
-				userEvent,
-				// Attach effect so suppressSuggestAfterDeleteListener can dispatch
-				// a selection-only follow-up, resetting Obsidian's suggest trigger.
-				effects: [
-					suppressSuggestAfterDelete.of(h.from - 1),
-					setSuppressNextBoundaryInput.of(h.from - 1),
-				],
-			});
-		}
+		return tr.startState.update({
+			changes: { from: h.from - 1, to: h.from, insert: "" },
+			selection: EditorSelection.cursor(h.from - 1),
+			scrollIntoView: true,
+			userEvent,
+			// Attach effect so suppressSuggestAfterDeleteListener can dispatch
+			// a selection-only follow-up, resetting Obsidian's suggest trigger.
+			effects: [
+				suppressSuggestAfterDelete.of(h.from - 1),
+				setSuppressNextBoundaryInput.of(h.from - 1),
+			],
+		});
+	}
 
 	return tr;
 });
 
 /**
-	* Handles two cases at the LEFT boundary of a link (leading range):
+ * Handles two cases at the LEFT boundary of a link (leading range):
  *
  * 1. **Del from outside-left** — cursor is at h.from (just before the
  *    opening syntax, e.g. before "[[").  A forward delete would consume the
@@ -1473,17 +1434,17 @@ const deleteAtLinkStartFix = EditorState.transactionFilter.of((tr) => {
 });
 
 /**
-	 * Rewrites multi-character or selection-spanning deletes so hidden syntax is
-	 * never deleted directly while link display text still behaves like Gmail:
-	 *
-	 *  - Partial display-text selections delete only the selected visible text.
-	 *  - Mixed plain-text + link-text selections delete both visible portions
-	 *    while skipping hidden syntax.
-	 *  - If a selection covers all visible text of a link, the entire link
-	 *    (including destination / syntax) is deleted.
-	 *
-	 * Single-character cursor deletes are left to deleteAtLinkEndFix /
-	 * deleteAtLinkStartFix.
+ * Rewrites multi-character or selection-spanning deletes so hidden syntax is
+ * never deleted directly while link display text still behaves like Gmail:
+ *
+ *  - Partial display-text selections delete only the selected visible text.
+ *  - Mixed plain-text + link-text selections delete both visible portions
+ *    while skipping hidden syntax.
+ *  - If a selection covers all visible text of a link, the entire link
+ *    (including destination / syntax) is deleted.
+ *
+ * Single-character cursor deletes are left to deleteAtLinkEndFix /
+ * deleteAtLinkStartFix.
  */
 function buildLinkSpans(hidden: HiddenRange[]): LinkSpan[] {
 	const links: LinkSpan[] = [];
@@ -1505,17 +1466,12 @@ function buildLinkSpans(hidden: HiddenRange[]): LinkSpan[] {
 	return links;
 }
 
-function rewriteDeleteChangeForLinks(
-	change: ChangeSpec,
-	links: LinkSpan[],
-): ChangeSpec[] {
+function rewriteDeleteChangeForLinks(change: ChangeSpec, links: LinkSpan[]): ChangeSpec[] {
 	if (change.insert !== "" || change.from >= change.to) {
 		return [change];
 	}
 
-	const overlappingLinks = links.filter(
-		(link) => change.from < link.to && change.to > link.from,
-	);
+	const overlappingLinks = links.filter((link) => change.from < link.to && change.to > link.from);
 	if (overlappingLinks.length === 0) {
 		return [change];
 	}
@@ -1559,10 +1515,7 @@ function rewriteDeleteChangeForLinks(
 	return rewritten;
 }
 
-function clampDeleteChangeAgainstHidden(
-	change: ChangeSpec,
-	hidden: HiddenRange[],
-): ChangeSpec[] {
+function clampDeleteChangeAgainstHidden(change: ChangeSpec, hidden: HiddenRange[]): ChangeSpec[] {
 	let { from, to } = change;
 
 	for (const h of hidden) {
@@ -1590,7 +1543,7 @@ function rewriteDeleteChanges(
 	changes: ChangeSpec[],
 	hidden: HiddenRange[],
 	links: LinkSpan[],
-	hasSelectionDelete: boolean,
+	hasSelectionDelete: boolean
 ): ChangeSpec[] {
 	const rewritten: ChangeSpec[] = [];
 
@@ -1776,7 +1729,7 @@ const protectSyntaxFilter = EditorState.transactionFilter.of((tr) => {
 	// Only bypass if the selection-delete does NOT overlap any hidden range —
 	// in that case it's safe plain-text editing and needs no clamping.
 	const startSel = tr.startState.selection;
-	if (isPureDelete && startSel.ranges.some(r => !r.empty)) {
+	if (isPureDelete && startSel.ranges.some((r) => !r.empty)) {
 		const hidden = tr.startState.field(hiddenRangesField, false);
 		if (!hidden || hidden.length === 0) return tr;
 		let overlaps = false;
@@ -1806,29 +1759,24 @@ const protectSyntaxFilter = EditorState.transactionFilter.of((tr) => {
 	// is preserved instead of silently swallowing the keypress.
 	let newlineText: string | undefined;
 	let newlineFrom = -1;
-	tr.changes.iterChanges(
-		(fromA, _toA, _fromB, _toB, inserted) => {
-			const text = inserted.toString();
-			if (text.includes("\n")) {
-				newlineText = text;
-				newlineFrom = fromA;
-			}
-		},
-	);
+	tr.changes.iterChanges((fromA, _toA, _fromB, _toB, inserted) => {
+		const text = inserted.toString();
+		if (text.includes("\n")) {
+			newlineText = text;
+			newlineFrom = fromA;
+		}
+	});
 
 	if (newlineText !== undefined && newlineFrom >= 0) {
 		const line = tr.startState.doc.lineAt(newlineFrom);
-		const userEvent =
-			tr.annotation(Transaction.userEvent) ?? undefined;
+		const userEvent = tr.annotation(Transaction.userEvent) ?? undefined;
 		return tr.startState.update({
 			changes: {
 				from: line.to,
 				to: line.to,
 				insert: newlineText,
 			},
-			selection: EditorSelection.cursor(
-				line.to + newlineText.length,
-			),
+			selection: EditorSelection.cursor(line.to + newlineText.length),
 			scrollIntoView: true,
 			userEvent,
 		});
@@ -1841,11 +1789,7 @@ const protectSyntaxFilter = EditorState.transactionFilter.of((tr) => {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function findLinkEndAtPos(
-	lineText: string,
-	lineFrom: number,
-	pos: number,
-): number | null {
+function findLinkEndAtPos(lineText: string, lineFrom: number, pos: number): number | null {
 	const ranges = [
 		...findMarkdownLinkSyntaxRanges(lineText, lineFrom),
 		...findWikiLinkSyntaxRanges(lineText, lineFrom),
@@ -1866,7 +1810,7 @@ function findLinkEndAtPos(
 export function findLinkRangeAtPos(
 	lineText: string,
 	lineFrom: number,
-	pos: number,
+	pos: number
 ): LinkRange | null {
 	const ranges = [
 		...findMarkdownLinkSyntaxRanges(lineText, lineFrom),
@@ -1875,42 +1819,42 @@ export function findLinkRangeAtPos(
 
 	// Group ranges by link (each link has leading and trailing ranges)
 	const links = new Map<number, { from: number; to: number }>();
-	
+
 	for (const r of ranges) {
 		if (pos < r.from || pos > r.to) continue;
-		
+
 		// Find all ranges for this link by looking for adjacent ranges
 		let linkStart = r.from;
 		let linkEnd = r.to;
-		
+
 		// Look for the leading range if this is trailing
 		if (r.side === "trailing") {
 			for (const other of ranges) {
 				if (other.side === "leading" && other.to <= r.from) {
 					// Check if they're part of the same link (no significant gap)
 					const textBetween = lineText.substring(other.to - lineFrom, r.from - lineFrom);
-					if (!textBetween.includes('\n') && textBetween.length < 1000) {
+					if (!textBetween.includes("\n") && textBetween.length < 1000) {
 						linkStart = Math.min(linkStart, other.from);
 					}
 				}
 			}
 		}
-		
+
 		// Look for the trailing range if this is leading
 		if (r.side === "leading") {
 			for (const other of ranges) {
 				if (other.side === "trailing" && other.from >= r.to) {
 					const textBetween = lineText.substring(r.to - lineFrom, other.from - lineFrom);
-					if (!textBetween.includes('\n') && textBetween.length < 1000) {
+					if (!textBetween.includes("\n") && textBetween.length < 1000) {
 						linkEnd = Math.max(linkEnd, other.to);
 					}
 				}
 			}
 		}
-		
+
 		return { from: linkStart, to: linkEnd };
 	}
-	
+
 	return null;
 }
 

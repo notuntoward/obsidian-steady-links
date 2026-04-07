@@ -59,16 +59,10 @@ function createTestView(doc: string, cursorPos: number): EditorView {
 /**
  * Dispatch a selection change through the real extension pipeline.
  */
-function dispatchSelection(
-	view: EditorView,
-	head: number,
-	userEvent?: string,
-): number {
+function dispatchSelection(view: EditorView, head: number, userEvent?: string): number {
 	view.dispatch({
 		selection: EditorSelection.cursor(head),
-		annotations: userEvent
-			? [Transaction.userEvent.of(userEvent)]
-			: undefined,
+		annotations: userEvent ? [Transaction.userEvent.of(userEvent)] : undefined,
 	});
 
 	return view.state.selection.main.head;
@@ -92,18 +86,16 @@ describe("Integration: cursor correction with real CM6 state", () => {
 
 			expect(anchor.className).toBe("le-hidden-syntax-anchor");
 			expect(anchor.getAttribute("aria-hidden")).toBe("true");
-			expect(anchor.getAttribute("data-steady-links-anchor")).toBe(
-				"hidden-syntax",
-			);
+			expect(anchor.getAttribute("data-steady-links-anchor")).toBe("hidden-syntax");
 			expect(anchor.style.display).toBe("inline-block");
 			expect(anchor.style.width).toBe("1px");
 			expect(anchor.style.minWidth).toBe("1px");
-			expect(anchor.style.height).toBe("1lh");
-			expect(anchor.style.lineHeight).toBe("inherit");
+			expect(anchor.style.height).toBe("1em");
+			expect(anchor.style.lineHeight).toBe("1");
 			expect(anchor.style.marginRight).toBe("-1px");
 			expect(anchor.style.opacity).toBe("0");
 			expect(anchor.style.pointerEvents).toBe("auto");
-			expect(anchor.style.verticalAlign).toBe("text-bottom");
+			expect(anchor.style.verticalAlign).toBe("baseline");
 		});
 	});
 
@@ -232,9 +224,7 @@ describe("Integration: cursor correction with real CM6 state", () => {
 				annotations: [Transaction.userEvent.of("input.type")],
 			});
 
-			expect(view.state.doc.toString()).toBe(
-				"abcdefg X[[Note-08|test link]] defg",
-			);
+			expect(view.state.doc.toString()).toBe("abcdefg X[[Note-08|test link]] defg");
 			expect(view.state.selection.main.head).toBe(linkStart + 1);
 		});
 	});
