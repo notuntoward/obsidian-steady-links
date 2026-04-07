@@ -13,7 +13,10 @@ import {
 	syntaxHiderEnabledField,
 	hiddenRangesField,
 	setSyntaxHiderEnabled,
+	isMarkdownLinkSpan,
+	buildVisibleLinkSpans,
 	type HiddenRange,
+	type VisibleLinkSpan,
 } from "../src/linkSyntaxHider";
 import { EditorState, EditorSelection, Transaction } from "@codemirror/state";
 // Transaction is used in makeHiderState and tests via Transaction.userEvent.of(...)
@@ -1771,5 +1774,118 @@ describe("Edge cases: back-to-back links with no space between", () => {
 
 		// "b" (pos 7) deleted → "[[a]][[]]"
 		expect(newState.doc.toString()).toBe("[[a]][[]]");
+	});
+});
+
+// ============================================================================
+// isMarkdownLinkSpan — BUG GUARD
+//
+// isMarkdownLinkSpan must return false for wikilinks.  A prior bug had it
+// returning true for wikilinks because "[[" contains "[".  This caused the
+// markdownLeadingExit code path to fire for wikilinks, bouncing the cursor
+// back to the previous line on every up/down arrow.
+// ============================================================================
+
+describe("isMarkdownLinkSpan", () => {
+	function makeSpanDoc(text: string) {
+		return EditorState.create({ doc: text }).doc;
+	}
+
+	function makeVisibleSpan(
+		from: number,
+		to: number,
+		textFrom: number,
+		textTo: number,
+		lineFrom: number,
+		lineTo: number
+	): VisibleLinkSpan {
+		return {
+			from,
+			to,
+			textFrom,
+			textTo,
+			leading: { from, to: textFrom, side: "leading" as const },
+			trailing: { from: textTo, to, side: "trailing" as const },
+			lineFrom,
+			lineTo,
+		};
+	}
+
+	it("returns true for a standard markdown link [text](url)", () => {
+		const doc = makeSpanDoc("[link text](https://x.com)");
+		// leading: [0, 1)  = "["
+		// trailing: [10, 26) = "](https://x.com)"
+		const span = makeVisibleSpan(0, 26, 1, 10, 0, 26);
+		expect(isMarkdownLinkSpan(doc, span)).toBe(true);
+	});
+
+	it("returns false for a wikilink [[target]]", () => {
+		const doc = makeSpanDoc("[[target]]");
+		// leading: [0, 2)  = "[["
+		// trailing: [8, 10) = "]]"
+		const span = makeVisibleSpan(0, 10, 2, 8, 0, 10);
+		expect(isMarkdownLinkSpan(doc, span)).toBe(false);
+	});
+
+	it("returns false for a piped wikilink [[dest|text]]", () => {
+		const doc = makeSpanDoc("[[dest|text]]");
+		// leading: [0, 7)  = "[[dest|"
+		// trailing: [11, 13) = "]]"
+		const span = makeVisibleSpan(0, 13, 7, 11, 0, 13);
+		expect(isMarkdownLinkSpan(doc, span)).toBe(false);
+	});
+
+	it("returns false for an embed wikilink ![[embed]]", () => {
+		const doc = makeSpanDoc("![[embed]]");
+		// leading: [0, 3)  = "![["
+		// trailing: [8, 10) = "]]"
+		const span = makeVisibleSpan(0, 10, 3, 8, 0, 10);
+		expect(isMarkdownLinkSpan(doc, span)).toBe(false);
+	});
+
+	it("returns true for a markdown image ![alt](url)", () => {
+		const doc = makeSpanDoc("![alt](https://img.png)");
+		// leading: [0, 2)  = "!["  (stripped to "[")
+		// trailing: [5, 23) = "](https://img.png)"
+		const span = makeVisibleSpan(0, 23, 2, 5, 0, 23);
+		expect(isMarkdownLinkSpan(doc, span)).toBe(true);
+	});
+
+	it("returns false for a wikilink at a non-zero offset", () => {
+		const doc = makeSpanDoc("text [[note]]");
+		// leading: [5, 7)  = "[["
+		// trailing: [11, 13) = "]]"
+		const span = makeVisibleSpan(5, 13, 7, 11, 0, 13);
+		expect(isMarkdownLinkSpan(doc, span)).toBe(false);
+	});
+
+	it("returns true for a markdown link at a non-zero offset", () => {
+		const doc = makeSpanDoc("text [link](url)");
+		// leading: [5, 6)  = "["
+		// trailing: [10, 16) = "](url)"
+		const span = makeVisibleSpan(5, 16, 6, 10, 0, 16);
+		expect(isMarkdownLinkSpan(doc, span)).toBe(true);
+	});
+
+	it("buildVisibleLinkSpans produces correct spans for wikilinks", () => {
+		const hidden: HiddenRange[] = [
+			{ from: 0, to: 2, side: "leading" },
+			{ from: 8, to: 10, side: "trailing" },
+		];
+		const doc = makeSpanDoc("[[target]]");
+		const spans = buildVisibleLinkSpans(hidden, doc);
+		expect(spans).toHaveLength(1);
+		expect(isMarkdownLinkSpan(doc, spans[0])).toBe(false);
+	});
+
+	it("buildVisibleLinkSpans produces correct spans for markdown links", () => {
+		const hidden: HiddenRange[] = [
+			{ from: 0, to: 1, side: "leading" },
+			{ from: 5, to: 11, side: "trailing" },
+		];
+		const doc = makeSpanDoc("[text](url)");
+		const spans = buildVisibleLinkSpans(hidden, doc);
+		expect(spans).toHaveLength(1);
+		expect(isMarkdownLinkSpan(doc, spans[0])).toBe(true);
 	});
 });

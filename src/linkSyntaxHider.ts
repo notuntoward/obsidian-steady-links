@@ -504,7 +504,8 @@ function correctCursorPos(
 	oldPos: number,
 	hidden: HiddenRange[],
 	doc: EditorState["doc"],
-	isPointer: boolean = false
+	isPointer: boolean = false,
+	hasGoalColumn: boolean = false
 ): number | null {
 	const oldLine = doc.lineAt(Math.min(oldPos, doc.length));
 	const newLine = doc.lineAt(Math.min(pos, doc.length));
@@ -523,11 +524,21 @@ function correctCursorPos(
 			// right).  But if the user is pressing LEFT from h.to (the visible
 			// text edge), we must skip past the decoration to h.from - 1.
 			if (pos === h.from && pos === doc.lineAt(pos).from) {
+				// Vertical motion (up/down arrow) from a different line
+				// must snap to visible text.  The cursor at h.from is inside
+				// the replaced [[ / ![[ decoration and invisible there.
+				// We require hasGoalColumn to distinguish real vertical motion
+				// (up/down arrow, which CM6 tags with goalColumn) from
+				// horizontal wrap (right-arrow from end of previous line,
+				// which crosses lines but has no goalColumn).
+				if (isVerticalMotion && hasGoalColumn) {
+					return h.to;
+				}
 				const movingRight = pos >= oldPos;
 				if (movingRight) {
-					// Arriving from a blank previous line can leave the caret visually
-					// ambiguous at the start-of-line hidden anchor. Prefer the visible
-					// text edge so vertical movement clearly lands on the link line.
+					// Right-arrow wrap from end of previous non-blank line:
+					// stay at line start (h.from) — the hidden anchor is a
+					// valid cursor stop for horizontal motion.
 					if (h.from > 0) {
 						const previousLine = doc.lineAt(h.from - 1);
 						if (previousLine.text.length === 0) {
@@ -728,11 +739,31 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 		// with a normalization step from the visible-text edge back to line start.
 		// Treat that as successful vertical motion, not as a LEFT-arrow-style move
 		// that should bounce back to the previous line.
-		if (oldSel.main.goalColumn !== undefined) {
+		// goalColumn is set on the NEW selection (the one being dispatched),
+		// not the old one.  Check both to handle CM6's internal normalization
+		// steps where the old selection carries goalColumn forward.
+		const hasGoalColumn =
+			newSel.main.goalColumn !== undefined || oldSel.main.goalColumn !== undefined;
+		if (hasGoalColumn) {
+			const oldLine = state.doc.lineAt(Math.min(oldHead, state.doc.length));
+			const newLine = state.doc.lineAt(Math.min(head, state.doc.length));
+			const isVertical = oldLine.number !== newLine.number;
+
 			let allowLeadingBoundaryAdvance = false;
 			for (const span of linkSpans) {
 				if (head !== span.leading.from) continue;
 				if (head !== state.doc.lineAt(head).from) continue;
+
+				// Vertical motion (up/down arrow) from a different line
+				// landing at the line-start hidden leading range.  Snap to
+				// visible text so the cursor is not invisible inside the
+				// replaced [[ / ![[ decoration.
+				if (isVertical) {
+					head = span.textFrom;
+					needsAdjust = true;
+					break;
+				}
+
 				if (oldHead === span.leading.from - 1) {
 					allowLeadingBoundaryAdvance = true;
 					break;
@@ -762,7 +793,14 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 				break;
 			}
 
-			const corrected = correctCursorPos(head, oldHead, hidden, state.doc, isPointer);
+			const corrected = correctCursorPos(
+				head,
+				oldHead,
+				hidden,
+				state.doc,
+				isPointer,
+				hasGoalColumn
+			);
 			if (corrected === null || corrected === head) break;
 			head = corrected;
 			needsAdjust = true;
@@ -773,7 +811,9 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 			: EditorSelection.range(range.anchor, head);
 	});
 
-	if (!needsAdjust) return;
+	if (!needsAdjust) {
+		return;
+	}
 
 	const sel = EditorSelection.create(adjusted, newSel.mainIndex);
 	const view = update.view;
@@ -1587,7 +1627,12 @@ function findVisibleLinkSpanAtBoundary(
 }
 
 function isMarkdownLinkSpan(doc: EditorState["doc"], span: VisibleLinkSpan): boolean {
-	return doc.sliceString(span.from, span.textFrom).includes("[");
+	const leading = doc.sliceString(span.from, span.textFrom);
+	// Markdown links start with "[" but NOT "[[" or "![[" (which are wikilinks).
+	// Check that the leading syntax contains "[" but does not start with "[["
+	// (after stripping an optional "!" embed prefix).
+	const stripped = leading.startsWith("!") ? leading.slice(1) : leading;
+	return stripped.startsWith("[") && !stripped.startsWith("[[");
 }
 
 function rewriteDeleteChangeForLinks(change: ChangeSpec, links: LinkSpan[]): ChangeSpec[] {
@@ -1878,6 +1923,66 @@ const protectSyntaxFilter = EditorState.transactionFilter.of((tr) => {
 
 	if (!dominated) return tr;
 
+	// Allow link-level replacements through (e.g. Obsidian's native [[
+	// completion replacing the entire link content).  A "link-level
+	// replacement" is a single change that replaces an entire wikilink
+	// ([[…]]) or markdown link ([…](…)) with another link of the same
+	// type, or that replaces only the visible-text portion of a link
+	// even though the change range touches hidden syntax boundaries.
+	{
+		let isLinkCompletion = true;
+		let changeCount = 0;
+		tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+			changeCount += 1;
+			if (changeCount > 1) {
+				isLinkCompletion = false;
+				return;
+			}
+			const insertedText = inserted.toString();
+			// Check if the change replaces a full wikilink with another wikilink
+			const oldText = tr.startState.doc.sliceString(fromA, toA);
+			if (
+				oldText.startsWith("[[") &&
+				oldText.endsWith("]]") &&
+				insertedText.startsWith("[[") &&
+				insertedText.endsWith("]]")
+			) {
+				return; // valid link-level replacement
+			}
+			if (
+				oldText.startsWith("![[") &&
+				oldText.endsWith("]]") &&
+				insertedText.startsWith("![[") &&
+				insertedText.endsWith("]]")
+			) {
+				return; // valid embed-level replacement
+			}
+			// Also allow replacements that swap the visible text portion of
+			// a link — the inserted text does not contain link syntax and is
+			// simply a new note name / display text.
+			if (
+				!insertedText.includes("[[") &&
+				!insertedText.includes("]]") &&
+				!insertedText.includes("](") &&
+				!insertedText.includes("\n") &&
+				insertedText.length > 0
+			) {
+				// Verify the change range spans only visible text (possibly
+				// touching the boundary but not deleting syntax).  This covers
+				// the common Obsidian completion pattern of replacing "par"
+				// inside [[par]] with "Actual Note Name".
+				const links = buildLinkSpans(hidden);
+				for (const link of links) {
+					if (fromA >= link.textFrom && toA <= link.textTo) {
+						return; // change is within visible text — allow
+					}
+				}
+			}
+			isLinkCompletion = false;
+		});
+		if (isLinkCompletion && changeCount > 0) return tr;
+	}
+
 	// Safety net: if the blocked transaction contains a newline (Enter
 	// key), redirect the insertion to the end of the line so the link
 	// is preserved instead of silently swallowing the keypress.
@@ -2037,5 +2142,7 @@ export {
 	syntaxHiderEnabledField,
 	hiddenRangesField,
 	setSyntaxHiderEnabled,
+	isMarkdownLinkSpan,
+	buildVisibleLinkSpans,
 };
-export type { HiddenRange, LinkRange };
+export type { HiddenRange, LinkRange, VisibleLinkSpan };
