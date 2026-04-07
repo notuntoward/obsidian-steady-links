@@ -528,11 +528,12 @@ describe("correctCursorPos", () => {
 				{ from: 10, to: 16, side: "trailing" },
 			];
 
-			it("left through trailing at non-line-end: returns h.from (visible boundary)", () => {
+			it("left through trailing at non-line-end: skips icon boundary to h.from-1", () => {
 				// Cursor was at h.to=16. CM6 delivers h.from=10.
-				// h.to (16) !== lineEnd (21) → return h.from=10 (not h.from-1=9).
+				// The external-link icon at h.from is not a meaningful cursor
+				// stop, so skip directly to h.from-1 (last char of link text).
 				const result = correctCursorPos(10, 16, hidden, doc as any);
-				expect(result).toBe(10); // text boundary, NOT 9
+				expect(result).toBe(9); // skip icon, land in text
 			});
 		});
 
@@ -547,11 +548,11 @@ describe("correctCursorPos", () => {
 				{ from: 10, to: 16, side: "trailing" },
 			];
 
-			it("left at EOL: returns h.from (icon provides visual separation)", () => {
-				// h.to=16=lineEnd, h.to - h.from = 6 > 2.
-				// The length check prevents h.from-1 skip.
+			it("left at EOL: skips icon boundary to h.from-1", () => {
+				// h.to=16=lineEnd. The external-link icon at h.from is not a
+				// meaningful cursor stop, so skip to h.from-1.
 				const result = correctCursorPos(10, 16, hidden, doc as any);
-				expect(result).toBe(10); // text boundary (h.from), NOT 9
+				expect(result).toBe(9); // skip icon, land in text
 			});
 		});
 

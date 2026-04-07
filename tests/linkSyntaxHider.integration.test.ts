@@ -137,10 +137,12 @@ describe("Integration: cursor correction with real CM6 state", () => {
 	});
 
 	describe("markdown link at end of line: [text](url)", () => {
-		it("selection delivered to trailing h.from is corrected to the visible boundary", () => {
+		it("selection delivered to trailing h.from skips the icon boundary into visible text", () => {
 			view = createTestView("[link text](https://x.com)", 26);
 
-			expect(dispatchSelection(view, 10)).toBe(10);
+			// h.from = 10 (textTo), the external-link icon boundary.
+			// Not a meaningful cursor stop — skip to h.from - 1 = 9.
+			expect(dispatchSelection(view, 10)).toBe(9);
 		});
 	});
 
@@ -149,6 +151,50 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			view = createTestView("Click [here](https://x.com) for details", 28);
 
 			expect(dispatchSelection(view, 11)).toBe(11);
+		});
+
+		it("leftward motion from plain text enters markdown link text in one step", () => {
+			// "Click [here](https://x.com) for details"
+			//  trailing hidden range: {from:11, to:27}
+			//  The external-link icon at the trailing boundary is not a
+			//  meaningful cursor stop, so one left arrow from inside the
+			//  trailing hidden range should skip to h.from (textTo = 11).
+			//  From there, correctCursorPos sees oldPos != h.to so it
+			//  returns h.from directly.
+			view = createTestView("Click [here](https://x.com) for details", 28);
+
+			// Left arrow landing inside trailing range: corrected to h.from (11)
+			expect(dispatchSelection(view, 26)).toBe(11);
+		});
+
+		it("leftward character motion through multi-word markdown link text does not bounce back", () => {
+			// Simulate arrowing left through a multi-word markdown link one
+			// character at a time, starting from inside the visible text.
+			// The cursor should never jump forward (to the right) during
+			// a sequence of leftward moves.
+			view = createTestView("Click [two words here](https://x.com) for details", 20);
+
+			let pos = 20;
+			let previousPos = pos;
+			const visited: number[] = [pos];
+
+			// Arrow left until we exit the link or take too many steps
+			for (let i = 0; i < 30; i++) {
+				const next = dispatchSelection(view, pos - 1);
+				visited.push(next);
+
+				// The cursor must never jump forward during leftward motion
+				expect(next).toBeLessThanOrEqual(pos);
+
+				previousPos = pos;
+				pos = next;
+
+				// Stop once we've exited the link area
+				if (pos <= 5) break;
+			}
+
+			// We should have exited the link cleanly
+			expect(pos).toBeLessThanOrEqual(5);
 		});
 	});
 

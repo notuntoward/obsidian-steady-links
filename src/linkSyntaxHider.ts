@@ -52,6 +52,13 @@ interface LinkSpan extends LinkRange {
 	textTo: number;
 }
 
+interface VisibleLinkSpan extends LinkSpan {
+	leading: HiddenRange;
+	trailing: HiddenRange;
+	lineFrom: number;
+	lineTo: number;
+}
+
 interface ChangeSpec {
 	from: number;
 	to: number;
@@ -560,30 +567,15 @@ function correctCursorPos(
 			}
 			return Math.min(doc.length, h.to + 1);
 		}
-		// Moving left through trailing range.  For short trailing
-		// ranges at line end (e.g. "]]" for wikilinks — 2 chars),
-		// h.from and h.to are at the same visual position because the
-		// zero-width widget has no visible indicator.  Returning h.from
-		// would be an invisible no-op.  Skip to h.from - 1 instead.
-		//
-		// Longer trailing ranges (e.g. "](url)" for markdown links —
-		// 4+ chars) may have an external-link icon that provides visual
-		// width between h.from and h.to, making h.from a meaningful
-		// cursor stop.  Return h.from for those.
+		// Moving left through trailing range.  When entering from the
+		// right edge (oldPos === h.to), skip the trailing boundary
+		// entirely: both short ranges (e.g. "]]" — zero visual width)
+		// and long ranges (e.g. "](url)" — external-link icon) do not
+		// represent a meaningful visible cursor stop.  Go directly to
+		// h.from - 1 (the last character of the visible link text) so
+		// leftward motion enters the link text in one arrow press.
 		if (oldPos === h.to && h.from > 0) {
-			// For short trailing ranges (e.g. "]]" — 2 chars or fewer), the
-			// zero-width widget occupies no visual space, so h.from and h.to
-			// appear at the same cursor position.  Stopping at h.from would
-			// create an invisible extra keypress.  Skip directly to h.from - 1
-			// regardless of whether this is an EOL link or a mid-line link.
-			//
-			// Longer trailing ranges (e.g. "](url)" for markdown links — 4+
-			// chars) may display an external-link icon that provides real visual
-			// width, making h.from a meaningful cursor stop.  Keep h.from for
-			// those so the user can land between the text and the icon.
-			if (h.to - h.from <= 2) {
-				return h.from - 1;
-			}
+			return h.from - 1;
 		}
 		return h.from;
 	}
@@ -625,6 +617,7 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 	const oldSel = update.startState.selection;
 	const hidden = computeHiddenRangesForPositions(state.doc, newSel);
 	if (hidden.length === 0) return;
+	const linkSpans = buildVisibleLinkSpans(hidden, state.doc);
 
 	// Detect pointer-initiated selection changes (clicks / taps)
 	const isPointer = update.transactions.some((tr) => tr.isUserEvent("select.pointer"));
@@ -685,43 +678,47 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 		let head = range.head;
 
 		if (!isPointer) {
-			for (let hiddenIndex = 0; hiddenIndex < hidden.length; hiddenIndex += 1) {
-				const leading = hidden[hiddenIndex];
-				if (leading.side !== "leading") continue;
-				if (head !== leading.from) continue;
+			const markdownLeadingExit = linkSpans.find(
+				(span) =>
+					isMarkdownLinkSpan(state.doc, span) &&
+					oldHead === span.textFrom &&
+					head === span.leading.from
+			);
+			if (markdownLeadingExit) {
+				head = Math.max(0, markdownLeadingExit.leading.from - 1);
+				needsAdjust = true;
+			}
+		}
 
-				const line = state.doc.lineAt(leading.from);
-				const trailing = hidden
-					.slice(hiddenIndex + 1)
-					.find(
-						(candidate) =>
-							candidate.side === "trailing" &&
-							candidate.from >= leading.to &&
-							candidate.to <= line.to
-					);
-				if (!trailing) continue;
+		if (!isPointer) {
+			const boundarySpan = findVisibleLinkSpanAtBoundary(linkSpans, head);
+			if (boundarySpan && head === boundarySpan.leading.from) {
+				const lineStartsWithLink = boundarySpan.leading.from === boundarySpan.lineFrom;
+				const cameFromVisibleText =
+					oldHead >= boundarySpan.textFrom && oldHead <= boundarySpan.textTo;
+				const isAtVisibleTextStart = oldHead === boundarySpan.textFrom;
 
-				const visibleTextEnd = trailing.from;
-				const visibleText = state.doc.sliceString(leading.to, visibleTextEnd);
-				const lineStartsWithLink = leading.from === line.from;
-
-				if (oldHead >= leading.to && oldHead <= visibleTextEnd) {
-					if (lineStartsWithLink) {
-						break;
+				if (cameFromVisibleText && !lineStartsWithLink) {
+					if (isAtVisibleTextStart) {
+						head = Math.max(0, boundarySpan.leading.from - 1);
+						needsAdjust = true;
+					} else {
+						const visibleText = state.doc.sliceString(
+							boundarySpan.textFrom,
+							boundarySpan.textTo
+						);
+						const relativeOldHead = Math.max(
+							0,
+							Math.min(visibleText.length, oldHead - boundarySpan.textFrom)
+						);
+						const nextVisibleBoundary = findNextWordBoundary(
+							visibleText,
+							relativeOldHead,
+							visibleText.length
+						);
+						head = boundarySpan.textFrom + nextVisibleBoundary;
+						needsAdjust = true;
 					}
-
-					const relativeOldHead = Math.max(
-						0,
-						Math.min(visibleText.length, oldHead - leading.to)
-					);
-					const nextVisibleBoundary = findNextWordBoundary(
-						visibleText,
-						relativeOldHead,
-						visibleText.length
-					);
-					head = leading.to + nextVisibleBoundary;
-					needsAdjust = true;
-					break;
 				}
 			}
 		}
@@ -733,21 +730,14 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 		// that should bounce back to the previous line.
 		if (oldSel.main.goalColumn !== undefined) {
 			let allowLeadingBoundaryAdvance = false;
-			for (let hiddenIndex = 0; hiddenIndex < hidden.length; hiddenIndex += 1) {
-				const h = hidden[hiddenIndex];
-				if (h.side !== "leading") continue;
-				if (head !== h.from) continue;
+			for (const span of linkSpans) {
+				if (head !== span.leading.from) continue;
 				if (head !== state.doc.lineAt(head).from) continue;
-				if (oldHead === h.from - 1) {
+				if (oldHead === span.leading.from - 1) {
 					allowLeadingBoundaryAdvance = true;
 					break;
 				}
-
-				const trailing = hidden
-					.slice(hiddenIndex + 1)
-					.find((candidate) => candidate.side === "trailing");
-				const textEnd = trailing?.from ?? h.to;
-				if (oldHead < h.to || oldHead > textEnd) continue;
+				if (oldHead < span.textFrom || oldHead > span.textTo) continue;
 
 				head = oldHead;
 				needsAdjust = true;
@@ -760,6 +750,18 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 		}
 
 		for (let pass = 0; pass < 3; pass++) {
+			const markdownRightEdgeSpan = linkSpans.find(
+				(span) =>
+					isMarkdownLinkSpan(state.doc, span) &&
+					oldHead === span.to &&
+					head === span.trailing.to - 1
+			);
+			if (markdownRightEdgeSpan) {
+				head = markdownRightEdgeSpan.textTo;
+				needsAdjust = true;
+				break;
+			}
+
 			const corrected = correctCursorPos(head, oldHead, hidden, state.doc, isPointer);
 			if (corrected === null || corrected === head) break;
 			head = corrected;
@@ -1531,24 +1533,61 @@ const deleteAtLinkStartFix = EditorState.transactionFilter.of((tr) => {
  * Single-character cursor deletes are left to deleteAtLinkEndFix /
  * deleteAtLinkStartFix.
  */
-function buildLinkSpans(hidden: HiddenRange[]): LinkSpan[] {
-	const links: LinkSpan[] = [];
+function buildVisibleLinkSpans(hidden: HiddenRange[], doc?: EditorState["doc"]): VisibleLinkSpan[] {
+	const spans: VisibleLinkSpan[] = [];
 
-	for (let i = 0; i < hidden.length - 1; i += 1) {
+	for (let i = 0; i < hidden.length; i += 1) {
 		const lead = hidden[i];
-		const trail = hidden[i + 1];
-		if (lead.side !== "leading" || trail.side !== "trailing") continue;
+		if (lead.side !== "leading") continue;
 
-		links.push({
+		const trail = hidden
+			.slice(i + 1)
+			.find((candidate) => candidate.side === "trailing" && candidate.from >= lead.to);
+		if (!trail) continue;
+
+		const line = doc?.lineAt(lead.from);
+		if (line && trail.to > line.to) continue;
+
+		spans.push({
 			from: lead.from,
 			to: trail.to,
 			textFrom: lead.to,
 			textTo: trail.from,
+			leading: lead,
+			trailing: trail,
+			lineFrom: line?.from ?? lead.from,
+			lineTo: line?.to ?? trail.to,
 		});
-		i += 1;
 	}
 
-	return links;
+	return spans;
+}
+
+function buildLinkSpans(hidden: HiddenRange[]): LinkSpan[] {
+	return buildVisibleLinkSpans(hidden).map(({ from, to, textFrom, textTo }) => ({
+		from,
+		to,
+		textFrom,
+		textTo,
+	}));
+}
+
+function findVisibleLinkSpanAtBoundary(
+	spans: VisibleLinkSpan[],
+	pos: number
+): VisibleLinkSpan | null {
+	return (
+		spans.find(
+			(span) =>
+				pos === span.leading.from ||
+				pos === span.trailing.from ||
+				pos === span.trailing.to - 1
+		) ?? null
+	);
+}
+
+function isMarkdownLinkSpan(doc: EditorState["doc"], span: VisibleLinkSpan): boolean {
+	return doc.sliceString(span.from, span.textFrom).includes("[");
 }
 
 function rewriteDeleteChangeForLinks(change: ChangeSpec, links: LinkSpan[]): ChangeSpec[] {
