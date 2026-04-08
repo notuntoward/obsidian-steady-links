@@ -413,6 +413,49 @@ describe("correctCursorPos", () => {
 		});
 	});
 
+	// ── BUG FIX: Home key on line with leading wikilink ──────────────────────
+	// Pressing Home when the cursor is to the right of a leading wikilink
+	// (outside the link, on the same line) should snap to the visible text
+	// start (h.to), not jump to the end of the previous line (h.from - 1).
+	describe("line-start wikilink: Home key from right side of same line", () => {
+		// Document: "prev line\n[[Note-02]] bob jane"
+		//            0         1         2
+		//            0123456789 0123456789012345678901234
+		// Line 1: "prev line" (from=0, to=9)
+		// Newline at position 9
+		// Line 2: "[[Note-02]] bob jane" (from=10)
+		// Leading: {from:10, to:12}  Trailing: {from:19, to:21}
+		const doc = makeDoc("prev line\n[[Note-02]] bob jane");
+		const hidden: HiddenRange[] = [
+			{ from: 10, to: 12, side: "leading" },
+			{ from: 19, to: 21, side: "trailing" },
+		];
+
+		it("Home key safety-net: correctCursorPos returns null (stay at h.from) for same-line jumps from outside the link", () => {
+			// The Home key is intercepted by homeKeyKeymap BEFORE the cursor
+			// ever reaches correctCursorPos.  This branch is a fallback for
+			// any other mechanism that delivers the cursor to h.from from
+			// outside the link on the same line.  It returns null (stay) to
+			// avoid bouncing to the previous line.
+			const result = correctCursorPos(10, 29, hidden, doc as any);
+			expect(result).toBeNull();
+		});
+
+		it("Home key safety-net from mid-line: correctCursorPos returns null", () => {
+			const result = correctCursorPos(10, 24, hidden, doc as any);
+			expect(result).toBeNull();
+		});
+
+		it("left arrow from h.to: should still go to prev line end", () => {
+			// Cursor at h.to=12 (visible text start), presses left arrow.
+			// CM6 skips the replace decoration and delivers pos=h.from=10.
+			// oldPos=12 equals h.to (NOT > h.to), so the Home-key branch
+			// does NOT fire. Falls through to: return h.from - 1 = 9.
+			const result = correctCursorPos(10, 12, hidden, doc as any);
+			expect(result).toBe(9);
+		});
+	});
+
 	describe("first-line wikilink: left arrow at document start", () => {
 		// Document: "[[target]]"  (link starts at position 0, first line)
 		// Leading: {from: 0, to: 2}  Trailing: {from: 8, to: 10}

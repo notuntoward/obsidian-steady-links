@@ -19,6 +19,7 @@ import {
 	createHiddenSyntaxAnchor,
 	createLinkSyntaxHiderExtension,
 	setSyntaxHiderEnabled,
+	handleHomeKey,
 } from "../src/linkSyntaxHider";
 
 // ============================================================================
@@ -211,6 +212,17 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			expect(dispatchSelection(view, 10)).toBe(10);
 		});
 
+		it("cursorCorrector: cursor arriving at h.from from far-right same line stays at h.from (safety-net)", () => {
+			// The homeKeyKeymap intercepts the Home key before the cursor
+			// ever reaches h.from.  This test verifies the cursorCorrector
+			// safety-net: if h.from IS reached from outside the link on the
+			// same line (any path), it stays at h.from rather than bouncing
+			// to the previous line (h.from-1 = 9).
+			const doc = "prev line\n[[target]] bob jane";
+			view = createTestView(doc, 28);
+			expect(dispatchSelection(view, 10)).toBe(10); // stay at h.from
+		});
+
 		it("selection arriving from a blank line above to a line-start wikilink snaps to visible text", () => {
 			view = createTestView("\n[[target]]", 0);
 
@@ -231,6 +243,99 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			view = createTestView("\n[text](url)", 0);
 
 			expect(dispatchSelection(view, 1)).toBe(2);
+		});
+	});
+
+	describe("leading range: line-start markdown link Home key (same fix as wikilink)", () => {
+		it("cursorCorrector safety-net: markdown link at line start stays at h.from when arriving from outside on same line", () => {
+			// Without the homeKeyKeymap, Home from "bob jane" would bounce to
+			// lineFrom-1 (previous line). The safety-net returns null (stay).
+			const doc = "prev line\n[text](url) bob jane";
+			view = createTestView(doc, 29);
+			expect(dispatchSelection(view, 10)).toBe(10); // stay at h.from
+		});
+	});
+
+	describe("homeKeyKeymap: handleHomeKey direct tests", () => {
+		it("Home key from outside wikilink snaps cursor to h.to (visible text start)", () => {
+			// [[target]]: leading {from:10, to:12}
+			// Cursor starts at end of "jane" (pos 28), outside the link.
+			const doc = "prev line\n[[target]] bob jane";
+			view = createTestView(doc, 28);
+
+			const handled = handleHomeKey(view, false);
+			expect(handled).toBe(true); // keymap consumed the event
+			expect(view.state.selection.main.head).toBe(12); // h.to
+		});
+
+		it("Home key from outside markdown link snaps to h.to", () => {
+			// [text](url): leading {from:10, to:11}
+			const doc = "prev line\n[text](url) bob jane";
+			view = createTestView(doc, 29);
+
+			const handled = handleHomeKey(view, false);
+			expect(handled).toBe(true);
+			expect(view.state.selection.main.head).toBe(11); // h.to (after "[")
+		});
+
+		it("Home key from inside link does NOT fire (returns false)", () => {
+			// Cursor inside link text — let CM6 handle it normally.
+			const doc = "prev line\n[[target]] bob jane";
+			view = createTestView(doc, 13); // inside "target"
+
+			const handled = handleHomeKey(view, false);
+			expect(handled).toBe(false);
+			expect(view.state.selection.main.head).toBe(13); // unchanged
+		});
+
+		it("Home key on line with mid-line link (not at line start) does NOT fire", () => {
+			// Link is not at line start — homeKeyKeymap should not intervene.
+			const doc = "prev line\nsee [[target]] bob jane";
+			view = createTestView(doc, 32);
+
+			const handled = handleHomeKey(view, false);
+			expect(handled).toBe(false);
+		});
+
+		it("Shift+Home extends selection to h.to", () => {
+			const doc = "prev line\n[[target]] bob jane";
+			view = createTestView(doc, 28);
+
+			const handled = handleHomeKey(view, true);
+			expect(handled).toBe(true);
+			const sel = view.state.selection.main;
+			expect(sel.anchor).toBe(28);
+			expect(sel.head).toBe(12);
+		});
+
+		it("two-step: Home snap to h.to then Obsidian normalisation to h.from stays at h.from (not prev line)", () => {
+			// Reproduces the exact sequence from the diagnostic log:
+			//   935 → 900 (handleHomeKey, userEvent="select")
+			//   900 → 870 (Obsidian normalisation, userEvent="(none)")
+			// The second step must NOT bounce to 869 (prev line end).
+			const doc = "prev line\n[[target]] bob jane";
+			// [[target]]: leading {from:10,to:12}, trailing {from:18,to:20}
+			view = createTestView(doc, 28);
+
+			// Step 1: Home key snaps to h.to=12 and sets arrivedAtTextFromFromOutside
+			handleHomeKey(view, false);
+			expect(view.state.selection.main.head).toBe(12);
+
+			// Step 2: Obsidian normalises cursor from h.to=12 back to h.from=10 (no userEvent)
+			view.dispatch({ selection: EditorSelection.cursor(10) }); // no userEvent
+
+			// Must stay at 10 (h.from), NOT go to 9 (prev line end)
+			expect(view.state.selection.main.head).toBe(10);
+		});
+
+		it("left arrow from h.to still goes to prev line (not suppressed)", () => {
+			// Without having come from outside the link via Home, a left-arrow
+			// from h.to=12 should still correctly go to prev line end = 9.
+			const doc = "prev line\n[[target]] bob jane";
+			view = createTestView(doc, 12); // cursor at h.to, NO Home key
+
+			// Simulate left-arrow: dispatch to h.from=10 with userEvent="select"
+			expect(dispatchSelection(view, 10, "select")).toBe(9);
 		});
 	});
 

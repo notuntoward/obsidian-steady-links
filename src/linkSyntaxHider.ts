@@ -107,6 +107,27 @@ const setSuppressNextBoundaryInput = StateEffect.define<number | null>();
 // does not recursively rewrite its own transaction.
 const suppressSuggestAfterVisibleDelete = StateEffect.define<null>();
 
+// Tracks whether the cursor most recently arrived at a link's textFrom
+// (visible text start) from OUTSIDE the link (i.e. from a position past
+// the link's trailing end).  This distinguishes a Home-key correction
+// (outside → textFrom) from a genuine left-arrow press (textFrom ← inside).
+// When Obsidian then normalises textFrom → leading.from with no userEvent,
+// we use this field to suppress the left-bounce to leading.from - 1.
+const arrivedAtTextFromFromOutsideEffect = StateEffect.define<boolean>();
+const arrivedAtTextFromFromOutsideField = StateField.define<boolean>({
+	create() {
+		return false;
+	},
+	update(value, tr) {
+		for (const e of tr.effects) {
+			if (e.is(arrivedAtTextFromFromOutsideEffect)) return e.value;
+		}
+		// Clear on any selection change that doesn't set the effect
+		if (tr.selection) return false;
+		return value;
+	},
+});
+
 // State effect to temporarily show a specific link's syntax
 const setTemporarilyVisibleLink = StateEffect.define<LinkRange | null>();
 
@@ -547,8 +568,18 @@ function correctCursorPos(
 					}
 					return null; // Arrived from non-empty prev line — stay
 				}
-				// Moving left: skip to before the link (end of prev line),
-				// or null if already at document start (nowhere to go).
+				// Home key (or any horizontal same-line jump to line start):
+				// the cursor jumped from outside the link to h.from.  The
+				// dedicated Home keymap handler intercepts this before the
+				// cursor ever reaches correctCursorPos, so this branch is a
+				// fallback safety net — return null (stay at h.from) to avoid
+				// bouncing to the previous line.
+				if (!isVerticalMotion && oldPos > h.to) {
+					return null;
+				}
+				// Moving left (left-arrow from h.to or from inside the link):
+				// skip to before the link (end of prev line), or null if
+				// already at document start (nowhere to go).
 				return h.from > 0 ? h.from - 1 : null;
 			}
 			inside = pos >= h.from && pos < h.to;
@@ -627,11 +658,45 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 	const newSel = state.selection;
 	const oldSel = update.startState.selection;
 	const hidden = computeHiddenRangesForPositions(state.doc, newSel);
+
+	// Diagnostic: log every selection change near hidden ranges
+	{
+		const oldHead = oldSel.main.head;
+		const newHead = newSel.main.head;
+		const userEvents = update.transactions
+			.map((tr) => tr.annotation(Transaction.userEvent) ?? "(none)")
+			.join(",");
+		const allHidden = computeHiddenRangesForPositions(state.doc, oldSel);
+		const combinedHidden = [...hidden, ...allHidden];
+		const nearLink = combinedHidden.some((h) => {
+			const lineFrom = state.doc.lineAt(h.from).from;
+			return (
+				h.from === lineFrom &&
+				((oldHead >= h.from - 5 && oldHead <= h.to + 80) ||
+					(newHead >= h.from - 5 && newHead <= h.to + 80))
+			);
+		});
+		if (nearLink) {
+			console.log(
+				`[SteadyLinks corrector] oldHead=${oldHead} → newHead=${newHead} userEvent="${userEvents}" hidden=${JSON.stringify(hidden.map((h) => ({ from: h.from, to: h.to, side: h.side })))}`
+			);
+		}
+	}
+
 	if (hidden.length === 0) return;
 	const linkSpans = buildVisibleLinkSpans(hidden, state.doc);
 
 	// Detect pointer-initiated selection changes (clicks / taps)
 	const isPointer = update.transactions.some((tr) => tr.isUserEvent("select.pointer"));
+
+	// Detect whether any transaction carries an explicit userEvent.
+	// Obsidian's own link-normalisation dispatches carry NO userEvent
+	// (they are programmatic, not user-initiated).  We use this to
+	// distinguish "Obsidian moved cursor from h.to → h.from" from a
+	// genuine user left-arrow press (which has userEvent "select" / "select.move").
+	const hasUserEvent = update.transactions.some(
+		(tr) => tr.annotation(Transaction.userEvent) !== undefined
+	);
 
 	let skipLeadingInsertionCorrection = false;
 	let skipTrailingInsertionCorrection = false;
@@ -698,6 +763,41 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 			if (markdownLeadingExit) {
 				head = Math.max(0, markdownLeadingExit.leading.from - 1);
 				needsAdjust = true;
+			}
+		}
+
+		// Obsidian's own link extension sometimes dispatches a programmatic
+		// (no userEvent) move from h.to (visible text start) back to h.from
+		// (line start, inside the hidden leading syntax) after we place the
+		// cursor at h.to via a Home-key correction.  Without intervention,
+		// correctCursorPos treats this as a left-arrow press and bounces to
+		// h.from-1 (previous line).
+		//
+		// We distinguish this from a genuine left-arrow press by checking
+		// arrivedAtTextFromFromOutsideField: it is true only when the cursor
+		// arrived at h.to from outside the link (i.e. via Home key).
+		// A genuine left-arrow from h.to would not have set this field.
+		if (!isPointer && !hasUserEvent) {
+			const cameFromOutside = update.startState.field(
+				arrivedAtTextFromFromOutsideField,
+				false
+			);
+			if (cameFromOutside) {
+				const obsidianNorm = linkSpans.find(
+					(span) =>
+						head === span.leading.from &&
+						head === state.doc.lineAt(head).from &&
+						oldHead === span.textFrom
+				);
+				if (obsidianNorm) {
+					console.log(
+						`[SteadyLinks corrector] Obsidian normalisation suppressed (${oldHead}→${head}): staying at h.from=${head}`
+					);
+					// Leave head unchanged — stay at h.from.  No dispatch needed.
+					return range.empty
+						? EditorSelection.cursor(head)
+						: EditorSelection.range(range.anchor, head);
+				}
 			}
 		}
 
@@ -818,6 +918,9 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 	const sel = EditorSelection.create(adjusted, newSel.mainIndex);
 	const view = update.view;
 
+	console.log(
+		`[SteadyLinks corrector] DISPATCHING correction: ${newSel.main.head} → ${sel.main.head}`
+	);
 	(view as any)[CORRECTING] = true;
 	try {
 		view.dispatch({ selection: sel, scrollIntoView: true });
@@ -1045,6 +1148,81 @@ function listContinuation(lineText: string): string {
  * the default Enter handling (which can produce a spurious "]" when
  * the cursor is logically inside hidden wikilink syntax).
  */
+// ---------------------------------------------------------------------------
+// Home key handler
+// ---------------------------------------------------------------------------
+// Intercepts Home (and Shift+Home for extend-selection) when the cursor is
+// outside a link whose leading range starts at the beginning of the line.
+// Without this, CM6's moveToLineBoundary delivers the cursor to h.from
+// (inside the hidden [[ syntax), Obsidian's link extension then expands the
+// link and repositions the cursor to the previous line.
+//
+// We dispatch directly to h.to (visible text start) and return true so
+// neither CM6's default handler nor any downstream extension ever sees the
+// cursor at h.from.
+const homeKeyKeymap = keymap.of([
+	{
+		key: "Home",
+		run(view) {
+			return handleHomeKey(view, false);
+		},
+		shift(view) {
+			return handleHomeKey(view, true);
+		},
+	},
+]);
+
+function handleHomeKey(view: EditorView, extend: boolean): boolean {
+	if (!view.state.field(syntaxHiderEnabledField, false)) {
+		console.log("[SteadyLinks Home] syntaxHider disabled — returning false");
+		return false;
+	}
+	const sel = view.state.selection;
+	if (sel.ranges.length !== 1) return false;
+
+	const head = sel.main.head;
+	const doc = view.state.doc;
+	const line = doc.lineAt(head);
+
+	const hidden = computeHiddenRanges(view.state);
+	const linkSpans = buildVisibleLinkSpans(hidden, doc);
+
+	console.log(
+		`[SteadyLinks Home] head=${head} line.from=${line.from} linkSpans=${JSON.stringify(linkSpans.map((s) => ({ from: s.from, to: s.to, textFrom: s.textFrom, textTo: s.textTo, leadingFrom: s.leading.from, lineFrom: s.lineFrom })))}`
+	);
+
+	for (const span of linkSpans) {
+		if (span.leading.from !== line.from) {
+			console.log(
+				`[SteadyLinks Home] span.leading.from=${span.leading.from} !== line.from=${line.from} — skip`
+			);
+			continue;
+		}
+		if (head <= span.to) {
+			console.log(
+				`[SteadyLinks Home] head=${head} <= span.to=${span.to} — cursor inside link, skip`
+			);
+			continue;
+		}
+
+		const dest = span.textFrom;
+		console.log(
+			`[SteadyLinks Home] FIRING: dispatching cursor to dest=${dest} (span.textFrom)`
+		);
+		view.dispatch({
+			selection: extend
+				? EditorSelection.range(sel.main.anchor, dest)
+				: EditorSelection.cursor(dest),
+			scrollIntoView: true,
+			userEvent: "select",
+			effects: [arrivedAtTextFromFromOutsideEffect.of(true)],
+		});
+		return true;
+	}
+	console.log("[SteadyLinks Home] no matching span — returning false");
+	return false;
+}
+
 const enterAtLinkEndKeymap = keymap.of([
 	{
 		key: "Enter",
@@ -2103,6 +2281,7 @@ export function createLinkSyntaxHiderExtension() {
 	return [
 		syntaxHiderEnabledField,
 		suppressNextBoundaryInputField,
+		arrivedAtTextFromFromOutsideField,
 		syntaxHiderModePlugin,
 		hiddenRangesField,
 		bodyClassPlugin,
@@ -2111,6 +2290,7 @@ export function createLinkSyntaxHiderExtension() {
 		Prec.highest(cursorCorrector),
 		Prec.highest(suppressSuggestAfterDeleteListener),
 		Prec.highest(boundaryInputSuppressor),
+		Prec.highest(homeKeyKeymap),
 		Prec.highest(deleteSelectionKeymap),
 		Prec.highest(deleteInLinkTextKeymap),
 		Prec.highest(enterAtLinkEndKeymap),
@@ -2130,6 +2310,7 @@ export {
 	findWikiLinkSyntaxRanges,
 	computeHiddenRanges,
 	correctCursorPos,
+	handleHomeKey,
 	createHiddenSyntaxAnchor,
 	listContinuation,
 	findLinkEndAtPos,
