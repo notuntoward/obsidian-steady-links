@@ -801,6 +801,38 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 			}
 		}
 
+		// Any navigation (Home key, Emacs Ctrl+A, editor.setCursor, etc.) that
+		// lands the cursor at or near the start of a line-start link coming
+		// from OUTSIDE the entire link (oldHead > span.to) must be handled:
+		//
+		// Case A: cursor arrives at h.from (leading.from = lineStart).
+		//   Snap to span.textFrom and mark arrivedFromOutside.
+		//
+		// Case B: Obsidian's Editor API translates {line, ch:0} directly to
+		//   span.textFrom (skipping the hidden leading range internally).
+		//   The cursor arrives at textFrom from outside; mark arrivedFromOutside
+		//   so the follow-up normalisation (textFrom→h.from, no userEvent) is
+		//   suppressed.  No snap needed — already at the right position.
+		if (!isPointer) {
+			const lineStartSpan = linkSpans.find(
+				(span) =>
+					span.leading.from === state.doc.lineAt(span.leading.from).from &&
+					oldHead > span.to && // came from strictly outside the link
+					(head === span.leading.from || head === span.textFrom)
+			);
+			if (lineStartSpan) {
+				if (head === lineStartSpan.leading.from) {
+					// Case A: snap to visible text start
+					head = lineStartSpan.textFrom;
+					needsAdjust = true;
+				} else {
+					// Case B: already at textFrom, just mark it
+					needsAdjust = true; // trigger dispatch so the effect is attached
+				}
+				(update.view as any).__leArrivedFromOutside = lineStartSpan.leading.from;
+			}
+		}
+
 		if (!isPointer) {
 			const boundarySpan = findVisibleLinkSpanAtBoundary(linkSpans, head);
 			if (boundarySpan && head === boundarySpan.leading.from) {
@@ -918,12 +950,25 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 	const sel = EditorSelection.create(adjusted, newSel.mainIndex);
 	const view = update.view;
 
+	const arrivedFromOutsideHFrom: number | undefined = (view as any).__leArrivedFromOutside;
+	(view as any).__leArrivedFromOutside = undefined;
+
 	console.log(
-		`[SteadyLinks corrector] DISPATCHING correction: ${newSel.main.head} → ${sel.main.head}`
+		`[SteadyLinks corrector] DISPATCHING correction: ${newSel.main.head} → ${sel.main.head}` +
+			(arrivedFromOutsideHFrom !== undefined
+				? ` [arrivedFromOutside h.from=${arrivedFromOutsideHFrom}]`
+				: "")
 	);
 	(view as any)[CORRECTING] = true;
 	try {
-		view.dispatch({ selection: sel, scrollIntoView: true });
+		view.dispatch({
+			selection: sel,
+			scrollIntoView: true,
+			effects:
+				arrivedFromOutsideHFrom !== undefined
+					? [arrivedAtTextFromFromOutsideEffect.of(true)]
+					: undefined,
+		});
 	} finally {
 		(view as any)[CORRECTING] = false;
 	}
@@ -1173,10 +1218,37 @@ const homeKeyKeymap = keymap.of([
 ]);
 
 function handleHomeKey(view: EditorView, extend: boolean): boolean {
-	if (!view.state.field(syntaxHiderEnabledField, false)) {
-		console.log("[SteadyLinks Home] syntaxHider disabled — returning false");
-		return false;
+	if (!view.state.field(syntaxHiderEnabledField, false)) return false;
+	const sel = view.state.selection;
+	if (sel.ranges.length !== 1) return false;
+
+	const head = sel.main.head;
+	const doc = view.state.doc;
+	const line = doc.lineAt(head);
+
+	const hidden = computeHiddenRanges(view.state);
+	const linkSpans = buildVisibleLinkSpans(hidden, doc);
+
+	for (const span of linkSpans) {
+		if (span.leading.from !== line.from) continue; // link must start at line start
+		if (head <= span.to) continue; // cursor is inside the link — let CM6 handle
+
+		// Cursor is to the right of the entire link on the same line.
+		// Snap directly to span.textFrom (visible text start) instead of
+		// letting CM6's moveToLineBoundary land at line.from (inside [[).
+		const dest = span.textFrom;
+		view.dispatch({
+			selection: extend
+				? EditorSelection.range(sel.main.anchor, dest)
+				: EditorSelection.cursor(dest),
+			scrollIntoView: true,
+			userEvent: "select",
+			effects: [arrivedAtTextFromFromOutsideEffect.of(true)],
+		});
+		return true;
 	}
+	return false;
+}
 	const sel = view.state.selection;
 	if (sel.ranges.length !== 1) return false;
 

@@ -212,15 +212,14 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			expect(dispatchSelection(view, 10)).toBe(10);
 		});
 
-		it("cursorCorrector: cursor arriving at h.from from far-right same line stays at h.from (safety-net)", () => {
-			// The homeKeyKeymap intercepts the Home key before the cursor
-			// ever reaches h.from.  This test verifies the cursorCorrector
-			// safety-net: if h.from IS reached from outside the link on the
-			// same line (any path), it stays at h.from rather than bouncing
-			// to the previous line (h.from-1 = 9).
+		it("cursorCorrector: cursor arriving at h.from from outside the link snaps to h.to (textFrom)", () => {
+			// When cursor jumps from outside the link (past span.to) directly
+			// to h.from=lineStart (e.g. Emacs Ctrl+A via editor.setCursor),
+			// the corrector redirects to span.textFrom so the cursor lands on
+			// visible text rather than inside the hidden [[ syntax.
 			const doc = "prev line\n[[target]] bob jane";
 			view = createTestView(doc, 28);
-			expect(dispatchSelection(view, 10)).toBe(10); // stay at h.from
+			expect(dispatchSelection(view, 10)).toBe(12); // snaps to h.to=textFrom
 		});
 
 		it("selection arriving from a blank line above to a line-start wikilink snaps to visible text", () => {
@@ -247,12 +246,12 @@ describe("Integration: cursor correction with real CM6 state", () => {
 	});
 
 	describe("leading range: line-start markdown link Home key (same fix as wikilink)", () => {
-		it("cursorCorrector safety-net: markdown link at line start stays at h.from when arriving from outside on same line", () => {
-			// Without the homeKeyKeymap, Home from "bob jane" would bounce to
-			// lineFrom-1 (previous line). The safety-net returns null (stay).
+		it("cursorCorrector: markdown link at line start snaps to h.to when arriving from outside on same line", () => {
+			// Emacs Ctrl+A (or any editor.setCursor to ch:0) from outside the link
+			// is caught by the corrector and redirected to h.to=textFrom.
 			const doc = "prev line\n[text](url) bob jane";
 			view = createTestView(doc, 29);
-			expect(dispatchSelection(view, 10)).toBe(10); // stay at h.from
+			expect(dispatchSelection(view, 10)).toBe(11); // snaps to h.to (after "[")
 		});
 	});
 
@@ -336,6 +335,25 @@ describe("Integration: cursor correction with real CM6 state", () => {
 
 			// Simulate left-arrow: dispatch to h.from=10 with userEvent="select"
 			expect(dispatchSelection(view, 10, "select")).toBe(9);
+		});
+
+		it("Emacs Ctrl+A (editor.setCursor to ch:0) from outside link snaps to textFrom then survives Obsidian normalisation", () => {
+			// The Emacs plugin calls editor.setCursor({line, ch:0}) which
+			// dispatches directly to h.from=10 with no userEvent, bypassing
+			// the CM6 keymap entirely.  The corrector must:
+			//   1. Redirect 10 → 12 (textFrom) and set arrivedAtTextFromFromOutside
+			//   2. Suppress the follow-up Obsidian normalisation (12→10, no userEvent)
+			// Net result: cursor stays at 12 (visible text start), not 9 (prev line).
+			const doc = "prev line\n[[target]] bob jane";
+			view = createTestView(doc, 28); // cursor outside the link
+
+			// Step 1: Emacs dispatches to h.from (no userEvent)
+			dispatchSelection(view, 10); // no userEvent
+			expect(view.state.selection.main.head).toBe(12); // snapped to textFrom
+
+			// Step 2: Obsidian normalises back to h.from (no userEvent)
+			view.dispatch({ selection: EditorSelection.cursor(10) });
+			expect(view.state.selection.main.head).toBe(10); // stays at h.from, NOT 9
 		});
 	});
 
