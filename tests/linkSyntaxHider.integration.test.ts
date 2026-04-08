@@ -582,6 +582,26 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			expect(result).toBeGreaterThanOrEqual(6);
 			expect(result).toBeLessThanOrEqual(17);
 		});
+
+		it("down-arrow from a blank line above a line-start markdown link lands at column 0 on the link line", () => {
+			view = createTestView(
+				"\n[dklfsdfg](http://arxiv.org/abs/2602.19141) asdflkjasdlfj\nalsdkfjasldjf",
+				0
+			);
+
+			const result = dispatchVerticalMotion(view, 1, 0);
+			expect(result).toBe(2);
+		});
+
+		it("up-arrow from below a line-start markdown link lands at column 0 on the link line", () => {
+			view = createTestView(
+				"\n[dklfsdfg](http://arxiv.org/abs/2602.19141) asdflkjasdlfj\nalsdkfjasldjf",
+				61
+			);
+
+			const result = dispatchVerticalMotion(view, 1, 0);
+			expect(result).toBe(2);
+		});
 	});
 
 	// ──────────────────────────────────────────────────────────────────────
@@ -668,6 +688,138 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			view.dispatch({ selection: EditorSelection.create([range2]) });
 			const pos2 = view.state.selection.main.head;
 			expect(pos2).toBeLessThanOrEqual(5);
+		});
+	});
+
+	// ──────────────────────────────────────────────────────────────────────
+	// BUG GUARD: Obsidian normalization bounce on line-start MARKDOWN links
+	//
+	// THIS IS THE EXACT SEQUENCE OBSIDIAN PRODUCES (from real console logs).
+	// It has been broken by AI at least 4 times. DO NOT MODIFY without
+	// testing in real Obsidian with the markdown below:
+	//
+	//   (blank line)
+	//   [dklfsdfg](http://arxiv.org/abs/2602.19141) asdflkjasdlfj
+	//   alsdkfjasldjf
+	//
+	// The key difference from wikilinks: for markdown links, the leading
+	// hidden range is only 1 char wide ("["), so CM6's goalColumn=0 lands
+	// DIRECTLY at textFrom (just past the hidden "["), not at leading.from.
+	// Obsidian then normalizes textFrom → leading.from (no userEvent).
+	// The markdownLeadingExit check matches this same pattern
+	// (oldHead=textFrom, head=leading.from) and — if not suppressed —
+	// bounces to leading.from-1 (previous line).
+	//
+	// The Obsidian normalization suppression (arrivedFromOutside) MUST run
+	// BEFORE markdownLeadingExit in the cursorCorrector. If the ordering
+	// is wrong, these tests will fail.
+	// ──────────────────────────────────────────────────────────────────────
+	describe("Obsidian normalization must not bounce cursor off line-start markdown links", () => {
+		// Helper: simulate the exact Obsidian 3-step sequence for vertical
+		// motion to a line-start markdown link.
+		//
+		// Step 1: CM6 delivers cursor to textFrom (with goalColumn=0).
+		//         Our corrector fires arrivedFromOutside.
+		// Step 2: Obsidian normalizes textFrom → leading.from (no userEvent).
+		//         This must be suppressed — NOT treated as left-arrow.
+		// Step 3: If suppression fails, markdownLeadingExit bounces to
+		//         leading.from - 1 (previous line). The test detects this.
+		function simulateObsidianVerticalThenNormalize(
+			v: EditorView,
+			textFrom: number,
+			leadingFrom: number,
+			goalColumn: number
+		): number {
+			// Step 1: vertical motion delivers cursor to textFrom
+			const range = EditorSelection.cursor(textFrom, 1, undefined, goalColumn);
+			v.dispatch({ selection: EditorSelection.create([range]) });
+
+			// Step 2: Obsidian normalizes textFrom → leading.from (no userEvent)
+			v.dispatch({
+				selection: EditorSelection.cursor(leadingFrom),
+			});
+
+			return v.state.selection.main.head;
+		}
+
+		it("down-arrow to markdown link: Obsidian normalization does not bounce to previous line", () => {
+			// "\n[dklfsdfg](http://arxiv.org/abs/2602.19141) asdflkjasdlfj\nalsdkfjasldjf"
+			// Line 1: "" (blank, pos 0)
+			// Line 2: "[dklfsdfg](...) asdflkjasdlfj" starting at pos 1
+			//   leading "[" hidden at {1, 2}, textFrom = 2
+			// Cursor starts on blank line (pos 0)
+			view = createTestView(
+				"\n[dklfsdfg](http://arxiv.org/abs/2602.19141) asdflkjasdlfj\nalsdkfjasldjf",
+				0
+			);
+
+			const result = simulateObsidianVerticalThenNormalize(view, 2, 1, 0);
+
+			// Must stay on the link line (pos 1-58), NOT bounce to pos 0 (blank line)
+			expect(result).toBeGreaterThanOrEqual(1);
+			expect(result).toBeLessThanOrEqual(58);
+		});
+
+		it("up-arrow to markdown link: Obsidian normalization does not bounce to next line", () => {
+			view = createTestView(
+				"\n[dklfsdfg](http://arxiv.org/abs/2602.19141) asdflkjasdlfj\nalsdkfjasldjf",
+				65
+			);
+
+			const result = simulateObsidianVerticalThenNormalize(view, 2, 1, 0);
+
+			// Must stay on the link line, NOT bounce to pos 0
+			expect(result).toBeGreaterThanOrEqual(1);
+			expect(result).toBeLessThanOrEqual(58);
+		});
+
+		it("down-arrow to markdown link: repeated presses do not get stuck", () => {
+			// Simulates pressing down-arrow 3 times starting from the blank line
+			view = createTestView(
+				"\n[dklfsdfg](http://arxiv.org/abs/2602.19141) asdflkjasdlfj\nalsdkfjasldjf",
+				0
+			);
+
+			// 1st down-arrow: land on link line
+			const pos1 = simulateObsidianVerticalThenNormalize(view, 2, 1, 0);
+			expect(pos1).toBeGreaterThanOrEqual(1);
+			expect(pos1).toBeLessThanOrEqual(58);
+
+			// 2nd down-arrow: should advance to line 3 (pos 59+), not stay stuck
+			const range2 = EditorSelection.cursor(59, 1, undefined, 0);
+			view.dispatch({ selection: EditorSelection.create([range2]) });
+			const pos2 = view.state.selection.main.head;
+			expect(pos2).toBeGreaterThanOrEqual(59);
+		});
+
+		it("left-arrow from textFrom still exits to previous line (not suppressed)", () => {
+			// This is the OPPOSITE case: a genuine left-arrow from textFrom to
+			// leading.from should still bounce to the previous line.
+			// The difference: no arrivedFromOutside marker, and userEvent="select".
+			view = createTestView(
+				"\n[dklfsdfg](http://arxiv.org/abs/2602.19141) asdflkjasdlfj\nalsdkfjasldjf",
+				2 // start at textFrom
+			);
+
+			// Simulate left-arrow: moves from textFrom (2) to leading.from (1)
+			// WITH a userEvent (genuine user action)
+			const result = dispatchSelection(view, 1, "select");
+
+			// Should exit to end of previous line (pos 0)
+			expect(result).toBe(0);
+		});
+
+		it("wikilink vertical motion still works after markdown link fix", () => {
+			// Ensure the markdown link fix did not break wikilinks.
+			// "\n[[target]]\nbelow"
+			// leading [[ at {1, 3}, textFrom = 3
+			view = createTestView("\n[[target]]\nbelow", 0);
+
+			const result = simulateObsidianVerticalThenNormalize(view, 3, 1, 0);
+
+			// Must stay on the wikilink line
+			expect(result).toBeGreaterThanOrEqual(1);
+			expect(result).toBeLessThanOrEqual(11);
 		});
 	});
 

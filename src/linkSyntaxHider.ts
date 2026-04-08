@@ -677,8 +677,15 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 			);
 		});
 		if (nearLink) {
+			const goalOld = oldSel.main.goalColumn;
+			const goalNew = newSel.main.goalColumn;
+			const cameFromOutside = update.startState.field(
+				arrivedAtTextFromFromOutsideField,
+				false
+			);
+			const isCorrecting = (update.view as any)[CORRECTING];
 			console.log(
-				`[SteadyLinks corrector] oldHead=${oldHead} → newHead=${newHead} userEvent="${userEvents}" hidden=${JSON.stringify(hidden.map((h) => ({ from: h.from, to: h.to, side: h.side })))}`
+				`[SteadyLinks corrector] oldHead=${oldHead} → newHead=${newHead} userEvent="${userEvents}" goalCol=[${goalOld},${goalNew}] cameFromOutside=${cameFromOutside} isCorrecting=${!!isCorrecting} hidden=${JSON.stringify(hidden.map((h) => ({ from: h.from, to: h.to, side: h.side })))}`
 			);
 		}
 	}
@@ -753,30 +760,28 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 		const oldHead = i < oldSel.ranges.length ? oldSel.ranges[i].head : oldSel.main.head;
 		let head = range.head;
 
-		if (!isPointer) {
-			const markdownLeadingExit = linkSpans.find(
-				(span) =>
-					isMarkdownLinkSpan(state.doc, span) &&
-					oldHead === span.textFrom &&
-					head === span.leading.from
-			);
-			if (markdownLeadingExit) {
-				head = Math.max(0, markdownLeadingExit.leading.from - 1);
-				needsAdjust = true;
-			}
-		}
-
 		// Obsidian's own link extension sometimes dispatches a programmatic
-		// (no userEvent) move from h.to (visible text start) back to h.from
-		// (line start, inside the hidden leading syntax) after we place the
-		// cursor at h.to via a Home-key correction.  Without intervention,
-		// correctCursorPos treats this as a left-arrow press and bounces to
-		// h.from-1 (previous line).
+		// (no userEvent) move from textFrom (visible text start) back to
+		// leading.from (line start, inside the hidden leading syntax) after
+		// we place the cursor at textFrom via a vertical-motion or Home-key
+		// correction.  Without intervention, the markdownLeadingExit check
+		// or correctCursorPos treats this as a left-arrow press and bounces
+		// to leading.from-1 (previous line).
 		//
 		// We distinguish this from a genuine left-arrow press by checking
 		// arrivedAtTextFromFromOutsideField: it is true only when the cursor
-		// arrived at h.to from outside the link (i.e. via Home key).
-		// A genuine left-arrow from h.to would not have set this field.
+		// arrived at textFrom from outside the link (vertical motion, Home
+		// key, etc.).  A genuine left-arrow from textFrom would not have
+		// set this field.
+		//
+		// !! CRITICAL ORDERING !!
+		// This check MUST run BEFORE markdownLeadingExit because that check
+		// matches the same oldHead=textFrom, head=leading.from pattern.
+		// If you move markdownLeadingExit above this block, down-arrow and
+		// up-arrow will bounce on line-start markdown links.  This has been
+		// broken by AI at least 4 times.  The "Obsidian normalization must
+		// not bounce cursor off line-start markdown links" integration tests
+		// will fail if the ordering is wrong.
 		if (!isPointer && !hasUserEvent) {
 			const cameFromOutside = update.startState.field(
 				arrivedAtTextFromFromOutsideField,
@@ -798,6 +803,19 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 						? EditorSelection.cursor(head)
 						: EditorSelection.range(range.anchor, head);
 				}
+			}
+		}
+
+		if (!isPointer) {
+			const markdownLeadingExit = linkSpans.find(
+				(span) =>
+					isMarkdownLinkSpan(state.doc, span) &&
+					oldHead === span.textFrom &&
+					head === span.leading.from
+			);
+			if (markdownLeadingExit) {
+				head = Math.max(0, markdownLeadingExit.leading.from - 1);
+				needsAdjust = true;
 			}
 		}
 
@@ -883,18 +901,35 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 
 			let allowLeadingBoundaryAdvance = false;
 			for (const span of linkSpans) {
-				if (head !== span.leading.from) continue;
-				if (head !== state.doc.lineAt(head).from) continue;
+				// Vertical motion can land at either leading.from (wikilinks,
+				// where the hidden [[ is 2+ chars wide and column 0 hits it)
+				// or directly at textFrom (markdown links, where the hidden
+				// [ is only 1 char and CM6's goalColumn lands just past it).
+				// Handle both cases.
+				const landedAtLeadingFrom =
+					head === span.leading.from && head === state.doc.lineAt(head).from;
+				const landedAtTextFromVertically =
+					head === span.textFrom &&
+					span.leading.from === state.doc.lineAt(span.leading.from).from &&
+					isVertical;
+
+				if (!landedAtLeadingFrom && !landedAtTextFromVertically) continue;
 
 				// Vertical motion (up/down arrow) from a different line
-				// landing at the line-start hidden leading range.  Snap to
-				// visible text so the cursor is not invisible inside the
-				// replaced [[ / ![[ decoration.
+				// landing at or near the line-start hidden leading range.
+				// Snap to visible text (if not already there) and mark
+				// arrivedFromOutside so the follow-up Obsidian normalisation
+				// (textFrom → leading.from, no userEvent) is suppressed —
+				// without this, correctCursorPos treats the normalisation
+				// as a left-arrow and bounces to the previous line.
 				if (isVertical) {
 					head = span.textFrom;
 					needsAdjust = true;
+					(update.view as any).__leArrivedFromOutside = span.leading.from;
 					break;
 				}
+
+				if (!landedAtLeadingFrom) continue;
 
 				if (oldHead === span.leading.from - 1) {
 					allowLeadingBoundaryAdvance = true;

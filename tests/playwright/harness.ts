@@ -48,11 +48,29 @@ const harness: SteadyLinksHarness = {
 		});
 		view.focus();
 	},
+	async pressKey(key: string) {
+		view.focus();
+		const event = new KeyboardEvent("keydown", {
+			key,
+			bubbles: true,
+			cancelable: true,
+		});
+		view.contentDOM.dispatchEvent(event);
+		await Promise.resolve();
+	},
 	getDoc() {
 		return view.state.doc.toString();
 	},
 	getCursor() {
 		return view.state.selection.main.head;
+	},
+	getSelectionInfo() {
+		const main = view.state.selection.main;
+		return {
+			anchor: main.anchor,
+			head: main.head,
+			goalColumn: main.goalColumn ?? null,
+		};
 	},
 	getLineTops() {
 		return Array.from(view.dom.querySelectorAll(".cm-line")).map(
