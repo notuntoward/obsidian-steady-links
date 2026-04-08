@@ -7,11 +7,11 @@ Steady Links simplifies link syntax editing and optionally keeps links folded, h
 When you arrow-key through a note in stock Obsidian, every link you touch expands, exposing its raw syntax: brackets, URLs, everything.
 
 <div style="display: flex; justify-content: center; gap: 1rem;">
-  <figure style="margin: 0; text-align: center;">
+  <figure style="margin: 0; text-align: center; border: 1px solid #ccc;">
     <img src="images/1_link_folded.png" width="100%" />
     <figcaption><b>Link folded</b></figcaption>
   </figure>
-  <figure style="margin: 0; text-align: center;">
+  <figure style="margin: 0; text-align: center; border: 1px solid #ccc;">
     <img src="images/2_link_expanded.png" width="100%" />
     <figcaption><b>Link expanded</b></figcaption>
   </figure>
@@ -26,7 +26,7 @@ Enable `Keep links steady` in this plugin's settings, and links in Live Preview 
 
 #### Link Editor: links without juggling brackets
 
-<figure style="float: right; width: 52%; margin-left: 1rem; text-align: center;">
+<figure style="float: right; width: 52%; margin-left: 1rem; text-align: center; border: 1px solid #ccc;">
   <img src="images/3_link_editor.png" width="80%" />
   <figcaption>
     <b>Link editor (markdown link)</b>
@@ -39,7 +39,7 @@ The `Edit Link` command opens a modal where you can easily change the link your 
 
 Convenient link text and destination defaults make the job easier:
 
-<figure style="float: right; width: 52%; margin-left: 1rem; text-align: center;">
+<figure style="float: right; width: 52%; margin-left: 1rem; text-align: center; border: 1px solid #ccc;">
   <img src="images/4_link_editor_autocompletes.png" width="80%" />
   <figcaption>
     <b>Link editor destination autocompletes</b>
@@ -47,9 +47,6 @@ Convenient link text and destination defaults make the job easier:
 </figure>
 
 **Wikilink Destination Completion** field like the standard obsidian `[[` operator: files in your vault, headings within notes, and block references. you can type patterns like `Note#Heading` or `Note#^block` to jump directly to a heading or block in a specific note, or start with `#` / `^` to target headings and blocks in the current note. If your cursor is on a URL, or if your clipboard contains one, it will be put in the destination field and adjusted as needed.
-
-CHECK PLUGIN AUTOCOMPLETE WHEN WIKILINK IN CLIBPOARD
-CHECK TO SEE ALIASES REALLY WORK
 
 The **Link Text** field will autocomplete to selected text when you have a URL in your clipboard or at your cursor. For wikilinks, Matching note aliases from frontmatter are also included, and when you pick an alias suggestion the link still points to the real note. When you choose a note alias in the destination suggestions, the modal can automatically use that alias as the visible link text so you do not have to copy it by hand.
 

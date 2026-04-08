@@ -1249,6 +1249,8 @@ function handleHomeKey(view: EditorView, extend: boolean): boolean {
 	}
 	return false;
 }
+
+function handleEnterAtLinkStart(view: EditorView, extend: boolean): boolean {
 	const sel = view.state.selection;
 	if (sel.ranges.length !== 1) return false;
 
