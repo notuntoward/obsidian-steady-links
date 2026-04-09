@@ -323,8 +323,9 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			// Step 2: Obsidian normalises cursor from h.to=12 back to h.from=10 (no userEvent)
 			view.dispatch({ selection: EditorSelection.cursor(10) }); // no userEvent
 
-			// Must stay at 10 (h.from), NOT go to 9 (prev line end)
-			expect(view.state.selection.main.head).toBe(10);
+			// Must redirect to textFrom=12 (visible alias start), NOT stay at
+			// h.from=10 (inside hidden [[ syntax) and NOT go to 9 (prev line end)
+			expect(view.state.selection.main.head).toBe(12);
 		});
 
 		it("left arrow from h.to still goes to prev line (not suppressed)", () => {
@@ -353,7 +354,7 @@ describe("Integration: cursor correction with real CM6 state", () => {
 
 			// Step 2: Obsidian normalises back to h.from (no userEvent)
 			view.dispatch({ selection: EditorSelection.cursor(10) });
-			expect(view.state.selection.main.head).toBe(10); // stays at h.from, NOT 9
+			expect(view.state.selection.main.head).toBe(12); // redirected to textFrom, NOT 9 (prev line) or 10 (hidden [[)
 		});
 	});
 
@@ -820,6 +821,83 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			// Must stay on the wikilink line
 			expect(result).toBeGreaterThanOrEqual(1);
 			expect(result).toBeLessThanOrEqual(11);
+		});
+	});
+
+	// ──────────────────────────────────────────────────────────────────────
+	// BUG GUARD: Obsidian normalisation suppression MUST redirect to textFrom
+	//
+	// When Obsidian normalises from textFrom back to leading.from after
+	// vertical motion, the suppression MUST redirect to textFrom (visible
+	// alias start), NOT stay at leading.from (hidden [[ syntax).
+	//
+	// If the cursor stays at leading.from:
+	//   - The visible-cursor plugin renders a garbled block cursor on the
+	//     hidden [[ character instead of the visible alias character
+	//   - Two right-arrow presses are needed to move off the first visible
+	//     character (because the real selection is on hidden syntax)
+	//   - coordsAtPos() at leading.from returns ~1px width (collapsed syntax)
+	//
+	// This has been broken by AI at least 5 times.  If you modify the
+	// suppression logic in cursorCorrector, run these tests.  If they
+	// fail, you have regressed the fix.
+	// ──────────────────────────────────────────────────────────────────────
+	describe("Obsidian normalisation suppression must redirect to textFrom", () => {
+		it("wikilink: suppression redirects to textFrom, not leading.from", () => {
+			// "\n[[target]]\nbelow" — blank line, then wikilink at line start
+			// leading [[ at {1, 3}, textFrom = 3, visible "target" at 3-9
+			view = createTestView("\n[[target]]\nbelow", 0);
+
+			// Step 1: vertical motion delivers cursor to textFrom=3
+			const range = EditorSelection.cursor(3, 1, undefined, 0);
+			view.dispatch({ selection: EditorSelection.create([range]) });
+			expect(view.state.selection.main.head).toBe(3);
+
+			// Step 2: Obsidian normalises textFrom=3 → leading.from=1 (no userEvent)
+			view.dispatch({ selection: EditorSelection.cursor(1) });
+
+			// MUST be at textFrom=3 (visible alias start), NOT leading.from=1
+			expect(view.state.selection.main.head).toBe(3);
+		});
+
+		it("wikilink with alias: suppression redirects to textFrom, not leading.from", () => {
+			// Piped wikilink: [[path|Alias Text]]
+			// leading [[ at {1, ...}, textFrom = after the pipe
+			view = createTestView(
+				"\n[[test-notes/Note-09.md#Note Nine |Wote Nine]]\nAfter",
+				0
+			);
+
+			const doc = view.state.doc.toString();
+			const aliasStart = doc.indexOf("Wote Nine");
+			expect(aliasStart).toBeGreaterThan(0);
+
+			// Step 1: vertical motion to textFrom (alias start)
+			const range = EditorSelection.cursor(aliasStart, 1, undefined, 0);
+			view.dispatch({ selection: EditorSelection.create([range]) });
+
+			// Step 2: Obsidian normalises to leading.from=1
+			view.dispatch({ selection: EditorSelection.cursor(1) });
+
+			// MUST be at textFrom (alias start), NOT at leading.from=1
+			expect(view.state.selection.main.head).toBe(aliasStart);
+		});
+
+		it("markdown link: suppression redirects to textFrom, not leading.from", () => {
+			view = createTestView(
+				"\n[dklfsdfg](http://arxiv.org/abs/2602.19141) asdflkjasdlfj\nalsdkfjasldjf",
+				0
+			);
+
+			// Step 1: vertical motion to textFrom=2
+			const range = EditorSelection.cursor(2, 1, undefined, 0);
+			view.dispatch({ selection: EditorSelection.create([range]) });
+
+			// Step 2: Obsidian normalises to leading.from=1
+			view.dispatch({ selection: EditorSelection.cursor(1) });
+
+			// MUST be at textFrom=2, NOT leading.from=1
+			expect(view.state.selection.main.head).toBe(2);
 		});
 	});
 

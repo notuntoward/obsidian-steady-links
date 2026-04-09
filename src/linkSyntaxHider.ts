@@ -782,6 +782,28 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 		// broken by AI at least 4 times.  The "Obsidian normalization must
 		// not bounce cursor off line-start markdown links" integration tests
 		// will fail if the ordering is wrong.
+		// !! CRITICAL: Obsidian normalisation suppression !!
+		//
+		// After vertical motion (up/down arrow) or Home/Ctrl+A delivers the
+		// cursor to textFrom (visible alias start), Obsidian dispatches a
+		// follow-up normalisation from textFrom back to leading.from (the
+		// hidden [[ or [ syntax at line start) with NO userEvent.
+		//
+		// This suppression block MUST:
+		//   1. Run BEFORE markdownLeadingExit (which matches the same pattern)
+		//   2. Redirect to textFrom (visible alias start), NOT stay at
+		//      leading.from (hidden syntax)
+		//
+		// If you change this to stay at leading.from instead of redirecting
+		// to textFrom, the visible-cursor plugin will render a garbled block
+		// cursor on the hidden [[ syntax character.  The cursor will also
+		// require two right-arrow presses to move off the first visible
+		// character because the real selection is inside hidden syntax, not
+		// on the visible alias start.
+		//
+		// This has been broken by AI multiple times.  The regression tests
+		// "Obsidian normalisation suppression must redirect to textFrom"
+		// will fail if you break this.  Always run npm run test:run.
 		if (!isPointer && !hasUserEvent) {
 			const cameFromOutside = update.startState.field(
 				arrivedAtTextFromFromOutsideField,
@@ -795,13 +817,16 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 						oldHead === span.textFrom
 				);
 				if (obsidianNorm) {
+					// MUST redirect to textFrom, NOT stay at leading.from.
+					// leading.from is inside the hidden [[ decoration and
+					// invisible.  Staying there breaks block cursor rendering
+					// in the visible-cursor plugin and requires two right-arrow
+					// presses to move off the first visible character.
+					head = obsidianNorm.textFrom;
+					needsAdjust = true;
 					console.log(
-						`[SteadyLinks corrector] Obsidian normalisation suppressed (${oldHead}→${head}): staying at h.from=${head}`
+						`[SteadyLinks corrector] Obsidian normalisation suppressed (${oldHead}→${range.head}): redirecting to textFrom=${head}`
 					);
-					// Leave head unchanged — stay at h.from.  No dispatch needed.
-					return range.empty
-						? EditorSelection.cursor(head)
-						: EditorSelection.range(range.anchor, head);
 				}
 			}
 		}

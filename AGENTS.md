@@ -60,7 +60,82 @@ broken the ordering.**
 - Do NOT change the ordering of checks in the `ranges.map()` callback
   without running the full test suite AND testing in real Obsidian
 
+## Critical: Suppression must redirect to textFrom, not stay at leading.from
+
+The Obsidian normalisation suppression (the `cameFromOutside` block) must
+redirect the cursor to `textFrom` (the visible alias text start), NOT stay
+at `leading.from` (the hidden `[[` or `[` syntax position).
+
+### Why this matters
+
+When the cursor stays at `leading.from` after suppression:
+
+- The **visible-cursor plugin** renders a garbled block cursor on the hidden
+  `[` character instead of the visible alias character
+- **Two right-arrow presses** are needed to move off the first visible
+  character (the real selection is on hidden syntax, not visible text)
+- `coordsAtPos()` at `leading.from` returns ~1px width (collapsed syntax),
+  causing the block cursor to be a thin sliver or wrong width
+
+This interaction between steady-links and visible-cursor has been broken by
+AI at least 5 times.
+
+### The correct code
+
+```typescript
+// In the cameFromOutside suppression block:
+head = obsidianNorm.textFrom;   // CORRECT: redirect to visible alias start
+needsAdjust = true;
+
+// NOT this (the old buggy version):
+// return range.empty
+//     ? EditorSelection.cursor(head)   // WRONG: head = leading.from = hidden [[
+//     : EditorSelection.range(range.anchor, head);
+```
+
+### How to verify
+
+The test suite includes:
+
+```
+"Obsidian normalisation suppression must redirect to textFrom"
+```
+
+These tests check that after the suppression fires, the cursor is at
+`textFrom` (visible alias start), NOT at `leading.from` (hidden syntax).
+They cover wikilinks, piped wikilinks with aliases, and markdown links.
+
+### What NOT to do
+
+- Do NOT change the suppression to `return` early with `head` unchanged —
+  that leaves the cursor at `leading.from` (inside hidden syntax)
+- Do NOT remove `needsAdjust = true` from the suppression — without it,
+  the corrective dispatch never fires
+- Do NOT assume the cursor position after suppression is correct without
+  checking that it equals `textFrom`, not `leading.from`
+
 ### Testing in real Obsidian
+
+Use this test document (both wikilinks and markdown links):
+
+```markdown
+(blank line)
+[[test-notes/Note-09.md#Note Nine |Wote Nine]]
+(blank line)
+[dklfsdfg](http://arxiv.org/abs/2602.19141) asdflkjasdlfj
+alsdkfjasldjf
+```
+
+1. Put cursor on the blank line above each link, press ArrowDown — cursor
+   must land on the link line with the block cursor correctly sized on the
+   first visible alias character
+2. Press ArrowUp from below — same result
+3. A single ArrowRight should move to the second visible character
+4. Open DevTools console — look for `redirecting to textFrom=` in the
+   `[SteadyLinks corrector]` logs
+5. If you see `staying at h.from=` instead, the bug has regressed
+
+### Testing in real Obsidian (markdown link bounce)
 
 The integration tests simulate Obsidian's behavior, but if you need to verify
 in the real app, use this test document:
