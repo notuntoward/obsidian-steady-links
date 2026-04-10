@@ -29,8 +29,8 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 			const headingQuery = trimmedQuery.slice(2).toLowerCase();
 			const allHeadings = this.getAllHeadings();
 			if (!headingQuery) return allHeadings;
-			return allHeadings.filter((h) =>
-				h.heading && h.heading.toLowerCase().includes(headingQuery)
+			return allHeadings.filter(
+				(h) => h.heading && h.heading.toLowerCase().includes(headingQuery)
 			);
 		}
 
@@ -47,8 +47,8 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 			const headingQuery = trimmedQuery.slice(1).toLowerCase();
 			const allHeadings = this.getHeadingsInCurrentFile();
 			if (!headingQuery) return allHeadings;
-			return allHeadings.filter((h) =>
-				h.heading && h.heading.toLowerCase().includes(headingQuery)
+			return allHeadings.filter(
+				(h) => h.heading && h.heading.toLowerCase().includes(headingQuery)
 			);
 		}
 
@@ -91,24 +91,24 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 		const lowerQuery = query.toLowerCase();
 		const currentFile = this.app.workspace.getActiveFile();
 		const currentDir = currentFile ? currentFile.parent?.path : "";
-		
+
 		const results: SuggestionItem[] = [];
-		
+
 		for (const f of files) {
 			const aliases = lowerQuery ? this.getFileAliases(f) : [];
 			const matchesName =
 				f.path.toLowerCase().includes(lowerQuery) ||
 				f.basename.toLowerCase().includes(lowerQuery);
-			const matchingAliases = aliases.filter(alias =>
+			const matchingAliases = aliases.filter((alias) =>
 				alias.toLowerCase().includes(lowerQuery)
 			);
 
 			// Skip file if neither name nor any alias matches
 			if (!matchesName && matchingAliases.length === 0) continue;
-			
+
 			const fileDir = f.parent?.path || "";
 			const showPath = fileDir !== currentDir && fileDir !== "";
-			
+
 			// Always add the file itself when name matches
 			if (matchesName) {
 				results.push({
@@ -142,7 +142,7 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 				}
 			}
 		}
-		
+
 		// Sort by modification time, putting files before aliases
 		results.sort((a, b) => {
 			if (a.file && b.file) {
@@ -152,35 +152,35 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 			}
 			return 0;
 		});
-		
+
 		return results.slice(0, 20);
 	}
-	
+
 	getFileAliases(file: TFile): string[] {
 		const cache = this.app.metadataCache.getFileCache(file);
 		if (!cache || !cache.frontmatter) return [];
-		
+
 		const aliases: string[] = [];
 		const frontmatter = cache.frontmatter;
-		
+
 		// Handle both alias and aliases fields
 		if (frontmatter.alias) {
 			if (Array.isArray(frontmatter.alias)) {
 				aliases.push(...frontmatter.alias.map(String));
-			} else if (typeof frontmatter.alias === 'string') {
+			} else if (typeof frontmatter.alias === "string") {
 				aliases.push(frontmatter.alias);
 			}
 		}
-		
+
 		if (frontmatter.aliases) {
 			if (Array.isArray(frontmatter.aliases)) {
 				aliases.push(...frontmatter.aliases.map(String));
-			} else if (typeof frontmatter.aliases === 'string') {
+			} else if (typeof frontmatter.aliases === "string") {
 				aliases.push(frontmatter.aliases);
 			}
 		}
-		
-		return aliases.filter(alias => alias && typeof alias === 'string');
+
+		return aliases.filter((alias) => alias && typeof alias === "string");
 	}
 
 	getHeadingsInCurrentFile(): SuggestionItem[] {
@@ -218,12 +218,12 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 	getHeadingsInFile(fileName: string, headingQuery = ""): SuggestionItem[] {
 		const files = this.app.vault.getFiles();
 		const lowerFileName = fileName.toLowerCase();
-                // First try exact basename match
-                let file = files.find((f) => f.basename.toLowerCase() === lowerFileName);
-                // If no exact match, try path contains (for files in subdirectories)
-                if (!file) {
-                    file = files.find((f) => f.path.toLowerCase().includes(lowerFileName));
-                }
+		// First try exact basename match
+		let file = files.find((f) => f.basename.toLowerCase() === lowerFileName);
+		// If no exact match, try path contains (for files in subdirectories)
+		if (!file) {
+			file = files.find((f) => f.path.toLowerCase().includes(lowerFileName));
+		}
 		if (!file) return [];
 
 		const cache = this.app.metadataCache.getFileCache(file);
@@ -231,9 +231,7 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 
 		const lowerHeadingQuery = headingQuery.toLowerCase();
 		return cache.headings
-			.filter(
-				(h) => !headingQuery || h.heading.toLowerCase().includes(lowerHeadingQuery)
-			)
+			.filter((h) => !headingQuery || h.heading.toLowerCase().includes(lowerHeadingQuery))
 			.map((h) => ({
 				type: "heading" as const,
 				heading: h.heading,
@@ -245,13 +243,13 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 	findFile(fileName: string): TFile | undefined {
 		const files = this.app.vault.getFiles();
 		const lowerFileName = fileName.toLowerCase();
-                // First try exact basename match
-                let file = files.find((f) => f.basename.toLowerCase() === lowerFileName);
-                // If no exact match, try path contains (for files in subdirectories)
-                if (!file) {
-                   file = files.find((f) => f.path.toLowerCase().includes(lowerFileName));
-                }
-               return file;
+		// First try exact basename match
+		let file = files.find((f) => f.basename.toLowerCase() === lowerFileName);
+		// If no exact match, try path contains (for files in subdirectories)
+		if (!file) {
+			file = files.find((f) => f.path.toLowerCase().includes(lowerFileName));
+		}
+		return file;
 	}
 
 	async getAllBlocksInFile(file: TFile, blockQuery = ""): Promise<SuggestionItem[]> {
@@ -358,15 +356,15 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 			// Alias
 			const displayName = item.alias || "";
 			const displayPath = item.displayPath || "";
-			
+
 			content.createDiv({ text: displayName, cls: "suggestion-title" });
-			
+
 			// Show the actual filename as a note
 			content.createDiv({
 				text: `→ ${item.basename || ""}`,
-				cls: "suggestion-note"
+				cls: "suggestion-note",
 			});
-			
+
 			// Only show path if it's in a different folder than current note
 			if (displayPath && displayPath !== "/") {
 				content.createDiv({ text: displayPath, cls: "suggestion-note" });
@@ -375,9 +373,9 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 			// File
 			const displayName = item.basename || "";
 			const displayPath = item.displayPath || "";
-			
+
 			content.createDiv({ text: displayName, cls: "suggestion-title" });
-			
+
 			// Only show path if it's in a different folder than current note
 			if (displayPath && displayPath !== "/") {
 				content.createDiv({ text: displayPath, cls: "suggestion-note" });
@@ -385,8 +383,9 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 		}
 	}
 
-	async selectSuggestion(item: SuggestionItem): Promise<void> {
+	async selectSuggestion(item: SuggestionItem, evt?: MouseEvent | KeyboardEvent): Promise<void> {
 		let linkValue: string;
+		let newLinkText: string | null = null;
 
 		if (item.type === "heading") {
 			const currentFile = this.app.workspace.getActiveFile();
@@ -425,26 +424,36 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 			} else {
 				linkValue = item.alias || "";
 			}
-
-			// If the link text field has not been deliberately set, offer the alias
-			// as link text. This matches Obsidian's native [[ completion behavior.
-			if (item.alias && this.modal.isTextProvisional()) {
-				this.modal.textInput.setValue(item.alias);
-				this.modal.link.text = item.alias;
-				this.modal.showAliasNotice(item.alias);
-			}
+			// Selecting an alias row: use the alias as link text
+			newLinkText = item.alias || "";
 		} else {
-			// File - don't include path in the final link value
+			// File row: use the basename as link text (clears any stale alias)
 			if (item.extension === "md") {
 				linkValue = item.basename || "";
+				newLinkText = item.basename || "";
 			} else {
 				linkValue = item.name || "";
+				newLinkText = item.name || "";
 			}
 		}
 
 		this.inputEl.value = linkValue;
 		this.modal.handleDestInput();
 		this.close();
+
+		// Update link text after close so the suggester popup is gone and the
+		// text input is fully visible before we write to it.
+		if (newLinkText !== null) {
+			const textEl = this.modal.textInput.inputEl;
+			textEl.value = newLinkText;
+			this.modal.link.text = newLinkText;
+			this.modal.textModifiedByUser = true;
+			if (item.type === "alias" && item.alias) {
+				this.modal.showAliasNotice(item.alias);
+			} else {
+				this.modal.clearAliasNotice();
+			}
+		}
 
 		if (document.activeElement !== this.inputEl) {
 			this.inputEl.focus();

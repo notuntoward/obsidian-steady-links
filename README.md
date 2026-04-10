@@ -58,7 +58,7 @@ Commands for opening the link editor, and for easier link manipulation if you ha
 
 | Command                | Description                                                             | Suggested Hotkey | ID                                |
 | ---------------------- | ----------------------------------------------------------------------- | ---------------- | --------------------------------- |
-| **Edit Link**          | Open the link editor modal for the link at cursor, or create a new link | Ctrl + K         | `steady-links:edit-link`          |
+| **Edit Link**          | Modal to create a new link or to edit the one at the cursor             | Ctrl + K         | `steady-links:edit-link`          |
 | **Skip Link**          | Moves the cursor past the current link, avoiding link syntax navigation | Alt + K          | `steady-links:skip-link`          |
 | **Toggle Link Syntax** | Toggle between shown and hidden link syntax (Live Preview)              | Ctrl + Shift + L | `steady-links:toggle-link-syntax` |
 | **Show Link Syntax**   | Temporarily reveals the full raw link at the cursor (Live Preview)      | Alt + S          | `steady-links:show-link-syntax`   |

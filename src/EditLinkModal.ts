@@ -75,11 +75,39 @@ export class EditLinkModal extends Modal {
 		this.clipboardUsedDest = flags.clipboardUsedDest;
 	}
 
-	onOpen() {
-		const { contentEl } = this;
-		contentEl.empty();
+	/** Apply compact inline styles directly to a setting row's DOM element */
+	private compactSetting(s: Setting) {
+		const el = s.settingEl;
+		el.style.borderTop = "none";
+		el.style.padding = "4px 0";
+		el.style.display = "flex";
+		el.style.alignItems = "center";
+		el.style.gap = "12px";
+		const info = el.querySelector(".setting-item-info") as HTMLElement | null;
+		if (info) {
+			info.style.flex = "0 0 120px";
+			info.style.minWidth = "0";
+			info.style.paddingRight = "0";
+		}
+		const ctrl = el.querySelector(".setting-item-control") as HTMLElement | null;
+		if (ctrl) {
+			ctrl.style.flex = "1 1 auto";
+			ctrl.style.minWidth = "0";
+			ctrl.style.paddingLeft = "0";
+			ctrl.style.justifyContent = "flex-start";
+		}
+	}
 
-		contentEl.createEl("h4", { text: "Edit Link" });
+	onOpen() {
+		const { contentEl, modalEl, containerEl } = this;
+		contentEl.empty();
+		containerEl.addClass("steady-links-edit-modal-container");
+		modalEl.addClass("steady-links-edit-modal-shell");
+		contentEl.addClass("steady-links-edit-modal");
+
+		const heading = contentEl.createEl("h4", { text: "Edit Link" });
+		heading.style.marginTop = "0";
+		heading.style.marginBottom = "10px";
 
 		// Determine initial link type
 		const initialState = determineInitialLinkType(this.link.destination, this.link.isWiki);
@@ -87,10 +115,11 @@ export class EditLinkModal extends Modal {
 		this.wasUrl = initialState.wasUrl;
 
 		// Link Text
-		new Setting(contentEl).setName("Link Text").addText((text) => {
+		const textSetting = new Setting(contentEl).setName("Link Text").addText((text) => {
 			this.textInput = text;
 			text.setValue(this.link.text);
 			text.inputEl.style.width = "100%";
+			text.inputEl.style.minWidth = "0";
 			const textInputHandler = () => {
 				this.textModifiedByUser = true;
 				this.clearAliasNotice();
@@ -101,6 +130,7 @@ export class EditLinkModal extends Modal {
 			text.inputEl.addEventListener("input", textInputHandler);
 			this.eventListeners.push([text.inputEl, "input", textInputHandler]);
 		});
+		this.compactSetting(textSetting);
 
 		// Destination
 		const destSetting = new Setting(contentEl).setName("Destination");
@@ -109,6 +139,7 @@ export class EditLinkModal extends Modal {
 			this.destInput = text;
 			text.setValue(this.link.destination);
 			text.inputEl.style.width = "100%";
+			text.inputEl.style.minWidth = "0";
 
 			this.fileSuggest = new FileSuggest(this.app, text.inputEl, this);
 
@@ -119,9 +150,12 @@ export class EditLinkModal extends Modal {
 			text.inputEl.addEventListener("input", destInputHandler);
 			this.eventListeners.push([text.inputEl, "input", destInputHandler]);
 		});
+		this.compactSetting(destSetting);
 
 		// Warnings container
 		this.warningsContainer = contentEl.createDiv({ cls: "link-warnings-container" });
+		this.warningsContainer.style.marginTop = "2px";
+		this.warningsContainer.style.marginBottom = "2px";
 
 		// Conversion notice
 		if (this.conversionNotice) {
@@ -230,9 +264,11 @@ export class EditLinkModal extends Modal {
 				]);
 			});
 		embedSetting.settingEl.addClass("link-embed-checkbox");
+		this.compactSetting(this.typeSetting);
+		this.compactSetting(embedSetting);
 
 		// Apply button
-		new Setting(contentEl).addButton((btn) => {
+		const applyRowSetting = new Setting(contentEl).addButton((btn) => {
 			this.applyBtn = btn;
 			btn.setButtonText("Apply")
 				.setCta()
@@ -240,6 +276,9 @@ export class EditLinkModal extends Modal {
 					this.submit();
 				});
 		});
+		applyRowSetting.settingEl.style.borderTop = "none";
+		applyRowSetting.settingEl.style.padding = "8px 0 0 0";
+		applyRowSetting.settingEl.style.justifyContent = "flex-end";
 
 		// Key handling
 		const modalKeydownHandler = (e: KeyboardEvent) => {
@@ -584,6 +623,13 @@ export class EditLinkModal extends Modal {
 		this.eventListeners = [];
 
 		this.clearAliasNotice();
+		this.containerEl.removeClass("steady-links-edit-modal-container");
+		this.modalEl.removeClass("steady-links-edit-modal-shell");
+		this.containerEl.style.removeProperty("width");
+		this.containerEl.style.removeProperty("max-width");
+		this.modalEl.style.removeProperty("width");
+		this.modalEl.style.removeProperty("max-width");
+		this.contentEl.style.removeProperty("width");
 		this.contentEl.empty();
 	}
 }
