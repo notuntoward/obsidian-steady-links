@@ -248,6 +248,10 @@ function createHiddenSyntaxAnchor(): HTMLSpanElement {
 	span.style.display = "inline-block";
 	span.style.width = "1px";
 	span.style.minWidth = "1px";
+	// Keep the anchor's own box tied to the text metrics instead of the full
+	// line box, otherwise the inline widget can sit too high on the baseline and
+	// lift block-cursor overlays. Use baseline-preserving metrics here and let
+	// the inline-block alignment below position the measurable box correctly.
 	span.style.height = "1em";
 	span.style.lineHeight = "1";
 	span.style.marginRight = "-1px";
@@ -259,7 +263,9 @@ function createHiddenSyntaxAnchor(): HTMLSpanElement {
 	// that starts with hidden link syntax can fail because there is no hittable
 	// geometry at the goal column.
 	span.style.pointerEvents = "auto";
-	span.style.verticalAlign = "baseline";
+	// Extend the measurable box downward to cover descender space at end-of-line
+	// caret positions without increasing the line's layout height.
+	span.style.verticalAlign = "-0.2em";
 
 	return span;
 }
@@ -951,6 +957,12 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 					head = span.textFrom;
 					needsAdjust = true;
 					(update.view as any).__leArrivedFromOutside = span.leading.from;
+					// When vertical motion arrives from a line above/below with a
+					// remembered goal column that is inside the folded link text,
+					// always snap to the visible text start. Preserving oldHead here
+					// would send the cursor back to the visual end of the link on the
+					// return ArrowDown/ArrowUp path, which breaks the expected
+					// "land at line start" behavior for line-start links.
 					break;
 				}
 
@@ -961,6 +973,11 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 					break;
 				}
 				if (oldHead < span.textFrom || oldHead > span.textTo) continue;
+
+				// A same-line horizontal move inside visible text that lands on the
+				// hidden leading boundary should preserve the current visible column.
+				// Do not apply this to vertical motion; those cases are handled above
+				// and must snap to span.textFrom instead.
 
 				head = oldHead;
 				needsAdjust = true;

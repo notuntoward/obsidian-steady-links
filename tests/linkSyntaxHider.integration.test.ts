@@ -96,7 +96,7 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			expect(anchor.style.marginRight).toBe("-1px");
 			expect(anchor.style.opacity).toBe("0");
 			expect(anchor.style.pointerEvents).toBe("auto");
-			expect(anchor.style.verticalAlign).toBe("baseline");
+			expect(anchor.style.verticalAlign).toBe("-0.2em");
 		});
 	});
 
@@ -603,6 +603,39 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			const result = dispatchVerticalMotion(view, 1, 0);
 			expect(result).toBe(2);
 		});
+
+		it("down-arrow back from the line above returns to link start, not link end, for a line-start wikilink", () => {
+			const doc = "#example link\n\n[[test-notes/Note-09.md#Note Nine |Wote Nine]]";
+			const linkStart = doc.indexOf("[[test-notes/Note-09.md#Note Nine |Wote Nine]]");
+			const visibleStart = doc.indexOf("Wote Nine");
+			const visibleEnd = visibleStart + "Wote Nine".length;
+
+			view = createTestView(doc, visibleEnd);
+
+			// Up-arrow from the end of the visible text lands on the blank line above.
+			const upResult = dispatchVerticalMotion(view, 14, 9);
+			expect(upResult).toBe(14);
+
+			// Down-arrow with the preserved goal column should still land at the
+			// start of the link line's visible text, not jump back to the end.
+			const downResult = dispatchVerticalMotion(view, linkStart, 9);
+			expect(downResult).toBe(visibleStart);
+		});
+
+		it("down-arrow back from the line above returns to link start, not link end, for a line-start markdown link", () => {
+			const doc = "#example link\n\n[Wote Nine](https://example.com)";
+			const linkStart = doc.indexOf("[Wote Nine](https://example.com)");
+			const visibleStart = doc.indexOf("Wote Nine");
+			const visibleEnd = visibleStart + "Wote Nine".length;
+
+			view = createTestView(doc, visibleEnd);
+
+			const upResult = dispatchVerticalMotion(view, 14, 9);
+			expect(upResult).toBe(14);
+
+			const downResult = dispatchVerticalMotion(view, linkStart, 9);
+			expect(downResult).toBe(visibleStart);
+		});
 	});
 
 	// ──────────────────────────────────────────────────────────────────────
@@ -863,10 +896,7 @@ describe("Integration: cursor correction with real CM6 state", () => {
 		it("wikilink with alias: suppression redirects to textFrom, not leading.from", () => {
 			// Piped wikilink: [[path|Alias Text]]
 			// leading [[ at {1, ...}, textFrom = after the pipe
-			view = createTestView(
-				"\n[[test-notes/Note-09.md#Note Nine |Wote Nine]]\nAfter",
-				0
-			);
+			view = createTestView("\n[[test-notes/Note-09.md#Note Nine |Wote Nine]]\nAfter", 0);
 
 			const doc = view.state.doc.toString();
 			const aliasStart = doc.indexOf("Wote Nine");
