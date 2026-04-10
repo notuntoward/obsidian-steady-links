@@ -28,28 +28,6 @@ export interface ClipboardService {
 }
 
 // ============================================================================
-// Browser Implementation
-// ============================================================================
-
-/**
- * Default clipboard service using the browser's Navigator.clipboard API
- */
-export const browserClipboard: ClipboardService = {
-	async readText(): Promise<string> {
-		try {
-			return await navigator.clipboard.readText();
-		} catch {
-			// Clipboard access may fail due to permissions or security
-			return '';
-		}
-	},
-
-	async writeText(text: string): Promise<void> {
-		await navigator.clipboard.writeText(text);
-	},
-};
-
-// ============================================================================
 // Mock Implementations for Testing
 // ============================================================================
 
@@ -82,20 +60,20 @@ export function createMockClipboard(options: MockClipboardOptions = {}): Clipboa
 	/** Get the write history (test helper) */
 	getWriteHistory(): string[];
 } {
-	let text = options.initialText ?? '';
+	let text = options.initialText ?? "";
 	const writeHistory: string[] = [];
 
 	return {
 		async readText(): Promise<string> {
 			if (options.shouldFail) {
-				throw new Error(options.errorMessage ?? 'Clipboard access denied');
+				throw new Error(options.errorMessage ?? "Clipboard access denied");
 			}
 			return text;
 		},
 
 		async writeText(newText: string): Promise<void> {
 			if (options.shouldFail) {
-				throw new Error(options.errorMessage ?? 'Clipboard access denied');
+				throw new Error(options.errorMessage ?? "Clipboard access denied");
 			}
 			text = newText;
 			writeHistory.push(newText);
@@ -166,17 +144,13 @@ export function createTrackingClipboard(realClipboard: ClipboardService): Clipbo
 	};
 }
 
-// ============================================================================
-// Null/No-op Implementation
-// ============================================================================
-
 /**
  * A no-op clipboard service that does nothing
  * Useful for tests that don't need clipboard functionality
  */
 export const nullClipboard: ClipboardService = {
 	async readText(): Promise<string> {
-		return '';
+		return "";
 	},
 
 	async writeText(_text: string): Promise<void> {

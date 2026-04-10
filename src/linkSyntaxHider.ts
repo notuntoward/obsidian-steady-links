@@ -665,37 +665,6 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 	const oldSel = update.startState.selection;
 	const hidden = computeHiddenRangesForPositions(state.doc, newSel);
 
-	// Diagnostic: log every selection change near hidden ranges
-	{
-		const oldHead = oldSel.main.head;
-		const newHead = newSel.main.head;
-		const userEvents = update.transactions
-			.map((tr) => tr.annotation(Transaction.userEvent) ?? "(none)")
-			.join(",");
-		const allHidden = computeHiddenRangesForPositions(state.doc, oldSel);
-		const combinedHidden = [...hidden, ...allHidden];
-		const nearLink = combinedHidden.some((h) => {
-			const lineFrom = state.doc.lineAt(h.from).from;
-			return (
-				h.from === lineFrom &&
-				((oldHead >= h.from - 5 && oldHead <= h.to + 80) ||
-					(newHead >= h.from - 5 && newHead <= h.to + 80))
-			);
-		});
-		if (nearLink) {
-			const goalOld = oldSel.main.goalColumn;
-			const goalNew = newSel.main.goalColumn;
-			const cameFromOutside = update.startState.field(
-				arrivedAtTextFromFromOutsideField,
-				false
-			);
-			const isCorrecting = (update.view as any)[CORRECTING];
-			console.log(
-				`[SteadyLinks corrector] oldHead=${oldHead} → newHead=${newHead} userEvent="${userEvents}" goalCol=[${goalOld},${goalNew}] cameFromOutside=${cameFromOutside} isCorrecting=${!!isCorrecting} hidden=${JSON.stringify(hidden.map((h) => ({ from: h.from, to: h.to, side: h.side })))}`
-			);
-		}
-	}
-
 	if (hidden.length === 0) return;
 	const linkSpans = buildVisibleLinkSpans(hidden, state.doc);
 
@@ -830,9 +799,6 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 					// presses to move off the first visible character.
 					head = obsidianNorm.textFrom;
 					needsAdjust = true;
-					console.log(
-						`[SteadyLinks corrector] Obsidian normalisation suppressed (${oldHead}→${range.head}): redirecting to textFrom=${head}`
-					);
 				}
 			}
 		}
@@ -1030,12 +996,6 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 	const arrivedFromOutsideHFrom: number | undefined = (view as any).__leArrivedFromOutside;
 	(view as any).__leArrivedFromOutside = undefined;
 
-	console.log(
-		`[SteadyLinks corrector] DISPATCHING correction: ${newSel.main.head} → ${sel.main.head}` +
-			(arrivedFromOutsideHFrom !== undefined
-				? ` [arrivedFromOutside h.from=${arrivedFromOutsideHFrom}]`
-				: "")
-	);
 	(view as any)[CORRECTING] = true;
 	try {
 		view.dispatch({
@@ -1324,53 +1284,6 @@ function handleHomeKey(view: EditorView, extend: boolean): boolean {
 		});
 		return true;
 	}
-	return false;
-}
-
-function handleEnterAtLinkStart(view: EditorView, extend: boolean): boolean {
-	const sel = view.state.selection;
-	if (sel.ranges.length !== 1) return false;
-
-	const head = sel.main.head;
-	const doc = view.state.doc;
-	const line = doc.lineAt(head);
-
-	const hidden = computeHiddenRanges(view.state);
-	const linkSpans = buildVisibleLinkSpans(hidden, doc);
-
-	console.log(
-		`[SteadyLinks Home] head=${head} line.from=${line.from} linkSpans=${JSON.stringify(linkSpans.map((s) => ({ from: s.from, to: s.to, textFrom: s.textFrom, textTo: s.textTo, leadingFrom: s.leading.from, lineFrom: s.lineFrom })))}`
-	);
-
-	for (const span of linkSpans) {
-		if (span.leading.from !== line.from) {
-			console.log(
-				`[SteadyLinks Home] span.leading.from=${span.leading.from} !== line.from=${line.from} — skip`
-			);
-			continue;
-		}
-		if (head <= span.to) {
-			console.log(
-				`[SteadyLinks Home] head=${head} <= span.to=${span.to} — cursor inside link, skip`
-			);
-			continue;
-		}
-
-		const dest = span.textFrom;
-		console.log(
-			`[SteadyLinks Home] FIRING: dispatching cursor to dest=${dest} (span.textFrom)`
-		);
-		view.dispatch({
-			selection: extend
-				? EditorSelection.range(sel.main.anchor, dest)
-				: EditorSelection.cursor(dest),
-			scrollIntoView: true,
-			userEvent: "select",
-			effects: [arrivedAtTextFromFromOutsideEffect.of(true)],
-		});
-		return true;
-	}
-	console.log("[SteadyLinks Home] no matching span — returning false");
 	return false;
 }
 

@@ -5,10 +5,17 @@
  * with realistic editor, file, and application state.
  */
 
-import { App, Editor, TFile, createTestApp, createMockEditor, EditorState } from './__mocks__/obsidian';
-import { PluginSettings } from '../src/types';
-import { createSettings } from './factories';
-import { ClipboardService, createMockClipboard, MockClipboardOptions } from '../src/clipboard';
+import {
+	App,
+	Editor,
+	TFile,
+	createTestApp,
+	createMockEditor,
+	EditorState,
+} from "./__mocks__/obsidian";
+import { PluginSettings } from "../src/types";
+import { createSettings } from "./factories";
+import { ClipboardService, createMockClipboard, MockClipboardOptions } from "./clipboard";
 
 // ============================================================================
 // Test Harness
@@ -63,7 +70,10 @@ export interface TestHarness {
 	/** Assert cursor position */
 	assertCursorEquals(expected: { line: number; ch: number }): void;
 	/** Assert selection range */
-	assertSelectionEquals(from: { line: number; ch: number }, to: { line: number; ch: number }): void;
+	assertSelectionEquals(
+		from: { line: number; ch: number },
+		to: { line: number; ch: number }
+	): void;
 	/** Assert no selection */
 	assertNoSelection(): void;
 	/** Assert clipboard content */
@@ -130,7 +140,7 @@ export function createTestHarness(options: TestHarnessOptions = {}): TestHarness
 	});
 
 	// Create editor with initial state
-	const editor = createMockEditor(options.lines ?? ['']);
+	const editor = createMockEditor(options.lines ?? [""]);
 	if (options.cursor) {
 		editor.setCursor(options.cursor);
 	}
@@ -143,7 +153,7 @@ export function createTestHarness(options: TestHarnessOptions = {}): TestHarness
 
 	// Create clipboard
 	const clipboard = createMockClipboard({
-		initialText: options.clipboardText ?? '',
+		initialText: options.clipboardText ?? "",
 	});
 
 	// Create settings
@@ -188,7 +198,7 @@ export function createTestHarness(options: TestHarnessOptions = {}): TestHarness
 		},
 
 		// File system manipulation
-		addFile(path, content = '') {
+		addFile(path, content = "") {
 			const file = new TFile({ path });
 			app.vault.addFile(file, content);
 			return file;
@@ -205,35 +215,48 @@ export function createTestHarness(options: TestHarnessOptions = {}): TestHarness
 		assertLineEquals(line, expected) {
 			const actual = editor.getLine(line);
 			if (actual !== expected) {
-				throw new Error(`Line ${line} assertion failed:\n  Expected: "${expected}"\n  Actual:   "${actual}"`);
+				throw new Error(
+					`Line ${line} assertion failed:\n  Expected: "${expected}"\n  Actual:   "${actual}"`
+				);
 			}
 		},
 
 		assertCursorEquals(expected) {
 			const actual = editor.getCursor();
 			if (actual.line !== expected.line || actual.ch !== expected.ch) {
-				throw new Error(`Cursor assertion failed:\n  Expected: ${JSON.stringify(expected)}\n  Actual:   ${JSON.stringify(actual)}`);
+				throw new Error(
+					`Cursor assertion failed:\n  Expected: ${JSON.stringify(expected)}\n  Actual:   ${JSON.stringify(actual)}`
+				);
 			}
 		},
 
 		assertSelectionEquals(from, to) {
-			const cursor = editor.getCursor('from');
-			const head = editor.getCursor('to');
-			if (cursor.line !== from.line || cursor.ch !== from.ch || head.line !== to.line || head.ch !== to.ch) {
-				throw new Error(`Selection assertion failed:\n  Expected: ${JSON.stringify(from)} to ${JSON.stringify(to)}`);
+			const cursor = editor.getCursor("from");
+			const head = editor.getCursor("to");
+			if (
+				cursor.line !== from.line ||
+				cursor.ch !== from.ch ||
+				head.line !== to.line ||
+				head.ch !== to.ch
+			) {
+				throw new Error(
+					`Selection assertion failed:\n  Expected: ${JSON.stringify(from)} to ${JSON.stringify(to)}`
+				);
 			}
 		},
 
 		assertNoSelection() {
 			if (editor.somethingSelected()) {
-				throw new Error('Expected no selection, but selection exists');
+				throw new Error("Expected no selection, but selection exists");
 			}
 		},
 
 		assertClipboardEquals(expected) {
 			const actual = clipboard.getText();
 			if (actual !== expected) {
-				throw new Error(`Clipboard assertion failed:\n  Expected: "${expected}"\n  Actual:   "${actual}"`);
+				throw new Error(
+					`Clipboard assertion failed:\n  Expected: "${expected}"\n  Actual:   "${actual}"`
+				);
 			}
 		},
 
@@ -259,16 +282,18 @@ export function createTestHarness(options: TestHarnessOptions = {}): TestHarness
 /**
  * Create a harness pre-configured for link editing tests
  */
-export function createLinkEditHarness(options: {
-	/** Line with a link to edit */
-	linkLine?: string;
-	/** Cursor position within the link */
-	cursorInLink?: number;
-	/** Whether to position cursor on wiki link */
-	onWikiLink?: boolean;
-	/** Whether to position cursor on markdown link */
-	onMarkdownLink?: boolean;
-} = {}): TestHarness {
+export function createLinkEditHarness(
+	options: {
+		/** Line with a link to edit */
+		linkLine?: string;
+		/** Cursor position within the link */
+		cursorInLink?: number;
+		/** Whether to position cursor on wiki link */
+		onWikiLink?: boolean;
+		/** Whether to position cursor on markdown link */
+		onMarkdownLink?: boolean;
+	} = {}
+): TestHarness {
 	let lines: string[];
 	let cursorCh: number;
 
@@ -276,13 +301,13 @@ export function createLinkEditHarness(options: {
 		lines = [options.linkLine];
 		cursorCh = options.cursorInLink ?? 0;
 	} else if (options.onWikiLink) {
-		lines = ['Check out [[my-note|My Note]] for more info'];
+		lines = ["Check out [[my-note|My Note]] for more info"];
 		cursorCh = 12; // Inside the wiki link
 	} else if (options.onMarkdownLink) {
-		lines = ['Click [here](https://example.com) for details'];
+		lines = ["Click [here](https://example.com) for details"];
 		cursorCh = 10; // Inside the markdown link
 	} else {
-		lines = ['This is a plain text line'];
+		lines = ["This is a plain text line"];
 		cursorCh = 10;
 	}
 
@@ -295,25 +320,27 @@ export function createLinkEditHarness(options: {
 /**
  * Create a harness pre-configured for file suggestion tests
  */
-export function createFileSuggestHarness(options: {
-	/** Files to add to vault */
-	files?: Array<{ path: string; content?: string; metadata?: any }>;
-	/** Active file path */
-	activeFilePath?: string;
-	/** Query text in the input */
-	query?: string;
-} = {}): TestHarness & { query: string } {
+export function createFileSuggestHarness(
+	options: {
+		/** Files to add to vault */
+		files?: Array<{ path: string; content?: string; metadata?: any }>;
+		/** Active file path */
+		activeFilePath?: string;
+		/** Query text in the input */
+		query?: string;
+	} = {}
+): TestHarness & { query: string } {
 	const harness = createTestHarness({
 		files: options.files ?? [
-			{ path: 'notes/note1.md', content: '# Heading 1\n\nContent' },
-			{ path: 'notes/note2.md', content: '# Another Note\n\n## Subheading' },
+			{ path: "notes/note1.md", content: "# Heading 1\n\nContent" },
+			{ path: "notes/note2.md", content: "# Another Note\n\n## Subheading" },
 		],
-		activeFilePath: options.activeFilePath ?? 'notes/note1.md',
+		activeFilePath: options.activeFilePath ?? "notes/note1.md",
 	});
 
 	return {
 		...harness,
-		query: options.query ?? '',
+		query: options.query ?? "",
 	};
 }
 
@@ -324,9 +351,12 @@ export function createFileSuggestHarness(options: {
 /**
  * Assert that a value is not null or undefined
  */
-export function assertDefined<T>(value: T | null | undefined, message?: string): asserts value is T {
+export function assertDefined<T>(
+	value: T | null | undefined,
+	message?: string
+): asserts value is T {
 	if (value === null || value === undefined) {
-		throw new Error(message ?? 'Expected value to be defined');
+		throw new Error(message ?? "Expected value to be defined");
 	}
 }
 
@@ -341,12 +371,16 @@ export function assertLinkEquals(
 		throw new Error(`Link text mismatch: expected "${expected.text}", got "${actual.text}"`);
 	}
 	if (expected.destination !== undefined && actual.destination !== expected.destination) {
-		throw new Error(`Link destination mismatch: expected "${expected.destination}", got "${actual.destination}"`);
+		throw new Error(
+			`Link destination mismatch: expected "${expected.destination}", got "${actual.destination}"`
+		);
 	}
 	if (expected.isWiki !== undefined && actual.isWiki !== expected.isWiki) {
 		throw new Error(`Link isWiki mismatch: expected ${expected.isWiki}, got ${actual.isWiki}`);
 	}
 	if (expected.isEmbed !== undefined && actual.isEmbed !== expected.isEmbed) {
-		throw new Error(`Link isEmbed mismatch: expected ${expected.isEmbed}, got ${actual.isEmbed}`);
+		throw new Error(
+			`Link isEmbed mismatch: expected ${expected.isEmbed}, got ${actual.isEmbed}`
+		);
 	}
 }

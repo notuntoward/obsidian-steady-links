@@ -3,16 +3,20 @@
  *
  * These functions handle the decision-making for link editing operations
  * without depending on the Obsidian Editor API, making them easily testable.
+ *
+ * NOTE: This module is test-only infrastructure. It is not imported by any
+ * production source file. main.ts implements the same logic inline because
+ * the real command handler interacts directly with the Obsidian Editor API.
  */
 
-import { LinkInfo } from "./types";
+import { LinkInfo } from "../src/types";
 import {
 	detectLinkAtCursor,
 	determineLinkFromContext,
 	urlAtCursor,
 	LinkAtCursor,
 	LinkFromContext,
-} from "./utils";
+} from "../src/utils";
 
 // ============================================================================
 // Types
@@ -179,7 +183,15 @@ export interface EditorContextWithSelection extends EditorContext {
 export function determineLinkOperationWithSelection(
 	context: EditorContextWithSelection
 ): LinkOperation | null {
-	const { cursorCh, lineText, selection, clipboardText, hasSelection, selectionFrom, selectionTo } = context;
+	const {
+		cursorCh,
+		lineText,
+		selection,
+		clipboardText,
+		hasSelection,
+		selectionFrom,
+		selectionTo,
+	} = context;
 
 	// First, check if there's an existing link at the cursor
 	const existingLink = detectLinkAtCursor(lineText, cursorCh);
