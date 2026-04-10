@@ -38,7 +38,10 @@ export class EditLinkModal extends Modal {
 	destInput!: TextComponent;
 	fileSuggest!: FileSuggest;
 	typeSetting!: Setting;
-	toggleComponent!: ToggleComponent;
+	/** Segmented-control button for Wikilink */
+	wikiBtnEl!: HTMLButtonElement;
+	/** Segmented-control button for Markdown */
+	mdBtnEl!: HTMLButtonElement;
 	embedToggle!: ToggleComponent;
 	applyBtn!: ButtonComponent;
 	warningsContainer!: HTMLElement;
@@ -165,65 +168,79 @@ export class EditLinkModal extends Modal {
 			});
 		}
 
-		// Link Type toggle
-		this.typeSetting = new Setting(contentEl)
-			.setName("Link Type")
-			.setDesc(this.isWiki ? "Wikilink" : "Markdown Link")
-			.addToggle((toggle) => {
-				this.toggleComponent = toggle;
-				toggle.setValue(this.isWiki).onChange((value) => {
-					const dest = this.destInput.getValue();
+		// Link Type — segmented control (Wikilink | Markdown)
+		this.typeSetting = new Setting(contentEl).setName("Link Type");
+		this.typeSetting.then((s) => {
+			const seg = s.controlEl.createEl("div", { cls: "seg-control" });
 
-					if (value && !this.isWiki) {
-						const converted = markdownToWiki(dest);
-						if (converted !== null && converted !== dest) {
-							this.destInput.setValue(converted);
-						}
-					} else if (!value && this.isWiki) {
-						const converted = wikiToMarkdown(dest);
-						if (converted !== dest) {
-							this.destInput.setValue(converted);
-						}
-					}
-					this.isWiki = value;
-					this.updateUIState();
-				});
-
-				toggle.toggleEl.setAttribute("tabindex", "0");
-				const typeToggleKeydownHandler = (e: KeyboardEvent) => {
-					// Only toggle with Space, let Enter propagate to submit
-					if (e.key === " " || e.key === "Spacebar") {
-						e.preventDefault();
-						const newValue = !toggle.getValue();
-
-						const dest = this.destInput.getValue();
-						if (newValue && !this.isWiki) {
-							const converted = markdownToWiki(dest);
-							if (converted !== null && converted !== dest) {
-								this.destInput.setValue(converted);
-							}
-						} else if (!newValue && this.isWiki) {
-							const converted = wikiToMarkdown(dest);
-							if (converted !== dest) {
-								this.destInput.setValue(converted);
-							}
-						}
-
-						toggle.setValue(newValue);
-						this.isWiki = newValue;
-						this.updateUIState();
-					}
-				};
-				toggle.toggleEl.addEventListener(
-					"keydown",
-					typeToggleKeydownHandler as EventListener
-				);
-				this.eventListeners.push([
-					toggle.toggleEl,
-					"keydown",
-					typeToggleKeydownHandler as EventListener,
-				]);
+			this.wikiBtnEl = seg.createEl("button", {
+				text: "Wikilink",
+				cls: "seg-btn",
 			});
+			this.wikiBtnEl.setAttribute("tabindex", "0");
+			this.wikiBtnEl.setAttribute("type", "button");
+
+			this.mdBtnEl = seg.createEl("button", {
+				text: "Markdown",
+				cls: "seg-btn",
+			});
+			this.mdBtnEl.setAttribute("tabindex", "-1");
+			this.mdBtnEl.setAttribute("type", "button");
+
+			// Shared activation handler — converts dest when type changes
+			const activate = (wiki: boolean) => {
+				if (wiki === this.isWiki) return;
+				const dest = this.destInput.getValue();
+				if (wiki) {
+					const converted = markdownToWiki(dest);
+					if (converted !== null && converted !== dest) {
+						this.destInput.setValue(converted);
+					}
+				} else {
+					const converted = wikiToMarkdown(dest);
+					if (converted !== dest) {
+						this.destInput.setValue(converted);
+					}
+				}
+				this.isWiki = wiki;
+				this.updateUIState();
+				// Roving tabindex: active button is the tab stop
+				this.wikiBtnEl.setAttribute("tabindex", wiki ? "0" : "-1");
+				this.mdBtnEl.setAttribute("tabindex", wiki ? "-1" : "0");
+			};
+
+			this.wikiBtnEl.addEventListener("click", () => activate(true));
+			this.mdBtnEl.addEventListener("click", () => activate(false));
+			this.eventListeners.push([this.wikiBtnEl, "click", () => activate(true)]);
+			this.eventListeners.push([this.mdBtnEl, "click", () => activate(false)]);
+
+			// Keyboard behaviour for each button:
+			//   Space      — cycle to the other type (mirrors embed toggle behaviour)
+			//   Enter      — submit the modal (let it propagate to the modal handler)
+			//   Escape     — cancel the modal (let it propagate to the modal handler)
+			//   Left/Right — move focus to the other button and activate it
+			const makeKeyHandler = (wiki: boolean) => (e: KeyboardEvent) => {
+				if (e.key === " " || e.key === "Spacebar") {
+					// Space cycles to the OTHER type
+					e.preventDefault();
+					activate(!wiki);
+					// Move focus to the newly active button
+					(!wiki ? this.wikiBtnEl : this.mdBtnEl).focus();
+				} else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+					e.preventDefault();
+					activate(!wiki);
+					(!wiki ? this.wikiBtnEl : this.mdBtnEl).focus();
+				}
+				// Enter and Escape are not handled here — they bubble up to the
+				// modal-level keydown handler which submits or cancels.
+			};
+			const wikiKeyHandler = makeKeyHandler(true);
+			const mdKeyHandler = makeKeyHandler(false);
+			this.wikiBtnEl.addEventListener("keydown", wikiKeyHandler as EventListener);
+			this.mdBtnEl.addEventListener("keydown", mdKeyHandler as EventListener);
+			this.eventListeners.push([this.wikiBtnEl, "keydown", wikiKeyHandler as EventListener]);
+			this.eventListeners.push([this.mdBtnEl, "keydown", mdKeyHandler as EventListener]);
+		});
 
 		// Embed checkbox
 		const embedSetting = new Setting(contentEl)
@@ -345,16 +362,18 @@ export class EditLinkModal extends Modal {
 		this.eventListeners.push([this.modalEl, "keydown", modalKeydownHandler as EventListener]);
 
 		this.updateUIState();
-		this.toggleComponent.setValue(this.isWiki);
 		this.populateFromClipboard();
 		this.setInitialFocus();
 	}
 
 	getFocusableElements(): HTMLElement[] {
+		// For the segmented control use a roving tabindex: only the active button
+		// is a tab stop; Left/Right arrows move within the group.
+		const activeTypeBtn = this.isWiki ? this.wikiBtnEl : this.mdBtnEl;
 		return [
 			this.textInput.inputEl,
 			this.destInput.inputEl,
-			this.toggleComponent.toggleEl,
+			activeTypeBtn,
 			this.embedToggle.toggleEl,
 			this.applyBtn.buttonEl,
 		].filter((el) => el && el.offsetParent !== null);
@@ -404,7 +423,6 @@ export class EditLinkModal extends Modal {
 
 				// Update the link type based on the parsed link
 				this.isWiki = parsedLink.isWiki;
-				this.toggleComponent.setValue(parsedLink.isWiki);
 
 				// IMPORTANT: Never modify the embed state from clipboard
 				// - For existing links: preserve the original embed state
@@ -423,9 +441,6 @@ export class EditLinkModal extends Modal {
 		const val = this.destInput.getValue();
 		const result = handleDestChange(val, this.isWiki);
 
-		if (result.isWiki !== this.isWiki) {
-			this.toggleComponent.setValue(result.isWiki);
-		}
 		this.isWiki = result.isWiki;
 		this.wasUrl = result.wasUrl;
 
@@ -466,10 +481,14 @@ export class EditLinkModal extends Modal {
 	 * Uses the refactored validateLinkDestination function for cleaner code
 	 */
 	updateUIState() {
-		if (this.toggleComponent && this.toggleComponent.getValue() !== this.isWiki) {
-			this.toggleComponent.setValue(this.isWiki);
+		// Reflect current isWiki state in the segmented control
+		if (this.wikiBtnEl) {
+			this.wikiBtnEl.classList.toggle("seg-btn--active", this.isWiki);
+			this.mdBtnEl.classList.toggle("seg-btn--active", !this.isWiki);
+			// Keep roving tabindex consistent with active state
+			this.wikiBtnEl.setAttribute("tabindex", this.isWiki ? "0" : "-1");
+			this.mdBtnEl.setAttribute("tabindex", this.isWiki ? "-1" : "0");
 		}
-		this.typeSetting.setDesc(this.isWiki ? "Wikilink" : "Markdown Link");
 
 		// Clear previous warnings (but keep conversion notices that aren't validation warnings)
 		const existingWarnings = this.warningsContainer.querySelectorAll(".link-warning");

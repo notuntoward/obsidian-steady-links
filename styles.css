@@ -26,6 +26,74 @@ body.le-keep-links-steady .cm-cursor {
 
 /* ── Edit Link Modal ──────────────────────────────────────────────── */
 
+/* ── Link Type segmented control ─────────────────────────────────── */
+
+.steady-links-edit-modal .seg-control {
+	display: inline-flex;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m, 6px);
+}
+
+.steady-links-edit-modal .seg-btn {
+	padding: 4px 16px;
+	background: var(--background-modifier-form-field, #f0f0f0) !important;
+	border: none;
+	cursor: pointer;
+	font-size: var(--font-ui-small);
+	color: var(--text-normal) !important;
+	transition:
+		background 120ms ease,
+		color 120ms ease,
+		box-shadow 0.1s ease-out;
+	white-space: nowrap;
+}
+
+.steady-links-edit-modal .seg-btn:first-child {
+	border-radius: var(--radius-m, 6px) 0 0 var(--radius-m, 6px);
+}
+
+.steady-links-edit-modal .seg-btn:last-child {
+	border-radius: 0 var(--radius-m, 6px) var(--radius-m, 6px) 0;
+}
+
+.steady-links-edit-modal .seg-btn + .seg-btn {
+	border-left: 1px solid var(--background-modifier-border);
+}
+
+/* Selected state — always visible regardless of focus or theme.
+ * !important ensures Obsidian's generic button styles can't override it. */
+.steady-links-edit-modal .seg-btn--active,
+.steady-links-edit-modal .seg-btn--active:hover,
+.steady-links-edit-modal .seg-btn--active:focus,
+.steady-links-edit-modal .seg-btn--active:focus-visible {
+	background: var(--interactive-accent) !important;
+	/* Guarantee contrast: --text-on-accent with white as safe fallback */
+	color: var(--text-on-accent, white) !important;
+	font-weight: 600;
+}
+
+/* Hover on inactive button */
+.steady-links-edit-modal .seg-btn:not(.seg-btn--active):hover {
+	background: var(--background-modifier-hover) !important;
+	color: var(--text-normal) !important;
+}
+
+/* Focus ring on inactive button — box-shadow so it doesn't change the fill */
+.steady-links-edit-modal .seg-btn:not(.seg-btn--active):focus-visible {
+	outline: none;
+	box-shadow:
+		0 0 0 2px var(--interactive-accent),
+		0 0 6px 2px color-mix(in srgb, var(--interactive-accent) 60%, transparent);
+}
+
+/* Focus ring on active button — slightly brighter fill + halo */
+.steady-links-edit-modal .seg-btn--active:focus-visible {
+	background: color-mix(in srgb, var(--interactive-accent) 80%, white 20%) !important;
+	box-shadow:
+		0 0 0 2px var(--interactive-accent),
+		0 0 6px 2px color-mix(in srgb, var(--interactive-accent) 60%, transparent);
+}
+
 /* Match input text size to editor text */
 .steady-links-edit-modal input[type="text"],
 .steady-links-edit-modal input[type="search"] {

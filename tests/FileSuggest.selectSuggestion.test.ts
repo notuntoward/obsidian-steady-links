@@ -57,8 +57,10 @@ function makeModalStub(initialText = "Old Alias") {
 function makeFileSuggest(modal: ReturnType<typeof makeModalStub>) {
 	const app = new App();
 	const destInputEl = modal._destInputEl;
-	// FileSuggest constructor calls super(app, inputEl) and assigns this.inputEl
-	const suggest = new FileSuggest(app, destInputEl, modal as any);
+	// FileSuggest constructor calls super(app, inputEl) and assigns this.inputEl.
+	// Cast app to any because the test mock doesn't fully implement the Obsidian
+	// App type (type-only package), but it satisfies all runtime needs.
+	const suggest = new FileSuggest(app as any, destInputEl, modal as any);
 	return suggest;
 }
 
@@ -66,7 +68,8 @@ function makeFileSuggest(modal: ReturnType<typeof makeModalStub>) {
 // TFile helper
 // ---------------------------------------------------------------------------
 
-function makeMdFile(basename: string, folder = "notes"): TFile {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function makeMdFile(basename: string, folder = "notes"): any {
 	return new TFile({
 		path: `${folder}/${basename}.md`,
 		name: `${basename}.md`,
@@ -288,7 +291,8 @@ describe("FileSuggest.selectSuggestion — link text update", () => {
 	});
 
 	it("uses full filename (not basename) for non-md files", async () => {
-		const file = new TFile({
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const file: any = new TFile({
 			path: "assets/diagram.png",
 			name: "diagram.png",
 			basename: "diagram",
