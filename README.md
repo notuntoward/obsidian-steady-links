@@ -1,68 +1,75 @@
 # Steady Links
 
-Steady Links simplifies link syntax editing and optionally keeps links folded, hiding link syntax in Live Preview.
+Steady Links simplifies editing links and optionally keeps them collapsed, showing only link text, hiding link syntax.
 
 ### Stock Obsidian Links
 
 When you arrow-key through a note in stock Obsidian, every link you touch expands, exposing its raw syntax: brackets, URLs, everything.
 
 <div style="display: flex; justify-content: center; gap: 1rem;">
-  <figure style="margin: 0; text-align: center; border: 1px solid #ccc;">
+  <figure style="margin: 0; text-align: center;">
     <img src="images/1_link_folded.png" width="100%" />
-    <figcaption><b>Link folded</b></figcaption>
+    <figcaption>Link collapsed</figcaption>
   </figure>
-  <figure style="margin: 0; text-align: center; border: 1px solid #ccc;">
+  <figure style="margin: 0; text-align: center; ">
     <img src="images/2_link_expanded.png" width="100%" />
-    <figcaption><b>Link expanded</b></figcaption>
+    <figcaption>Link expanded</figcaption>
   </figure>
 </div>
 
-Your cursor jumps, your place in the text shifts, and if the link is long, you can end up lines away from the link text you may or may not have wanted to edit. Besides the "where did my cursor go?" moment, cursoring through giant URLs and editing link syntax is a messy chore.
+<br>
+In stock Obsidian, your place in the text shifts and you can end up lines away from the link text you may or may not have wanted to edit. Besides this *where did my cursor go?* moment, it's a messy chore, keyboarding through long URLs and manually editing link syntax.
 
 ### What Steady Links Does
 
-**Links stay put.**
-Enable `Keep links steady` in this plugin's settings, and links in Live Preview will stop expanding when your cursor touches them. You see only folded links; only the link text is visible. You can can edit their text normally, while the underlying link syntax and destination stay out of your way (similar to gmail). For a quick syntax check, or if you prefer to not `Keep links steady`, then see the still-useful [Steady Links Commands](#steady_links_commands).
+#### Keeps Links Steady
+Enable `Keep links steady` in this plugin's settings, and then in Live Preview, links will stop expanding when your cursor touches them. Only the link text is visible, and you can can edit it normally, while the underlying link syntax and destination stay out of your way (as in e.g. gmail). For a quick syntax check, or if you prefer to not `Keep links steady`, then see the still-useful [Steady Links Commands](#steady_links_commands).
 
-#### Link Editor: links without juggling brackets
+#### Link Editor
 
-<figure style="float: right; width: 52%; margin-left: 1rem; text-align: center; border: 1px solid #ccc;">
-  <img src="images/3_link_editor.png" width="80%" />
+== NEEDS TO BE COMBINED WITH LINK MODAL STUFF BELOW==
+
+<figure style="float: right; width: 55%; margin-left: 1rem; text-align: center">
+  <img src="images/3_link_editor.png" width="100%" />
   <figcaption>
-    <b>Link editor (markdown link)</b>
+    Link editor (markdown link)
   </figcaption>
 </figure>
 
-The `Edit Link` command opens a modal where you can easily change the link your cursor, or if there is no link at your cursor, create a new one. You can set the link text, and make the link destination a URL, file, heading, or block reference. You can set the link type to wikilink or markdown format, and chose to embed the link content in your page. No hand-editing. No mismatched brackets.
+The `Edit Link` command opens a modal where you can easily change the link at your cursor, or if there is no link at your cursor, create a new one. You can set the link text, and make the link destination a URL, file, heading, or block reference. You can set the link type to wikilink or markdown format, and chose to embed the link content in your page. No hand-editing. No mismatched brackets.
 
-##### Link Editor Defaults
+##### Link Editor Defaults and Completions
 
 Convenient link text and destination defaults make the job easier:
 
-<figure style="float: right; width: 52%; margin-left: 1rem; text-align: center; border: 1px solid #ccc;">
-  <img src="images/4_link_editor_autocompletes.png" width="80%" />
+<figure style="float: right; width: 55%; margin-left: 1rem; text-align: center;">
+  <img src="images/4_link_editor_autocompletes.png" width="100%" />
   <figcaption>
-    <b>Link editor destination autocompletes</b>
+    Link editor destination completion
   </figcaption>
 </figure>
 
-**Wikilink Destination Completion** field like the standard obsidian `[[` operator: files in your vault, headings within notes, and block references. you can type patterns like `Note#Heading` or `Note#^block` to jump directly to a heading or block in a specific note, or start with `#` / `^` to target headings and blocks in the current note. If your cursor is on a URL, or if your clipboard contains one, it will be put in the destination field and adjusted as needed.
+*Wikilink Destination Completion* field like the standard obsidian `[[` operator: files in your vault, headings within notes, and block references. you can type patterns like `Note#Heading` or `Note#^block` to jump directly to a heading or block in a specific note, or start with `#` / `^` to target headings and blocks in the current note. If your cursor is on a URL, or if your clipboard contains one, it will be put in the destination field and adjusted as needed.
 
-The **Link Text** field will autocomplete to selected text when you have a URL in your clipboard or at your cursor. For wikilinks, Matching note aliases from frontmatter are also included, and when you pick an alias suggestion the link still points to the real note. When you choose a note alias in the destination suggestions, the modal can automatically use that alias as the visible link text so you do not have to copy it by hand.
+The *Link Text* field will autocomplete to selected text when you have a URL in your clipboard or at your cursor. For wikilinks, Matching note aliases from frontmatter are also included, and when you pick an alias suggestion the link still points to the real note. When you choose a note alias in the destination suggestions, the modal can automatically use that alias as the visible link text so you do not have to copy it by hand.
 
 <a name="steady_links_commands"></a>
 
 ### Steady Links Commands
 
-Commands for opening the link editor, and for easier link manipulation if you happen to prefer Obsidian's default link expanding behavior (`Keep links steady` setting is `false`)
+== SHOULD BE AFTER LINK EDITOR EXPLANATION==
+
+== RENAME COMMANDS TO COLLAPSE/EXPAND ==
+
+These are commands for opening the link editor, and for easier link manipulation, if you prefer Obsidian's default link expanding behavior (what you get when the `Keep links steady` setting is `false`)
 
 | Command                | Description                                                             | Suggested Hotkey | ID                                |
 | ---------------------- | ----------------------------------------------------------------------- | ---------------- | --------------------------------- |
 | **Edit Link**          | Modal to create a new link or to edit the one at the cursor             | Ctrl + K         | `steady-links:edit-link`          |
 | **Skip Link**          | Moves the cursor past the current link, avoiding link syntax navigation | Alt + K          | `steady-links:skip-link`          |
-| **Toggle Link Syntax** | Toggle between shown and hidden link syntax (Live Preview)              | Ctrl + Shift + L | `steady-links:toggle-link-syntax` |
-| **Show Link Syntax**   | Temporarily reveals the full raw link at the cursor (Live Preview)      | Alt + S          | `steady-links:show-link-syntax`   |
-| **Hide Link Syntax**   | Collapses the link syntax back to only link text (Live Preview)         | Alt + H          | `steady-links:hide-link-syntax`   |
+| **Toggle Link Syntax** | Toggle between expanded and collapsed link syntax (Live Preview)              | Ctrl + Shift + L | `steady-links:toggle-link-syntax` |
+| **Show Link Syntax**   | Temporarily expands the link at ursor (Live Preview)      | Alt + S          | `steady-links:show-link-syntax`   |
+| **Hide Link Syntax**   | Collapses the link at cursor (Live Preview)         | Alt + H          | `steady-links:hide-link-syntax`   |
 
 ## Editing Policy for Hidden Links
 
@@ -84,6 +91,8 @@ Turn on **Keep links steady**. That's it—links in Live Preview will no longer 
 When you need to change where a link points, put your cursor on it and run **Edit Link** from the Command Palette (`Ctrl/Cmd + P`). The modal opens pre-filled with the current link's details. Change what you need, hit `Enter`, and you're done.
 
 ## The Edit Link Modal
+
+== THIS BELONGS ABOVE, AT THE TOP==
 
 When you run `Edit Link` with your cursor on an existing Markdown link or WikiLink, the modal opens with that link's current text, destination, format, and embed state already filled in.
 
