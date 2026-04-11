@@ -125,42 +125,42 @@ export default class SteadyLinksPlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: "hide-link-syntax",
-			name: "Hide Link Syntax",
+			id: "collapse-link",
+			name: "Collapse Link",
 			editorCallback: (editor: Editor, view: MarkdownView) => {
 				// In source mode, there's no link syntax hiding - do nothing
 				if (this.isSourceMode(view)) {
 					return;
 				}
-				this.hideLinkSyntax(editor, view);
+				this.collapseLink(editor, view);
 			},
 		});
 
 		this.addCommand({
-			id: "show-link-syntax",
-			name: "Show Link Syntax",
+			id: "expand-link",
+			name: "Expand Link",
 			editorCallback: (editor: Editor, view: MarkdownView) => {
 				// In source mode, there's no link syntax hiding - do nothing
 				if (this.isSourceMode(view)) {
 					return;
 				}
-				this.showLinkSyntax(editor, view);
+				this.expandLink(editor, view);
 			},
 		});
 
 		this.addCommand({
-			id: "toggle-link-syntax",
-			name: "Toggle Link Syntax",
+			id: "toggle-link-expand",
+			name: "Toggle Link Expand",
 			editorCallback: (editor: Editor, view: MarkdownView) => {
 				// In source mode, there's no link syntax hiding - do nothing
 				if (this.isSourceMode(view)) {
 					return;
 				}
 
-				// When "keep links steady" is disabled, behave like Hide Link Syntax
+				// When "keep links steady" is disabled, behave like Collapse Link
 				// This preserves muscle memory for users who developed it while the setting was enabled
 				if (!this.settings.keepLinksSteady) {
-					this.hideLinkSyntax(editor, view);
+					this.collapseLink(editor, view);
 					return;
 				}
 
@@ -173,11 +173,11 @@ export default class SteadyLinksPlugin extends Plugin {
 				const currentVisible = cm6View.state.field(temporarilyVisibleLinkField, false);
 
 				if (currentVisible) {
-					// Link is shown, hide it
-					this.hideLinkSyntax(editor, view);
+					// Link is shown, collapse it
+					this.collapseLink(editor, view);
 				} else {
-					// Link is hidden, show it
-					this.showLinkSyntax(editor, view);
+					// Link is collapsed, expand it
+					this.expandLink(editor, view);
 				}
 			},
 		});
@@ -250,11 +250,11 @@ export default class SteadyLinksPlugin extends Plugin {
 	}
 
 	/**
-	 * Show the link syntax at the current cursor position.
-	 * Used by both "Show Link Syntax" and "Toggle Link Syntax" commands.
+	 * Expand the link syntax at the current cursor position.
+	 * Used by both "Expand Link" and "Toggle Link Expand" commands.
 	 * Only works in live preview mode when "keep links steady" is enabled.
 	 */
-	private showLinkSyntax(editor: Editor, view: MarkdownView): void {
+	private expandLink(editor: Editor, view: MarkdownView): void {
 		// This command only makes sense when "keep links steady" is enabled
 		if (!this.settings.keepLinksSteady) {
 			return;
@@ -311,13 +311,13 @@ export default class SteadyLinksPlugin extends Plugin {
 	}
 
 	/**
-	 * Hide the link syntax at the current cursor position.
-	 * Used by both "Hide Link Syntax" and "Toggle Link Syntax" commands.
+	 * Collapse the link syntax at the current cursor position.
+	 * Used by both "Collapse Link" and "Toggle Link Expand" commands.
 	 *
 	 * When "keep links steady" is ON: cursor stays on link for easy toggling
-	 * When "keep links steady" is OFF: cursor skips off link to prevent re-expansion
+	 * When "keep links steady" is OFF: cursor skips off link to prevent automatic re-expansion
 	 */
-	private hideLinkSyntax(editor: Editor, view: MarkdownView): void {
+	private collapseLink(editor: Editor, view: MarkdownView): void {
 		const cursor = editor.getCursor();
 		const line = editor.getLine(cursor.line);
 

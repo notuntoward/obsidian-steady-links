@@ -1,19 +1,19 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { Editor, MarkdownView } from 'obsidian';
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { Editor, MarkdownView } from "obsidian";
 
 // Mock the utils and modalLogic modules before importing
-vi.mock('../src/utils', () => ({
+vi.mock("../src/utils", () => ({
 	detectLinkAtCursor: vi.fn(),
 }));
 
-vi.mock('../src/modalLogic', () => ({
+vi.mock("../src/modalLogic", () => ({
 	computeSkipCursorPosition: vi.fn(),
 }));
 
-vi.mock('../src/linkSyntaxHider', () => ({
+vi.mock("../src/linkSyntaxHider", () => ({
 	findLinkRangeAtPos: vi.fn(),
 	setTemporarilyVisibleLink: {
-		of: vi.fn((value) => ({ type: 'setTemporarilyVisibleLink', value })),
+		of: vi.fn((value) => ({ type: "setTemporarilyVisibleLink", value })),
 	},
 	temporarilyVisibleLinkField: {
 		create: vi.fn(() => null),
@@ -21,9 +21,9 @@ vi.mock('../src/linkSyntaxHider', () => ({
 }));
 
 // Import the mocked functions
-import { detectLinkAtCursor } from '../src/utils';
-import { computeSkipCursorPosition } from '../src/modalLogic';
-import { temporarilyVisibleLinkField } from '../src/linkSyntaxHider';
+import { detectLinkAtCursor } from "../src/utils";
+import { computeSkipCursorPosition } from "../src/modalLogic";
+import { temporarilyVisibleLinkField } from "../src/linkSyntaxHider";
 
 // Get references to the mocked functions
 const mockDetectLinkAtCursor = detectLinkAtCursor as any;
@@ -48,15 +48,15 @@ const mockView = {} as MarkdownView;
 // Command Tests
 // ============================================================================
 
-describe('hide-link-syntax command', () => {
+describe("collapse-link command", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 	});
 
-	it('should do nothing when no link is detected at cursor', () => {
+	it("should do nothing when no link is detected at cursor", () => {
 		// Arrange
 		mockGetCursor.mockReturnValue({ line: 0, ch: 5 });
-		mockGetLine.mockReturnValue('Some text without links');
+		mockGetLine.mockReturnValue("Some text without links");
 		mockDetectLinkAtCursor.mockReturnValue(null);
 
 		// Act - simulate the command callback
@@ -70,17 +70,17 @@ describe('hide-link-syntax command', () => {
 		expect(mockComputeSkipCursorPosition).not.toHaveBeenCalled();
 	});
 
-	it('should skip over link when cursor is at link position', () => {
+	it("should skip over link when cursor is at link position", () => {
 		// Arrange
 		const cursorPos = { line: 0, ch: 10 };
 		const skipPos = { line: 0, ch: 20 };
 
 		mockGetCursor.mockReturnValue(cursorPos);
-		mockGetLine.mockReturnValue('Some [link](dest) text');
+		mockGetLine.mockReturnValue("Some [link](dest) text");
 		mockLineCount.mockReturnValue(1);
 
 		mockDetectLinkAtCursor.mockReturnValue({
-			link: { text: 'link', destination: 'dest', isWiki: false, isEmbed: false },
+			link: { text: "link", destination: "dest", isWiki: false, isEmbed: false },
 			start: 5,
 			end: 17,
 			enteredFromLeft: true,
@@ -121,17 +121,17 @@ describe('hide-link-syntax command', () => {
 		expect(mockSetCursor).toHaveBeenCalledWith(skipPos);
 	});
 
-	it('should handle wiki links correctly', () => {
+	it("should handle wiki links correctly", () => {
 		// Arrange
 		const cursorPos = { line: 0, ch: 8 };
 		const skipPos = { line: 0, ch: 15 };
 
 		mockGetCursor.mockReturnValue(cursorPos);
-		mockGetLine.mockReturnValue('See [[Notes]] here');
+		mockGetLine.mockReturnValue("See [[Notes]] here");
 		mockLineCount.mockReturnValue(1);
 
 		mockDetectLinkAtCursor.mockReturnValue({
-			link: { text: 'Notes', destination: 'Notes', isWiki: true, isEmbed: false },
+			link: { text: "Notes", destination: "Notes", isWiki: true, isEmbed: false },
 			start: 4,
 			end: 13,
 			enteredFromLeft: false,
@@ -174,34 +174,34 @@ describe('hide-link-syntax command', () => {
 });
 
 // ============================================================================
-// Toggle Link Syntax Command Tests
+// Toggle Link Expand Command Tests
 // ============================================================================
 
-describe('toggle-link-syntax command', () => {
+describe("toggle-link-expand command", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 	});
 
-	it('should do nothing in source mode', () => {
+	it("should do nothing in source mode", () => {
 		// In source mode, there's no link syntax hiding - commands should do nothing
 		// This is checked before any other logic
 		const isSourceMode = true;
-		
+
 		// The command should return early without doing anything
 		expect(isSourceMode).toBe(true);
 	});
 
-	it('should show link syntax when link is hidden (no temporarily visible link)', () => {
+	it("should show link syntax when link is hidden (no temporarily visible link)", () => {
 		// This tests the logic flow: when keepLinksSteady is ON and no link is temporarily visible,
 		// the toggle command should show the link syntax
-		
+
 		// Arrange
 		const cursorPos = { line: 0, ch: 10 };
 		mockGetCursor.mockReturnValue(cursorPos);
-		mockGetLine.mockReturnValue('Some [link](dest) text');
-		
+		mockGetLine.mockReturnValue("Some [link](dest) text");
+
 		mockDetectLinkAtCursor.mockReturnValue({
-			link: { text: 'link', destination: 'dest', isWiki: false, isEmbed: false },
+			link: { text: "link", destination: "dest", isWiki: false, isEmbed: false },
 			start: 5,
 			end: 17,
 			enteredFromLeft: true,
@@ -209,7 +209,7 @@ describe('toggle-link-syntax command', () => {
 
 		// The toggle command checks temporarilyVisibleLinkField which returns null (no visible link)
 		// Then it calls showLinkSyntax which dispatches the effect
-		
+
 		// Assert - verify the detection was called
 		const cursor = mockEditor.getCursor();
 		const line = mockEditor.getLine(cursor.line);
@@ -217,25 +217,25 @@ describe('toggle-link-syntax command', () => {
 		expect(existingLink).not.toBeNull();
 	});
 
-	it('should hide link syntax when link is shown (temporarily visible link exists)', () => {
+	it("should hide link syntax when link is shown (temporarily visible link exists)", () => {
 		// This tests the logic flow: when keepLinksSteady is ON and a link is temporarily visible,
 		// the toggle command should hide the link syntax
-		
+
 		// Arrange
 		const cursorPos = { line: 0, ch: 10 };
 		const skipPos = { line: 0, ch: 20 };
-		
+
 		mockGetCursor.mockReturnValue(cursorPos);
-		mockGetLine.mockReturnValue('Some [link](dest) text');
+		mockGetLine.mockReturnValue("Some [link](dest) text");
 		mockLineCount.mockReturnValue(1);
-		
+
 		mockDetectLinkAtCursor.mockReturnValue({
-			link: { text: 'link', destination: 'dest', isWiki: false, isEmbed: false },
+			link: { text: "link", destination: "dest", isWiki: false, isEmbed: false },
 			start: 5,
 			end: 17,
 			enteredFromLeft: true,
 		});
-		
+
 		mockComputeSkipCursorPosition.mockReturnValue(skipPos);
 
 		// Act - simulate hide behavior
@@ -262,36 +262,36 @@ describe('toggle-link-syntax command', () => {
 });
 
 // ============================================================================
-// Show/Hide Link Syntax in Source Mode Tests
+// Expand/Collapse Link in Source Mode Tests
 // ============================================================================
 
-describe('show/hide link syntax in source mode', () => {
-	it('show-link-syntax should do nothing in source mode', () => {
+describe("expand/collapse link in source mode", () => {
+	it("expand-link should do nothing in source mode", () => {
 		// In source mode, there's no link syntax hiding
 		// The command should return early
 		const isSourceMode = true;
 		const keepLinksSteady = true;
-		
+
 		// Even with keepLinksSteady ON, in source mode the command does nothing
 		const shouldDoNothing = isSourceMode;
 		expect(shouldDoNothing).toBe(true);
 	});
 
-	it('hide-link-syntax should do nothing in source mode', () => {
+	it("collapse-link should do nothing in source mode", () => {
 		// In source mode, there's no link syntax hiding
 		// The command should return early
 		const isSourceMode = true;
-		
+
 		// The command should return early without doing anything
 		const shouldDoNothing = isSourceMode;
 		expect(shouldDoNothing).toBe(true);
 	});
 
-	it('toggle-link-syntax should do nothing in source mode', () => {
+	it("toggle-link-expand should do nothing in source mode", () => {
 		// In source mode, there's no link syntax hiding
 		// The command should return early
 		const isSourceMode = true;
-		
+
 		// The command should return early without doing anything
 		const shouldDoNothing = isSourceMode;
 		expect(shouldDoNothing).toBe(true);
@@ -302,8 +302,8 @@ describe('show/hide link syntax in source mode', () => {
 // isSourceMode Helper Tests
 // ============================================================================
 
-describe('isSourceMode helper', () => {
-	it('should return true when cm6 view is not available', () => {
+describe("isSourceMode helper", () => {
+	it("should return true when cm6 view is not available", () => {
 		// When there's no CM6 view (e.g., reading view), treat as source mode
 		const editorWithoutCm = {
 			getCursor: mockGetCursor,
@@ -311,18 +311,18 @@ describe('isSourceMode helper', () => {
 			getLine: mockGetLine,
 			lineCount: mockLineCount,
 		} as unknown as Editor;
-		
+
 		// The isSourceMode function checks for (editor as any).cm
 		expect((editorWithoutCm as any).cm).toBeUndefined();
 	});
 
-	it('should return true when is-source-mode class is present', () => {
+	it("should return true when is-source-mode class is present", () => {
 		// This would be tested with a proper DOM mock in a real test environment
 		// For now, we verify the logic conceptually
 		expect(true).toBe(true);
 	});
 
-	it('should return false when is-live-preview class is present', () => {
+	it("should return false when is-live-preview class is present", () => {
 		// This would be tested with a proper DOM mock in a real test environment
 		expect(true).toBe(true);
 	});
@@ -332,15 +332,15 @@ describe('isSourceMode helper', () => {
 // shouldSkipOffLink Helper Tests
 // ============================================================================
 
-describe('shouldSkipOffLink helper', () => {
-	it('should return true when keepLinksSteady is OFF', () => {
+describe("shouldSkipOffLink helper", () => {
+	it("should return true when keepLinksSteady is OFF", () => {
 		// When keepLinksSteady setting is false, should always skip
 		const keepLinksSteady = false;
 		const shouldSkip = !keepLinksSteady;
 		expect(shouldSkip).toBe(true);
 	});
 
-	it('should return false when keepLinksSteady is ON and in live preview', () => {
+	it("should return false when keepLinksSteady is ON and in live preview", () => {
 		// When keepLinksSteady is ON and in live preview, should NOT skip
 		const keepLinksSteady = true;
 		const isSourceMode = false;
@@ -348,7 +348,7 @@ describe('shouldSkipOffLink helper', () => {
 		expect(shouldSkip).toBe(false);
 	});
 
-	it('should return true when keepLinksSteady is ON but in source mode', () => {
+	it("should return true when keepLinksSteady is ON but in source mode", () => {
 		// When keepLinksSteady is ON but in source mode, should skip
 		const keepLinksSteady = true;
 		const isSourceMode = true;

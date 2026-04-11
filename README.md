@@ -23,6 +23,7 @@ In stock Obsidian, your place in the text shifts and you can end up lines away f
 ### What Steady Links Does
 
 #### Keeps Links Steady
+
 Enable `Keep links steady` in this plugin's settings, and then in Live Preview, links will stop expanding when your cursor touches them. Only the link text is visible, and you can can edit it normally, while the underlying link syntax and destination stay out of your way (as in e.g. gmail). For a quick syntax check, or if you prefer to not `Keep links steady`, then see the still-useful [Steady Links Commands](#steady_links_commands).
 
 #### Link Editor
@@ -49,9 +50,9 @@ Convenient link text and destination defaults make the job easier:
   </figcaption>
 </figure>
 
-*Wikilink Destination Completion* field like the standard obsidian `[[` operator: files in your vault, headings within notes, and block references. you can type patterns like `Note#Heading` or `Note#^block` to jump directly to a heading or block in a specific note, or start with `#` / `^` to target headings and blocks in the current note. If your cursor is on a URL, or if your clipboard contains one, it will be put in the destination field and adjusted as needed.
+_Wikilink Destination Completion_ field like the standard obsidian `[[` operator: files in your vault, headings within notes, and block references. you can type patterns like `Note#Heading` or `Note#^block` to jump directly to a heading or block in a specific note, or start with `#` / `^` to target headings and blocks in the current note. If your cursor is on a URL, or if your clipboard contains one, it will be put in the destination field and adjusted as needed.
 
-The *Link Text* field will autocomplete to selected text when you have a URL in your clipboard or at your cursor. For wikilinks, Matching note aliases from frontmatter are also included, and when you pick an alias suggestion the link still points to the real note. When you choose a note alias in the destination suggestions, the modal can automatically use that alias as the visible link text so you do not have to copy it by hand.
+The _Link Text_ field will autocomplete to selected text when you have a URL in your clipboard or at your cursor. For wikilinks, Matching note aliases from frontmatter are also included, and when you pick an alias suggestion the link still points to the real note. When you choose a note alias in the destination suggestions, the modal can automatically use that alias as the visible link text so you do not have to copy it by hand.
 
 <a name="steady_links_commands"></a>
 
@@ -67,9 +68,9 @@ These are commands for opening the link editor, and for easier link manipulation
 | ---------------------- | ----------------------------------------------------------------------- | ---------------- | --------------------------------- |
 | **Edit Link**          | Modal to create a new link or to edit the one at the cursor             | Ctrl + K         | `steady-links:edit-link`          |
 | **Skip Link**          | Moves the cursor past the current link, avoiding link syntax navigation | Alt + K          | `steady-links:skip-link`          |
-| **Toggle Link Syntax** | Toggle between expanded and collapsed link syntax (Live Preview)              | Ctrl + Shift + L | `steady-links:toggle-link-syntax` |
-| **Show Link Syntax**   | Temporarily expands the link at ursor (Live Preview)      | Alt + S          | `steady-links:show-link-syntax`   |
-| **Hide Link Syntax**   | Collapses the link at cursor (Live Preview)         | Alt + H          | `steady-links:hide-link-syntax`   |
+| **Toggle Link Expand** | Toggle between expanded and collapsed link syntax (Live Preview)        | Ctrl + Shift + L | `steady-links:toggle-link-expand` |
+| **Expand Link**        | Temporarily expands the link at cursor (Live Preview)                   | Alt + S          | `steady-links:expand-link`        |
+| **Collapse Link**      | Collapses the link at cursor (Live Preview)                             | Alt + H          | `steady-links:collapse-link`      |
 
 ## Editing Policy for Hidden Links
 
@@ -139,13 +140,13 @@ Tab accepts the current suggestion. `Ctrl+N`/`Ctrl+P` navigate the list.
 | Command                | What It Does                                                                                    |
 | ---------------------- | ----------------------------------------------------------------------------------------------- |
 | **Skip Link**          | Jumps the cursor past the current link. Handy when a link expands and you just want to move on. |
-| **Hide Link Syntax**   | Collapses the link at your cursor back to its display text.                                     |
-| **Show Link Syntax**   | Reveals the full syntax of the link at your cursor.                                             |
-| **Toggle Link Syntax** | Flips between shown and hidden. One hotkey for both directions.                                 |
+| **Collapse Link**      | Collapses the link at your cursor back to its display text.                                     |
+| **Expand Link**        | Reveals the full syntax of the link at your cursor.                                             |
+| **Toggle Link Expand** | Flips between shown and hidden. One hotkey for both directions.                                 |
 
 These commands work in Live Preview mode. In Source mode, syntax is always visible, so they're not needed; **Edit Link** is the only tool you need.
 
-> **Tip:** Bind _Toggle Link Syntax_ to a hotkey for quick peeking at link destinations without opening the modal. Bind _Skip Link_ if you keep "Keep links steady" off but want a fast escape hatch when a link expands.
+> **Tip:** Bind _Toggle Link Expand_ to a hotkey for quick peeking at link destinations without opening the modal. Bind _Skip Link_ if you keep "Keep links steady" off but want a fast escape hatch when a link expands.
 
 ## Use Cases
 
@@ -156,7 +157,7 @@ Turn on "Keep links steady." Endit link text like any other text. Options below 
 Use _Edit Link_. The modal handles formatting, suggests files and headings, and validates your input.
 
 **"I like the default link-expanding behavior, but sometimes I want to collapse a link quickly."**
-Leave the setting off. Use _Hide Link Syntax_ or _Toggle Link Syntax_ when you need a link to settle down.
+Leave the setting off. Use _Collapse Link_ or _Toggle Link Expand_ when you need a link to settle down.
 
 **"I have a URL on my clipboard and want to turn selected text into a link."**
 Select the text, run _Edit Link_. The URL is pre-filled from your clipboard.
