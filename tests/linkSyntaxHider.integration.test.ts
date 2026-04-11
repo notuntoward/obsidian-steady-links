@@ -57,6 +57,12 @@ function createTestView(doc: string, cursorPos: number): EditorView {
 	return view;
 }
 
+function copiedText(view: EditorView): string {
+	const text = view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to);
+	const filters = view.state.facet(EditorView.clipboardOutputFilter);
+	return filters.reduce((value, filter) => filter(value, view.state), text);
+}
+
 /**
  * Dispatch a selection change through the real extension pipeline.
  */
@@ -420,6 +426,63 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			});
 
 			expect(view.state.doc.toString()).toBe("after");
+			expect(view.state.selection.main.head).toBe(0);
+		});
+
+		it("clipboard copy of a Home-originated full-line wikilink selection includes opening brackets", () => {
+			const doc = "[[Voting Systems in WA State]]";
+			view = createTestView(doc, doc.length);
+
+			handleHomeKey(view, false);
+			view.dispatch({ selection: EditorSelection.range(2, doc.length) });
+
+			expect(copiedText(view)).toBe(doc);
+		});
+
+		it("clipboard copy of a Home-originated full-line markdown selection includes opening bracket", () => {
+			const doc = "[Voting Systems in WA State](https://example.com)";
+			view = createTestView(doc, doc.length);
+
+			handleHomeKey(view, false);
+			view.dispatch({ selection: EditorSelection.range(1, doc.length) });
+
+			expect(copiedText(view)).toBe(doc);
+		});
+
+		it("deletes a line-start wikilink after Home-style selection to line end", () => {
+			view = createTestView("[[Voting Systems in WA State]]", 29);
+
+			handleHomeKey(view, false);
+			view.dispatch({
+				selection: EditorSelection.range(2, 29),
+			});
+
+			view.dispatch({
+				changes: { from: 2, to: 29, insert: "" },
+				selection: EditorSelection.cursor(2),
+				annotations: [Transaction.userEvent.of("delete")],
+			});
+
+			expect(view.state.doc.toString()).toBe("");
+			expect(view.state.selection.main.head).toBe(0);
+		});
+
+		it("deletes a line-start markdown link after Home-style selection to line end", () => {
+			const doc = "[Voting Systems in WA State](https://example.com)";
+			view = createTestView(doc, doc.length);
+
+			handleHomeKey(view, false);
+			view.dispatch({
+				selection: EditorSelection.range(1, doc.length),
+			});
+
+			view.dispatch({
+				changes: { from: 1, to: doc.length, insert: "" },
+				selection: EditorSelection.cursor(1),
+				annotations: [Transaction.userEvent.of("delete")],
+			});
+
+			expect(view.state.doc.toString()).toBe("");
 			expect(view.state.selection.main.head).toBe(0);
 		});
 	});

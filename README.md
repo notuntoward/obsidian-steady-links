@@ -18,7 +18,8 @@ When you arrow-key through a note in stock Obsidian, every link you touch expand
 </div>
 
 <br>
-In stock Obsidian, your place in the text shifts and you can end up lines away from the link text you may or may not have wanted to edit. Besides this *where did my cursor go?* moment, it's a messy chore, keyboarding through long URLs and manually editing link syntax.
+
+In stock Obsidian, link expansion can interrupt keyboard-based navigation; touching a link – that you may or may not have wanted to edit – can suddenly shift you lines away. Besides the *where did my cursor go?* moment, keyboarding through long URLs and manually editing link syntax is tedious.
 
 ### What Steady Links Does
 
@@ -50,27 +51,29 @@ Convenient link text and destination defaults make the job easier:
   </figcaption>
 </figure>
 
-_Wikilink Destination Completion_ field like the standard obsidian `[[` operator: files in your vault, headings within notes, and block references. you can type patterns like `Note#Heading` or `Note#^block` to jump directly to a heading or block in a specific note, or start with `#` / `^` to target headings and blocks in the current note. If your cursor is on a URL, or if your clipboard contains one, it will be put in the destination field and adjusted as needed.
+*Wikilink Destination Completion* field like the standard obsidian `[[` operator: files in your vault, headings within notes, and block references. you can type patterns like `Note#Heading` or `Note#^block` to jump directly to a heading or block in a specific note, or start with `#` / `^` to target headings and blocks in the current note. If your cursor is on a URL, or if your clipboard contains one, it will be put in the destination field and adjusted as needed.
 
 The _Link Text_ field will autocomplete to selected text when you have a URL in your clipboard or at your cursor. For wikilinks, Matching note aliases from frontmatter are also included, and when you pick an alias suggestion the link still points to the real note. When you choose a note alias in the destination suggestions, the modal can automatically use that alias as the visible link text so you do not have to copy it by hand.
 
 <a name="steady_links_commands"></a>
 
+== VERIFY THAT CAN CLICK ON LINKS ==
+== vERIFY THAT CAN KEYBOARD CLICK ON LINKS ==
+== USE OBSIDIAN HOTKEYS FOR LONK FOLLOWING ==
+
 ### Steady Links Commands
 
 == SHOULD BE AFTER LINK EDITOR EXPLANATION==
-
-== RENAME COMMANDS TO COLLAPSE/EXPAND ==
 
 These are commands for opening the link editor, and for easier link manipulation, if you prefer Obsidian's default link expanding behavior (what you get when the `Keep links steady` setting is `false`)
 
 | Command                | Description                                                             | Suggested Hotkey | ID                                |
 | ---------------------- | ----------------------------------------------------------------------- | ---------------- | --------------------------------- |
 | **Edit Link**          | Modal to create a new link or to edit the one at the cursor             | Ctrl + K         | `steady-links:edit-link`          |
-| **Skip Link**          | Moves the cursor past the current link, avoiding link syntax navigation | Alt + K          | `steady-links:skip-link`          |
-| **Toggle Link Expand** | Toggle between expanded and collapsed link syntax (Live Preview)        | Ctrl + Shift + L | `steady-links:toggle-link-expand` |
-| **Expand Link**        | Temporarily expands the link at cursor (Live Preview)                   | Alt + S          | `steady-links:expand-link`        |
-| **Collapse Link**      | Collapses the link at cursor (Live Preview)                             | Alt + H          | `steady-links:collapse-link`      |
+| **Skip Link**          | Moves the cursor past the current link, avoiding link expansion| Alt + S          | `steady-links:skip-link`          |
+| **Toggle Link Expand** | Toggle between expanded and collapsed link       | Alt + T | `steady-links:toggle-link-expand` |
+| **Expand Link**        | Temporarily expands the link at cursor                   | Alt + E          | `steady-links:expand-link`        |
+| **Collapse Link**      | Collapses the link at cursor                             | Alt + C          | `steady-links:collapse-link`      |
 
 ## Editing Policy for Hidden Links
 

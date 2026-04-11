@@ -1845,6 +1845,57 @@ function buildVisibleLinkSpans(hidden: HiddenRange[], doc?: EditorState["doc"]):
 	return spans;
 }
 
+function expandSelectionRangeToFullLinks(
+	from: number,
+	to: number,
+	links: LinkSpan[]
+): { from: number; to: number } {
+	let expandedFrom = from;
+	let expandedTo = to;
+	let changed = false;
+
+	for (const link of links) {
+		const startsInsideVisibleText = from > link.from && from <= link.textFrom;
+		const endsInsideTrailingSyntax = to >= link.textTo && to < link.to;
+
+		if (startsInsideVisibleText && to >= link.textTo) {
+			expandedFrom = Math.min(expandedFrom, link.from);
+			changed = true;
+		}
+
+		if (endsInsideTrailingSyntax && from <= link.textFrom) {
+			expandedTo = Math.max(expandedTo, link.to);
+			changed = true;
+		}
+	}
+
+	if (!changed) {
+		return { from, to };
+	}
+
+	return expandSelectionRangeToFullLinks(expandedFrom, expandedTo, links);
+}
+
+function expandSelectionTextToFullLinks(text: string, state: EditorState): string {
+	if (!text) return text;
+
+	const hidden = state.field(hiddenRangesField, false);
+	if (!hidden || hidden.length === 0) return text;
+
+	const links = buildLinkSpans(hidden);
+	if (links.length === 0) return text;
+
+	const sel = state.selection.main;
+	if (sel.empty) return text;
+
+	const expanded = expandSelectionRangeToFullLinks(sel.from, sel.to, links);
+	if (expanded.from === sel.from && expanded.to === sel.to) {
+		return text;
+	}
+
+	return state.sliceDoc(expanded.from, expanded.to);
+}
+
 function buildLinkSpans(hidden: HiddenRange[]): LinkSpan[] {
 	return buildVisibleLinkSpans(hidden).map(({ from, to, textFrom, textTo }) => ({
 		from,
@@ -1881,6 +1932,9 @@ function rewriteDeleteChangeForLinks(change: ChangeSpec, links: LinkSpan[]): Cha
 	if (change.insert !== "" || change.from >= change.to) {
 		return [change];
 	}
+
+	const expandedChange = expandSelectionRangeToFullLinks(change.from, change.to, links);
+	change = { ...change, ...expandedChange };
 
 	const overlappingLinks = links.filter((link) => change.from < link.to && change.to > link.from);
 	if (overlappingLinks.length === 0) {
@@ -2354,6 +2408,7 @@ export function createLinkSyntaxHiderExtension() {
 		Prec.highest(cursorCorrector),
 		Prec.highest(suppressSuggestAfterDeleteListener),
 		Prec.highest(boundaryInputSuppressor),
+		EditorView.clipboardOutputFilter.of(expandSelectionTextToFullLinks),
 		Prec.highest(homeKeyKeymap),
 		Prec.highest(deleteSelectionKeymap),
 		Prec.highest(deleteInLinkTextKeymap),
