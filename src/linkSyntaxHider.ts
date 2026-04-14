@@ -65,6 +65,37 @@ interface ChangeSpec {
 	insert: string;
 }
 
+const STEADY_LINKS_DEBUG = false;
+
+function debugLog(label: string, details: Record<string, unknown>): void {
+	if (!STEADY_LINKS_DEBUG || typeof console === "undefined") return;
+	console.log(`[SteadyLinks debug] ${label}`, details);
+}
+
+function traceFilter(
+	filterName: string,
+	tr: Transaction,
+	action: string,
+	extra?: Record<string, unknown>
+): void {
+	if (!STEADY_LINKS_DEBUG || typeof console === "undefined") return;
+	const changes: { from: number; to: number; insert: string }[] = [];
+	tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+		changes.push({ from: fromA, to: toA, insert: inserted.toString().substring(0, 30) });
+	});
+	const sel = tr.startState.selection.main;
+	console.log(`[SteadyLinks TRACE] ${filterName}: ${action}`, {
+		userEvent: tr.annotation(Transaction.userEvent) ?? null,
+		selFrom: sel.from,
+		selTo: sel.to,
+		selEmpty: sel.empty,
+		isPureDelete: isPureDeleteTransaction(tr),
+		changes,
+		hasRewrittenEffect: tr.effects.some((e) => e.is(rewrittenSelectionDelete)),
+		...(extra ?? {}),
+	});
+}
+
 function findPreviousWordBoundary(text: string, from: number, to: number): number {
 	let pos = Math.max(from, Math.min(to, text.length));
 
@@ -113,6 +144,24 @@ const suppressSuggestAfterVisibleDelete = StateEffect.define<null>();
 // (outside → textFrom) from a genuine left-arrow press (textFrom ← inside).
 // When Obsidian then normalises textFrom → leading.from with no userEvent,
 // we use this field to suppress the left-bounce to leading.from - 1.
+// Marks that Home/Ctrl+A placed the cursor at leading.from intentionally
+// so that external APIs (editor.getCursor()) return ch:0 for kill-line.
+// The cursor corrector must NOT bounce to prev-line or snap to textFrom
+// while this is set.
+const intentionalLeadingFromEffect = StateEffect.define<number | null>();
+const intentionalLeadingFromField = StateField.define<number | null>({
+	create() {
+		return null;
+	},
+	update(value, tr) {
+		for (const e of tr.effects) {
+			if (e.is(intentionalLeadingFromEffect)) return e.value;
+		}
+		if (tr.selection) return null;
+		return value;
+	},
+});
+
 const arrivedAtTextFromFromOutsideEffect = StateEffect.define<boolean>();
 const arrivedAtTextFromFromOutsideField = StateField.define<boolean>({
 	create() {
@@ -127,6 +176,35 @@ const arrivedAtTextFromFromOutsideField = StateField.define<boolean>({
 		return value;
 	},
 });
+
+interface PendingExternalSelectionExpansion {
+	from: number;
+	to: number;
+}
+
+const setPendingExternalSelectionExpansion =
+	StateEffect.define<PendingExternalSelectionExpansion | null>();
+const pendingExternalSelectionExpansionField =
+	StateField.define<PendingExternalSelectionExpansion | null>({
+		create() {
+			return null;
+		},
+		update(value, tr) {
+			for (const e of tr.effects) {
+				if (e.is(setPendingExternalSelectionExpansion)) return e.value;
+			}
+
+			if (tr.selection) {
+				const sel = tr.state.selection.main;
+				if (!sel.empty && value && sel.from === value.from && sel.to === value.to) {
+					return value;
+				}
+				return null;
+			}
+
+			return value;
+		},
+	});
 
 // State effect to temporarily show a specific link's syntax
 const setTemporarilyVisibleLink = StateEffect.define<LinkRange | null>();
@@ -190,6 +268,28 @@ const suppressNextBoundaryInputField = StateField.define<number | null>({
 		if (tr.selection && value !== null) {
 			const main = tr.state.selection.main;
 			if (!main.empty || main.head !== value) {
+				return null;
+			}
+		}
+
+		return value;
+	},
+});
+
+const suppressSameLineCursorResetEffect = StateEffect.define<number | null>();
+
+const suppressSameLineCursorResetField = StateField.define<number | null>({
+	create() {
+		return null;
+	},
+	update(value, tr) {
+		for (const e of tr.effects) {
+			if (e.is(suppressSameLineCursorResetEffect)) return e.value;
+		}
+
+		if (tr.selection && value !== null) {
+			const main = tr.state.selection.main;
+			if (!main.empty && main.from !== value) {
 				return null;
 			}
 		}
@@ -664,12 +764,87 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 	const newSel = state.selection;
 	const oldSel = update.startState.selection;
 	const hidden = computeHiddenRangesForPositions(state.doc, newSel);
+	const pendingExpansion = state.field(pendingExternalSelectionExpansionField, false);
+	if (pendingExpansion) {
+		debugLog("pending external selection expansion", {
+			selectionFrom: newSel.main.from,
+			selectionTo: newSel.main.to,
+			pendingFrom: pendingExpansion.from,
+			pendingTo: pendingExpansion.to,
+			selectedText: newSel.main.empty ? "" : state.sliceDoc(newSel.main.from, newSel.main.to),
+			pendingText: state.sliceDoc(pendingExpansion.from, pendingExpansion.to),
+		});
+	}
+	if (pendingExpansion && newSel.main.empty) {
+		update.view.dispatch({
+			effects: [setPendingExternalSelectionExpansion.of(null)],
+		});
+	}
+	const suppressedResetPos = state.field(suppressSameLineCursorResetField, false);
+	if (
+		suppressedResetPos !== null &&
+		newSel.main.empty &&
+		oldSel.main.empty &&
+		oldSel.main.head === suppressedResetPos &&
+		newSel.main.head > suppressedResetPos
+	) {
+		debugLog("suppress same-line cursor reset", {
+			suppressedResetPos,
+			oldHead: oldSel.main.head,
+			newHead: newSel.main.head,
+		});
+		(update.view as any)[CORRECTING] = true;
+		try {
+			update.view.dispatch({
+				selection: EditorSelection.cursor(suppressedResetPos),
+				scrollIntoView: true,
+				effects: [suppressSameLineCursorResetEffect.of(null)],
+			});
+		} finally {
+			(update.view as any)[CORRECTING] = false;
+		}
+		return;
+	}
 
 	if (hidden.length === 0) return;
 	const linkSpans = buildVisibleLinkSpans(hidden, state.doc);
 
 	// Detect pointer-initiated selection changes (clicks / taps)
 	const isPointer = update.transactions.some((tr) => tr.isUserEvent("select.pointer"));
+
+	// Detect whether this is an Emacs move-to-beginning dispatch.
+	// The Emacs text-editor plugin dispatches cursor movement to line
+	// start with userEvent "emacs.moveToBeginning".  This must be
+	// treated identically to the Home key: keep cursor at leading.from
+	// (so editor.getCursor() returns ch:0 for kill-line) and set
+	// intentionalLeadingFromEffect to suppress the normal bounce/snap.
+	const isEmacsMoveToBeginning = update.transactions.some(
+		(tr) => tr.annotation(Transaction.userEvent) === "emacs.moveToBeginning"
+	);
+
+	if (isEmacsMoveToBeginning) {
+		debugLog("emacs.moveToBeginning detected", {
+			oldHead: oldSel.main.head,
+			newHead: newSel.main.head,
+			hiddenCount: hidden.length,
+			linkSpanCount: linkSpans.length,
+		});
+	}
+
+	// Also log all userEvents for any selection change on a line with links
+	if (hidden.length > 0) {
+		const userEvents = update.transactions
+			.map((tr) => tr.annotation(Transaction.userEvent))
+			.filter(Boolean);
+		if (userEvents.length > 0) {
+			debugLog("cursorCorrector userEvents", {
+				userEvents,
+				oldHead: oldSel.main.head,
+				newHead: newSel.main.head,
+				selEmpty: newSel.main.empty,
+			});
+		}
+	}
 
 	// Detect whether any transaction carries an explicit userEvent.
 	// Obsidian's own link-normalisation dispatches carry NO userEvent
@@ -780,25 +955,47 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 		// "Obsidian normalisation suppression must redirect to textFrom"
 		// will fail if you break this.  Always run npm run test:run.
 		if (!isPointer && !hasUserEvent) {
-			const cameFromOutside = update.startState.field(
-				arrivedAtTextFromFromOutsideField,
+			const intentionalLeadingFrom = update.startState.field(
+				intentionalLeadingFromField,
 				false
 			);
-			if (cameFromOutside) {
-				const obsidianNorm = linkSpans.find(
-					(span) =>
-						head === span.leading.from &&
-						head === state.doc.lineAt(head).from &&
-						oldHead === span.textFrom
+			debugLog("no-userEvent suppression check", {
+				intentionalLeadingFrom,
+				head,
+				oldHead,
+				match: intentionalLeadingFrom !== null && head === intentionalLeadingFrom,
+			});
+			// If the cursor is intentionally at leading.from (placed there by
+			// Home so that editor.getCursor() returns ch:0 for kill-line),
+			// suppress all bounce/snap logic for this position.
+			if (intentionalLeadingFrom !== null && head === intentionalLeadingFrom) {
+				// Keep cursor exactly at leading.from — no snap, no bounce.
+				// The field will be cleared on the next selection change.
+				debugLog("intentionalLeadingFrom suppression ACTIVE", {
+					head,
+					intentionalLeadingFrom,
+				});
+			} else {
+				const cameFromOutside = update.startState.field(
+					arrivedAtTextFromFromOutsideField,
+					false
 				);
-				if (obsidianNorm) {
-					// MUST redirect to textFrom, NOT stay at leading.from.
-					// leading.from is inside the hidden [[ decoration and
-					// invisible.  Staying there breaks block cursor rendering
-					// in the visible-cursor plugin and requires two right-arrow
-					// presses to move off the first visible character.
-					head = obsidianNorm.textFrom;
-					needsAdjust = true;
+				if (cameFromOutside) {
+					const obsidianNorm = linkSpans.find(
+						(span) =>
+							head === span.leading.from &&
+							head === state.doc.lineAt(head).from &&
+							oldHead === span.textFrom
+					);
+					if (obsidianNorm) {
+						// MUST redirect to textFrom, NOT stay at leading.from.
+						// leading.from is inside the hidden [[ decoration and
+						// invisible.  Staying there breaks block cursor rendering
+						// in the visible-cursor plugin and requires two right-arrow
+						// presses to move off the first visible character.
+						head = obsidianNorm.textFrom;
+						needsAdjust = true;
+					}
 				}
 			}
 		}
@@ -829,22 +1026,74 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 		//   so the follow-up normalisation (textFrom→h.from, no userEvent) is
 		//   suppressed.  No snap needed — already at the right position.
 		if (!isPointer) {
+			// For the Home dispatch itself, the intent is present on this
+			// transaction's effects. For any follow-up Obsidian normalization
+			// transaction, the intent is stored in startState. We need either.
+			const intentionalLeadingFromNow =
+				update.transactions
+					.flatMap((tr) => tr.effects)
+					.find((e) => e.is(intentionalLeadingFromEffect))?.value ??
+				update.startState.field(intentionalLeadingFromField, false);
+			// For Emacs Ctrl+A, the cursor often starts at span.to (the
+			// position right after the trailing ]] on a wikilink-only line).
+			// That IS outside the link, so we need >= for that case.
+			// For all other navigation (arrow keys, etc.) we keep strict >
+			// to avoid interfering with vertical motion that already has
+			// its own correction logic (goalColumn, arrivedFromOutside).
+			const lineStartSpanOutsideCheck = isEmacsMoveToBeginning
+				? (oldH: number, spanTo: number) => oldH >= spanTo
+				: (oldH: number, spanTo: number) => oldH > spanTo;
 			const lineStartSpan = linkSpans.find(
 				(span) =>
 					span.leading.from === state.doc.lineAt(span.leading.from).from &&
-					oldHead > span.to && // came from strictly outside the link
+					lineStartSpanOutsideCheck(oldHead, span.to) &&
 					(head === span.leading.from || head === span.textFrom)
 			);
 			if (lineStartSpan) {
-				if (head === lineStartSpan.leading.from) {
+				if (
+					head === lineStartSpan.leading.from &&
+					(intentionalLeadingFromNow === head || isEmacsMoveToBeginning)
+				) {
+					// Intentional Home / Emacs Ctrl+A placement at leading.from —
+					// do not snap.  Keep cursor at ch:0 so editor.getCursor()
+					// returns ch:0 for kill-line / kill-region.
+					// Mark arrivedFromOutside so Obsidian normalisation is suppressed.
+					(update.view as any).__leArrivedFromOutside = lineStartSpan.leading.from;
+					// For Emacs Ctrl+A, we also need to set the
+					// intentionalLeadingFrom effect so subsequent operations
+					// (kill-line, Enter) know the cursor is intentionally here.
+					if (isEmacsMoveToBeginning) {
+						needsAdjust = true; // trigger dispatch to attach effects
+						(update.view as any).__leEmacsIntentionalLeadingFrom =
+							lineStartSpan.leading.from;
+						(update.view as any).__leEmacsPendingExpansion = {
+							from: lineStartSpan.from,
+							to: lineStartSpan.to,
+						};
+					}
+				} else if (head === lineStartSpan.leading.from) {
 					// Case A: snap to visible text start
 					head = lineStartSpan.textFrom;
 					needsAdjust = true;
+					(update.view as any).__leArrivedFromOutside = lineStartSpan.leading.from;
+				} else if (isEmacsMoveToBeginning && head === lineStartSpan.textFrom) {
+					// Emacs Ctrl+A landed at textFrom (CM6 may skip the
+					// zero-width widget).  Redirect to leading.from so
+					// editor.getCursor() returns ch:0 for kill-line.
+					head = lineStartSpan.leading.from;
+					needsAdjust = true;
+					(update.view as any).__leArrivedFromOutside = lineStartSpan.leading.from;
+					(update.view as any).__leEmacsIntentionalLeadingFrom =
+						lineStartSpan.leading.from;
+					(update.view as any).__leEmacsPendingExpansion = {
+						from: lineStartSpan.from,
+						to: lineStartSpan.to,
+					};
 				} else {
 					// Case B: already at textFrom, just mark it
 					needsAdjust = true; // trigger dispatch so the effect is attached
+					(update.view as any).__leArrivedFromOutside = lineStartSpan.leading.from;
 				}
-				(update.view as any).__leArrivedFromOutside = lineStartSpan.leading.from;
 			}
 		}
 
@@ -968,6 +1217,22 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 				break;
 			}
 
+			// If Home intentionally placed the cursor at leading.from, do not
+			// let correctCursorPos snap it away to textFrom.
+			// Same reasoning as above: the Home dispatch itself carries the
+			// effect, while any follow-up normalization reads from startState.
+			const intentionalLeadingFromNowInner =
+				update.transactions
+					.flatMap((tr) => tr.effects)
+					.find((e) => e.is(intentionalLeadingFromEffect))?.value ??
+				update.startState.field(intentionalLeadingFromField, false);
+			if (
+				intentionalLeadingFromNowInner !== null &&
+				head === intentionalLeadingFromNowInner
+			) {
+				break;
+			}
+
 			const corrected = correctCursorPos(
 				head,
 				oldHead,
@@ -996,15 +1261,39 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 	const arrivedFromOutsideHFrom: number | undefined = (view as any).__leArrivedFromOutside;
 	(view as any).__leArrivedFromOutside = undefined;
 
+	const emacsIntentionalLeadingFrom: number | undefined = (view as any)
+		.__leEmacsIntentionalLeadingFrom;
+	(view as any).__leEmacsIntentionalLeadingFrom = undefined;
+
+	const emacsPendingExpansion: PendingExternalSelectionExpansion | undefined = (view as any)
+		.__leEmacsPendingExpansion;
+	(view as any).__leEmacsPendingExpansion = undefined;
+
+	debugLog("cursor correction dispatch", {
+		oldHead: oldSel.main.head,
+		newHead: newSel.main.head,
+		adjustedHead: sel.main.head,
+		arrivedFromOutsideHFrom: arrivedFromOutsideHFrom ?? null,
+		emacsIntentionalLeadingFrom: emacsIntentionalLeadingFrom ?? null,
+	});
+
+	const effects: any[] = [];
+	if (arrivedFromOutsideHFrom !== undefined) {
+		effects.push(arrivedAtTextFromFromOutsideEffect.of(true));
+	}
+	if (emacsIntentionalLeadingFrom !== undefined) {
+		effects.push(intentionalLeadingFromEffect.of(emacsIntentionalLeadingFrom));
+	}
+	if (emacsPendingExpansion !== undefined) {
+		effects.push(setPendingExternalSelectionExpansion.of(emacsPendingExpansion));
+	}
+
 	(view as any)[CORRECTING] = true;
 	try {
 		view.dispatch({
 			selection: sel,
 			scrollIntoView: true,
-			effects:
-				arrivedFromOutsideHFrom !== undefined
-					? [arrivedAtTextFromFromOutsideEffect.of(true)]
-					: undefined,
+			effects: effects.length > 0 ? effects : undefined,
 		});
 	} finally {
 		(view as any)[CORRECTING] = false;
@@ -1268,19 +1557,41 @@ function handleHomeKey(view: EditorView, extend: boolean): boolean {
 
 	for (const span of linkSpans) {
 		if (span.leading.from !== line.from) continue; // link must start at line start
-		if (head <= span.to) continue; // cursor is inside the link — let CM6 handle
 
-		// Cursor is to the right of the entire link on the same line.
-		// Snap directly to span.textFrom (visible text start) instead of
-		// letting CM6's moveToLineBoundary land at line.from (inside [[).
-		const dest = span.textFrom;
+		// Fire for any cursor position on this line, including inside the link.
+		// The cursor corrector normally snaps Home-from-right to textFrom, but
+		// we need leading.from (ch:0) so that editor.getCursor() returns ch:0
+		// and external commands like Emacs kill-line select the full raw link.
+
+		// Cursor is on the same line as a line-start link.
+		// We dispatch to span.from (= line.from = ch:0) so that
+		// editor.getCursor() returns ch:0, which makes external commands like
+		// Emacs kill-line select from the real start of the raw link text.
+		// The intentionalLeadingFromField suppresses the normal cursor
+		// corrector bounce (which would snap to textFrom or prev-line).
+		const dest = span.from;
+		debugLog("home key snap", {
+			lineFrom: line.from,
+			lineTo: line.to,
+			head,
+			dest,
+			linkFrom: span.from,
+			linkTo: span.to,
+			textFrom: span.textFrom,
+			textTo: span.textTo,
+			lineText: line.text,
+		});
 		view.dispatch({
 			selection: extend
 				? EditorSelection.range(sel.main.anchor, dest)
 				: EditorSelection.cursor(dest),
 			scrollIntoView: true,
 			userEvent: "select",
-			effects: [arrivedAtTextFromFromOutsideEffect.of(true)],
+			effects: [
+				arrivedAtTextFromFromOutsideEffect.of(true),
+				intentionalLeadingFromEffect.of(span.from),
+				setPendingExternalSelectionExpansion.of({ from: span.from, to: span.to }),
+			],
 		});
 		return true;
 	}
@@ -1338,6 +1649,26 @@ const enterAtLinkEndFix = EditorState.transactionFilter.of((tr) => {
 	if (startSel.ranges.length !== 1) return tr;
 	const range = startSel.ranges[0];
 	if (!range.empty) return tr;
+
+	// Log all input transactions that contain newlines for diagnosis
+	{
+		let hasNL = false;
+		let nlFrom = -1;
+		tr.changes.iterChanges((fromA, _toA, _fromB, _toB, inserted) => {
+			if (inserted.toString().includes("\n")) {
+				hasNL = true;
+				nlFrom = fromA;
+			}
+		});
+		if (hasNL) {
+			const hidden = tr.startState.field(hiddenRangesField, false);
+			traceFilter("enterAtLinkEndFix", tr, "newline input seen", {
+				cursorHead: range.head,
+				newlineFrom: nlFrom,
+				hiddenRanges: hidden?.map((h) => ({ from: h.from, to: h.to, side: h.side })) ?? [],
+			});
+		}
+	}
 
 	// If the cursor is already at the line end, OR the insertion is already
 	// at the line end, don't intercept.
@@ -1421,6 +1752,39 @@ const enterAtLinkEndFix = EditorState.transactionFilter.of((tr) => {
 			if (insertFrom < h.to && insertTo > h.from) {
 				matchedTrailing = h;
 				break;
+			}
+		}
+	}
+
+	// Check for cursor at textFrom of a line-start leading range.
+	// When cursor is at textFrom (= leading.to) after arrow-key navigation,
+	// Enter would insert \n between the hidden [[ and the visible text,
+	// splitting the link.  Redirect to leading.from (real line start) so
+	// the entire link moves to the next line.
+	if (!matchedTrailing) {
+		for (const h of hidden) {
+			if (h.side !== "leading") continue;
+			if (h.from !== line.from) continue; // only line-start links
+			if (range.head === h.to && insertFrom === h.to) {
+				// Cursor is at textFrom of a line-start link.
+				// Redirect the newline to leading.from (= line start).
+				const userEvent = tr.annotation(Transaction.userEvent) ?? undefined;
+				traceFilter(
+					"enterAtLinkEndFix",
+					tr,
+					"REDIRECT newline from textFrom to leading.from",
+					{
+						leadingFrom: h.from,
+						leadingTo: h.to,
+						cursorHead: range.head,
+					}
+				);
+				return tr.startState.update({
+					changes: { from: h.from, to: h.from, insert: insertText },
+					selection: EditorSelection.cursor(h.from + insertText.length),
+					scrollIntoView: true,
+					userEvent,
+				});
 			}
 		}
 	}
@@ -1879,6 +2243,20 @@ function expandSelectionRangeToFullLinks(
 function expandSelectionTextToFullLinks(text: string, state: EditorState): string {
 	if (!text) return text;
 
+	const pendingExpansion = state.field(pendingExternalSelectionExpansionField, false);
+	if (pendingExpansion) {
+		const pendingText = state.sliceDoc(pendingExpansion.from, pendingExpansion.to);
+		debugLog("clipboard pending external expansion", {
+			selectionFrom: state.selection.main.from,
+			selectionTo: state.selection.main.to,
+			expandedFrom: pendingExpansion.from,
+			expandedTo: pendingExpansion.to,
+			originalText: text,
+			expandedText: pendingText,
+		});
+		return pendingText;
+	}
+
 	const hidden = state.field(hiddenRangesField, false);
 	if (!hidden || hidden.length === 0) return text;
 
@@ -1890,8 +2268,22 @@ function expandSelectionTextToFullLinks(text: string, state: EditorState): strin
 
 	const expanded = expandSelectionRangeToFullLinks(sel.from, sel.to, links);
 	if (expanded.from === sel.from && expanded.to === sel.to) {
+		debugLog("clipboard passthrough", {
+			selectionFrom: sel.from,
+			selectionTo: sel.to,
+			text,
+		});
 		return text;
 	}
+
+	debugLog("clipboard expand full link", {
+		selectionFrom: sel.from,
+		selectionTo: sel.to,
+		expandedFrom: expanded.from,
+		expandedTo: expanded.to,
+		originalText: text,
+		expandedText: state.sliceDoc(expanded.from, expanded.to),
+	});
 
 	return state.sliceDoc(expanded.from, expanded.to);
 }
@@ -2120,6 +2512,15 @@ const clampSelectionDeleteFilter = EditorState.transactionFilter.of((tr) => {
 	if (!tr.startState.field(syntaxHiderEnabledField, false)) return tr;
 	if (tr.effects.some((e) => e.is(rewrittenSelectionDelete))) return tr;
 
+	const userEvent = tr.annotation(Transaction.userEvent) ?? null;
+	debugLog("delete transaction seen", {
+		userEvent,
+		selectionFrom: tr.startState.selection.main.from,
+		selectionTo: tr.startState.selection.main.to,
+		selectionHead: tr.startState.selection.main.head,
+		empty: tr.startState.selection.main.empty,
+	});
+
 	const hidden = tr.startState.field(hiddenRangesField, false);
 	if (!hidden || hidden.length === 0) return tr;
 	const links = buildLinkSpans(hidden);
@@ -2140,6 +2541,32 @@ const clampSelectionDeleteFilter = EditorState.transactionFilter.of((tr) => {
 	// let the single-char boundary filters handle it.
 	if (allSingleChar && !hasSelectionDelete) return tr;
 
+	if (userEvent === null && hasSelectionDelete) {
+		// Programmatic (no userEvent) selection deletes from Obsidian's
+		// own extensions should generally pass through unchanged.
+		// However, external plugins (e.g. Emacs kill-region via
+		// editor.replaceSelection("")) also dispatch with no userEvent.
+		// These need rewriting when they overlap hidden syntax.
+		//
+		// Heuristic: if the delete range matches the selection exactly
+		// AND the changes interact with links, it's likely an external
+		// plugin's replaceSelection(""). Rewrite it.
+		if (!changesInteractWithLinks(changes, links)) {
+			traceFilter(
+				"clampSelectionDeleteFilter",
+				tr,
+				"PASS (null userEvent, no link interaction)"
+			);
+			return tr;
+		}
+		traceFilter(
+			"clampSelectionDeleteFilter",
+			tr,
+			"null userEvent but interacts with links, falling through to rewrite"
+		);
+		// Fall through to rewrite for external plugin compatibility.
+	}
+
 	if (!changesInteractWithLinks(changes, links)) return tr;
 
 	// Rebuild the changes. For selection deletes, preserve Gmail-style visible
@@ -2147,10 +2574,24 @@ const clampSelectionDeleteFilter = EditorState.transactionFilter.of((tr) => {
 	// behavior used by kill-word / kill-line style commands.
 	const clampedChanges = rewriteDeleteChanges(changes, hidden, links, hasSelectionDelete);
 
+	debugLog("delete transaction rewrite", {
+		hasSelectionDelete,
+		originalChanges: changes,
+		rewrittenChanges: clampedChanges,
+		startSelection: {
+			from: tr.startState.selection.main.from,
+			to: tr.startState.selection.main.to,
+			head: tr.startState.selection.main.head,
+		},
+	});
+
 	// If all changes were dropped, return a no-op
 	if (clampedChanges.length === 0) return [];
 
-	// If nothing changed after clamping, pass through
+	// If nothing changed after clamping, pass through — but for selection
+	// deletes that overlap hidden syntax, we must still tag the transaction
+	// with rewrittenSelectionDelete so protectSyntaxFilter knows we vetted
+	// it and does not block it.
 	if (clampedChanges.length === changes.length) {
 		let identical = true;
 		for (let i = 0; i < changes.length; i++) {
@@ -2163,20 +2604,148 @@ const clampSelectionDeleteFilter = EditorState.transactionFilter.of((tr) => {
 				break;
 			}
 		}
-		if (identical) return tr;
+		if (identical) {
+			if (hasSelectionDelete) {
+				// Re-emit with the rewrittenSelectionDelete marker so
+				// protectSyntaxFilter passes it through.
+				const dispatchUserEvent = tr.annotation(Transaction.userEvent) ?? undefined;
+				const identicalEffects: StateEffect<any>[] = [rewrittenSelectionDelete.of(null)];
+
+				// Also suppress follow-up setCursor when deleting a
+				// line-start link (same logic as the non-identical path).
+				const deleteLine = tr.startState.doc.lineAt(changes[0].from);
+				if (changes[0].from === deleteLine.from) {
+					const deleteStartIsLeading = hidden.some(
+						(h) => h.side === "leading" && h.from === changes[0].from
+					);
+					if (deleteStartIsLeading) {
+						identicalEffects.push(
+							suppressSameLineCursorResetEffect.of(changes[0].from)
+						);
+					}
+				}
+
+				return tr.startState.update({
+					changes: tr.changes,
+					selection: tr.newSelection,
+					scrollIntoView: tr.scrollIntoView,
+					userEvent: dispatchUserEvent,
+					effects: identicalEffects,
+				});
+			}
+			return tr;
+		}
 	}
 
 	// Place cursor at the start of the first clamped change
 	const cursorPos = clampedChanges[0].from;
-	const userEvent = tr.annotation(Transaction.userEvent) ?? undefined;
+	const dispatchUserEvent = tr.annotation(Transaction.userEvent) ?? undefined;
 
-	return tr.startState.update({
+	// When the rewrite expanded a selection leftward to include leading
+	// syntax of a line-start link, the Emacs kill-line plugin follows up
+	// with editor.setCursor(original_cursor) which maps to a position
+	// past the now-empty line (because the original ch was 1-2 for the
+	// textFrom offset).  Use suppressSameLineCursorReset to clamp the
+	// follow-up setCursor to the line start.
+	const effects: StateEffect<any>[] = [];
+	if (hasSelectionDelete) {
+		effects.push(rewrittenSelectionDelete.of(null));
+	}
+	if (hasSelectionDelete) {
+		// When kill-line deletes a line-start link, the Emacs plugin
+		// follows up with editor.setCursor(original_cursor) which maps
+		// to a position past the now-empty line.  Suppress that.
+		// Detect: the delete starts at a line-start leading.from.
+		const deleteLine = tr.startState.doc.lineAt(clampedChanges[0].from);
+		if (clampedChanges[0].from === deleteLine.from) {
+			const deleteStartIsLeading = hidden.some(
+				(h) => h.side === "leading" && h.from === clampedChanges[0].from
+			);
+			if (deleteStartIsLeading) {
+				effects.push(suppressSameLineCursorResetEffect.of(cursorPos));
+			}
+		}
+	}
+
+	debugLog("delete transaction dispatch", {
+		cursorPos,
+		userEvent: dispatchUserEvent ?? null,
+	});
+
+	const result = tr.startState.update({
 		changes: clampedChanges,
 		selection: EditorSelection.cursor(cursorPos),
 		scrollIntoView: true,
-		userEvent,
-		effects: hasSelectionDelete ? [rewrittenSelectionDelete.of(null)] : undefined,
+		userEvent: dispatchUserEvent,
+		effects: effects.length > 0 ? effects : undefined,
 	});
+
+	// Log the actual cursor position after the changes are applied
+	debugLog("delete transaction result", {
+		cursorPosRequested: cursorPos,
+		resultHead: result.state.selection.main.head,
+		resultDocLen: result.state.doc.length,
+		resultLineAtCursor: (() => {
+			const line = result.state.doc.lineAt(result.state.selection.main.head);
+			return {
+				number: line.number,
+				from: line.from,
+				to: line.to,
+				text: line.text.substring(0, 40),
+			};
+		})(),
+	});
+
+	return result;
+});
+
+// ---------------------------------------------------------------------------
+// Selection expansion for line-start links
+//
+// When an external plugin (e.g. Emacs kill-line) sets a selection starting at
+// textFrom of a line-start link and extending to the right (to line end),
+// the selection misses the hidden leading syntax ([[ or [).  This filter
+// expands the selection's anchor to leading.from so that
+// editor.getSelection() returns the full link text including syntax.
+//
+// This is needed because the Emacs plugin uses navigator.clipboard.writeText(
+// editor.getSelection()) directly, bypassing CM6's clipboardOutputFilter.
+// ---------------------------------------------------------------------------
+const expandSelectionToLeadingSyntaxFilter = EditorState.transactionFilter.of((tr) => {
+	if (tr.docChanged) return tr; // only selection-only transactions
+	if (!tr.selection) return tr;
+	if (!tr.startState.field(syntaxHiderEnabledField, false)) return tr;
+
+	const sel = tr.newSelection.main;
+	if (sel.empty) return tr;
+
+	const hidden = tr.startState.field(hiddenRangesField, false);
+	if (!hidden || hidden.length === 0) return tr;
+
+	// Check if selection starts at textFrom of a line-start leading range
+	for (const h of hidden) {
+		if (h.side !== "leading") continue;
+		const line = tr.startState.doc.lineAt(h.from);
+		if (h.from !== line.from) continue; // not at line start
+		if (sel.from !== h.to) continue; // selection doesn't start at textFrom
+		if (sel.to <= h.to) continue; // selection doesn't extend past textFrom
+
+		// Expand selection anchor to leading.from
+		debugLog("expandSelectionToLeadingSyntax", {
+			oldFrom: sel.from,
+			newFrom: h.from,
+			to: sel.to,
+		});
+		const newSel = EditorSelection.range(h.from, sel.to);
+		return [
+			tr,
+			{
+				selection: EditorSelection.create([newSel]),
+			},
+		];
+	}
+
+	return tr;
 });
 
 const protectSyntaxFilter = EditorState.transactionFilter.of((tr) => {
@@ -2184,7 +2753,10 @@ const protectSyntaxFilter = EditorState.transactionFilter.of((tr) => {
 	const isPureDelete = isPureDeleteTransaction(tr);
 	if (!tr.isUserEvent("input") && !isPureDelete) return tr;
 	if (!tr.startState.field(syntaxHiderEnabledField, false)) return tr;
-	if (tr.effects.some((e) => e.is(rewrittenSelectionDelete))) return tr;
+	if (tr.effects.some((e) => e.is(rewrittenSelectionDelete))) {
+		traceFilter("protectSyntaxFilter", tr, "PASS (rewrittenSelectionDelete)");
+		return tr;
+	}
 
 	// Note: We no longer unconditionally bypass protection for non-empty
 	// selections.  clampSelectionDeleteFilter (which runs first) handles
@@ -2205,6 +2777,11 @@ const protectSyntaxFilter = EditorState.transactionFilter.of((tr) => {
 		});
 		if (!overlaps) return tr; // safe: doesn't touch any hidden syntax
 		// Falls through to the protection / blocking logic below
+		traceFilter(
+			"protectSyntaxFilter",
+			tr,
+			"selection-delete overlaps hidden, continuing to check"
+		);
 	}
 
 	const hidden = tr.startState.field(hiddenRangesField, false);
@@ -2295,6 +2872,10 @@ const protectSyntaxFilter = EditorState.transactionFilter.of((tr) => {
 	if (newlineText !== undefined && newlineFrom >= 0) {
 		const line = tr.startState.doc.lineAt(newlineFrom);
 		const userEvent = tr.annotation(Transaction.userEvent) ?? undefined;
+		traceFilter("protectSyntaxFilter", tr, "REDIRECT newline to line end", {
+			lineFrom: line.from,
+			lineTo: line.to,
+		});
 		return tr.startState.update({
 			changes: {
 				from: line.to,
@@ -2307,6 +2888,7 @@ const protectSyntaxFilter = EditorState.transactionFilter.of((tr) => {
 		});
 	}
 
+	traceFilter("protectSyntaxFilter", tr, "BLOCKED (return [])");
 	return [];
 });
 
@@ -2408,11 +2990,15 @@ export function createLinkSyntaxHiderExtension() {
 		Prec.highest(cursorCorrector),
 		Prec.highest(suppressSuggestAfterDeleteListener),
 		Prec.highest(boundaryInputSuppressor),
+		suppressSameLineCursorResetField,
+		pendingExternalSelectionExpansionField,
+		intentionalLeadingFromField,
 		EditorView.clipboardOutputFilter.of(expandSelectionTextToFullLinks),
 		Prec.highest(homeKeyKeymap),
 		Prec.highest(deleteSelectionKeymap),
 		Prec.highest(deleteInLinkTextKeymap),
 		Prec.highest(enterAtLinkEndKeymap),
+		Prec.highest(expandSelectionToLeadingSyntaxFilter),
 		Prec.highest(enterAtLinkEndFix),
 		Prec.highest(suppressNextBoundaryInputFilter),
 		Prec.highest(suppressSuggestAfterVisibleDeleteFilter),
@@ -2444,5 +3030,7 @@ export {
 	setSyntaxHiderEnabled,
 	isMarkdownLinkSpan,
 	buildVisibleLinkSpans,
+	suppressSameLineCursorResetEffect,
+	setPendingExternalSelectionExpansion,
 };
 export type { HiddenRange, LinkRange, VisibleLinkSpan };

@@ -1620,7 +1620,10 @@ describe("clampSelectionDeleteFilter: selection-spanning delete (plain text + li
 		expect(newState.doc.toString()).toBe("hello [[w]]t");
 	});
 
-	it("kill-region style pure delete without delete userEvent still preserves link syntax", () => {
+	it("pure delete without userEvent that overlaps links is rewritten to preserve syntax", () => {
+		// A no-userEvent selection delete that overlaps hidden link syntax
+		// (e.g. from editor.replaceSelection("") in an external plugin)
+		// must be rewritten to skip hidden syntax, not passed through raw.
 		const doc = "abc [[note]]";
 		const state = makeHiderStateWithRange(doc, 2, 8);
 
@@ -1629,6 +1632,8 @@ describe("clampSelectionDeleteFilter: selection-spanning delete (plain text + li
 			selection: EditorSelection.cursor(2),
 		}).state;
 
+		// "c " (plain) and "no" (visible text) are deleted;
+		// "[[" (hidden leading) is preserved.
 		expect(newState.doc.toString()).toBe("ab[[te]]");
 	});
 });

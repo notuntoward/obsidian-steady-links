@@ -20,6 +20,7 @@ import {
 	createLinkSyntaxHiderExtension,
 	setSyntaxHiderEnabled,
 	handleHomeKey,
+	suppressSameLineCursorResetEffect,
 } from "../src/linkSyntaxHider";
 
 // ============================================================================
@@ -61,6 +62,28 @@ function copiedText(view: EditorView): string {
 	const text = view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to);
 	const filters = view.state.facet(EditorView.clipboardOutputFilter);
 	return filters.reduce((value, filter) => filter(value, view.state), text);
+}
+
+function emulateEmacsKillLine(view: EditorView): { clipboard: string; cursor: number } {
+	const cursor = view.state.selection.main.head;
+	const line = view.state.doc.lineAt(cursor);
+	const selection = EditorSelection.range(cursor, line.to);
+
+	view.dispatch({ selection });
+	const clipboard = copiedText(view);
+
+	view.dispatch({
+		changes: { from: selection.from, to: selection.to, insert: "" },
+		selection: EditorSelection.cursor(selection.from),
+		annotations: [Transaction.userEvent.of("delete")],
+		effects: [suppressSameLineCursorResetEffect.of(selection.from)],
+	});
+
+	view.dispatch({
+		selection: EditorSelection.cursor(selection.from),
+	});
+
+	return { clipboard, cursor: view.state.selection.main.head };
 }
 
 /**
@@ -262,35 +285,39 @@ describe("Integration: cursor correction with real CM6 state", () => {
 	});
 
 	describe("homeKeyKeymap: handleHomeKey direct tests", () => {
-		it("Home key from outside wikilink snaps cursor to h.to (visible text start)", () => {
+		it("Home key from outside wikilink snaps cursor to h.from (line start, ch:0 for kill-line)", () => {
 			// [[target]]: leading {from:10, to:12}
 			// Cursor starts at end of "jane" (pos 28), outside the link.
+			// Home lands at h.from=10 (ch:0) so editor.getCursor() returns ch:0,
+			// which makes Emacs kill-line select the full raw link including [[.
 			const doc = "prev line\n[[target]] bob jane";
 			view = createTestView(doc, 28);
 
 			const handled = handleHomeKey(view, false);
 			expect(handled).toBe(true); // keymap consumed the event
-			expect(view.state.selection.main.head).toBe(12); // h.to
+			expect(view.state.selection.main.head).toBe(10); // h.from (leading.from = line start)
 		});
 
-		it("Home key from outside markdown link snaps to h.to", () => {
+		it("Home key from outside markdown link snaps to h.from (line start, ch:0)", () => {
 			// [text](url): leading {from:10, to:11}
 			const doc = "prev line\n[text](url) bob jane";
 			view = createTestView(doc, 29);
 
 			const handled = handleHomeKey(view, false);
 			expect(handled).toBe(true);
-			expect(view.state.selection.main.head).toBe(11); // h.to (after "[")
+			expect(view.state.selection.main.head).toBe(10); // h.from (line start)
 		});
 
-		it("Home key from inside link does NOT fire (returns false)", () => {
-			// Cursor inside link text — let CM6 handle it normally.
+		it("Home key from inside link text fires and snaps to h.from (ch:0)", () => {
+			// Cursor inside link text — Home should still snap to leading.from
+			// so editor.getCursor() returns ch:0 for Emacs kill-line.
+			// [[target]]: leading {from:10,to:12}, textFrom:12
 			const doc = "prev line\n[[target]] bob jane";
 			view = createTestView(doc, 13); // inside "target"
 
 			const handled = handleHomeKey(view, false);
-			expect(handled).toBe(false);
-			expect(view.state.selection.main.head).toBe(13); // unchanged
+			expect(handled).toBe(true);
+			expect(view.state.selection.main.head).toBe(10); // h.from (leading.from)
 		});
 
 		it("Home key on line with mid-line link (not at line start) does NOT fire", () => {
@@ -302,7 +329,7 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			expect(handled).toBe(false);
 		});
 
-		it("Shift+Home extends selection to h.to", () => {
+		it("Shift+Home extends selection to h.from (line start)", () => {
 			const doc = "prev line\n[[target]] bob jane";
 			view = createTestView(doc, 28);
 
@@ -310,28 +337,27 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			expect(handled).toBe(true);
 			const sel = view.state.selection.main;
 			expect(sel.anchor).toBe(28);
-			expect(sel.head).toBe(12);
+			expect(sel.head).toBe(10); // h.from (line start)
 		});
 
-		it("two-step: Home snap to h.to then Obsidian normalisation to h.from stays at h.from (not prev line)", () => {
-			// Reproduces the exact sequence from the diagnostic log:
-			//   935 → 900 (handleHomeKey, userEvent="select")
-			//   900 → 870 (Obsidian normalisation, userEvent="(none)")
-			// The second step must NOT bounce to 869 (prev line end).
+		it("two-step: Home snap to h.from then any Obsidian normalisation does not bounce to prev line", () => {
+			// Home now lands at h.from=10 (ch:0) rather than textFrom=12.
+			// The intentionalLeadingFromField suppresses all bounce/snap at h.from.
 			const doc = "prev line\n[[target]] bob jane";
 			// [[target]]: leading {from:10,to:12}, trailing {from:18,to:20}
 			view = createTestView(doc, 28);
 
-			// Step 1: Home key snaps to h.to=12 and sets arrivedAtTextFromFromOutside
+			// Step 1: Home key snaps to h.from=10
 			handleHomeKey(view, false);
-			expect(view.state.selection.main.head).toBe(12);
+			expect(view.state.selection.main.head).toBe(10);
 
-			// Step 2: Obsidian normalises cursor from h.to=12 back to h.from=10 (no userEvent)
+			// Step 2: Obsidian might dispatch a normalisation from h.from (no-op here since
+			// we are already at h.from). If it dispatches textFrom→h.from it should stay at
+			// h.from (not bounce to 9 = prev line end).
 			view.dispatch({ selection: EditorSelection.cursor(10) }); // no userEvent
 
-			// Must redirect to textFrom=12 (visible alias start), NOT stay at
-			// h.from=10 (inside hidden [[ syntax) and NOT go to 9 (prev line end)
-			expect(view.state.selection.main.head).toBe(12);
+			// Must stay at h.from=10, not bounce to 9
+			expect(view.state.selection.main.head).toBe(10);
 		});
 
 		it("left arrow from h.to still goes to prev line (not suppressed)", () => {
@@ -484,6 +510,54 @@ describe("Integration: cursor correction with real CM6 state", () => {
 
 			expect(view.state.doc.toString()).toBe("");
 			expect(view.state.selection.main.head).toBe(0);
+		});
+
+		it("kill-line copy after Home on a line-start wikilink includes opening brackets", () => {
+			const doc = "[[Voting Systems in WA State]]\nnext line";
+			view = createTestView(doc, 0);
+
+			handleHomeKey(view, false);
+			view.dispatch({ selection: EditorSelection.range(2, doc.indexOf("\n")) });
+			const result = { clipboard: copiedText(view) };
+
+			expect(result.clipboard).toBe("[[Voting Systems in WA State]]");
+		});
+
+		it("kill-line after Home on a line-start wikilink keeps cursor on the same line", () => {
+			const doc = "[[Voting Systems in WA State]]\nnext line";
+			view = createTestView(doc, 0);
+
+			handleHomeKey(view, false);
+			const startLine = view.state.doc.lineAt(view.state.selection.main.head);
+			const result = emulateEmacsKillLine(view);
+
+			const endLine = view.state.doc.lineAt(result.cursor);
+			expect(endLine.number).toBe(startLine.number);
+			expect(result.cursor).toBe(startLine.from);
+		});
+
+		it("kill-line copy after Home on a line-start markdown link includes opening bracket", () => {
+			const doc = "[Voting Systems in WA State](https://example.com)\nnext line";
+			view = createTestView(doc, 0);
+
+			handleHomeKey(view, false);
+			view.dispatch({ selection: EditorSelection.range(1, doc.indexOf("\n")) });
+			const result = { clipboard: copiedText(view) };
+
+			expect(result.clipboard).toBe("[Voting Systems in WA State](https://example.com)");
+		});
+
+		it("kill-line after Home on a line-start markdown link keeps cursor on the same line", () => {
+			const doc = "[Voting Systems in WA State](https://example.com)\nnext line";
+			view = createTestView(doc, 0);
+
+			handleHomeKey(view, false);
+			const startLine = view.state.doc.lineAt(view.state.selection.main.head);
+			const result = emulateEmacsKillLine(view);
+
+			const endLine = view.state.doc.lineAt(result.cursor);
+			expect(endLine.number).toBe(startLine.number);
+			expect(result.cursor).toBe(startLine.from);
 		});
 	});
 
@@ -1017,6 +1091,247 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			view = createTestView("intro\n\n[[target]]\n\noutro", 20);
 
 			expect(dispatchSelection(view, 6, "select")).toBe(6);
+		});
+	});
+
+	// ──────────────────────────────────────────────────────────────────────
+	// BUG GUARD: Emacs move-to-beginning (Ctrl+A) must work like Home key
+	//
+	// The emacs-text-editor plugin dispatches cursor moves with
+	// userEvent "emacs.moveToBeginning". This must be treated identically
+	// to the Home key: keep cursor at leading.from (ch:0 for kill-line),
+	// set intentionalLeadingFromField, and suppress bounce/snap.
+	// ──────────────────────────────────────────────────────────────────────
+	describe("Emacs move-to-beginning on line-start links", () => {
+		it("emacs.moveToBeginning lands at leading.from (ch:0) for a line-start wikilink with trailing text", () => {
+			// Doc: "\n[[target]] text"
+			// Cursor starts at end of line (past the link)
+			view = createTestView("\n[[target]] text", 15);
+
+			// Simulate Emacs Ctrl+A: moveToLineBoundary lands at line start
+			view.dispatch({
+				selection: EditorSelection.cursor(1), // leading.from = line start
+				scrollIntoView: true,
+				annotations: Transaction.userEvent.of("emacs.moveToBeginning"),
+			});
+
+			// Must stay at leading.from (position 1), NOT snap to textFrom (3)
+			expect(view.state.selection.main.head).toBe(1);
+		});
+
+		it("emacs.moveToBeginning on a wikilink-only line (oldHead === span.to) redirects to leading.from", () => {
+			// Doc: "\n[[target]]"
+			// When a line has ONLY a wikilink, the cursor at the end of the
+			// link is at span.to (position 12 = trailing.to).
+			// moveToLineBoundary returns textFrom (3) because CM6 skips the
+			// hidden [[ widget.  The corrector must redirect to leading.from (1).
+			view = createTestView("\n[[target]]", 11); // cursor at trailing.to
+
+			view.dispatch({
+				selection: EditorSelection.cursor(3), // textFrom — where moveToLineBoundary lands
+				scrollIntoView: true,
+				annotations: Transaction.userEvent.of("emacs.moveToBeginning"),
+			});
+
+			// Must redirect to leading.from (position 1), NOT stay at textFrom (3)
+			expect(view.state.selection.main.head).toBe(1);
+		});
+
+		it("emacs.moveToBeginning lands at leading.from (ch:0) for a line-start markdown link", () => {
+			// Doc: "\n[text](url) other"
+			view = createTestView("\n[text](url) other", 18);
+
+			view.dispatch({
+				selection: EditorSelection.cursor(1), // leading.from = line start
+				scrollIntoView: true,
+				annotations: Transaction.userEvent.of("emacs.moveToBeginning"),
+			});
+
+			expect(view.state.selection.main.head).toBe(1);
+		});
+
+		it("kill-line after emacs.moveToBeginning on a line-start wikilink deletes the entire line", () => {
+			// Simulate: Emacs Ctrl+A to line start, then Ctrl+K (kill-line)
+			const doc = "[[Voting Systems in WA State]]\nnext line";
+			view = createTestView(doc, doc.indexOf("\n") - 1); // cursor near end of first line
+
+			// Step 1: Emacs Ctrl+A
+			view.dispatch({
+				selection: EditorSelection.cursor(0), // leading.from
+				scrollIntoView: true,
+				annotations: Transaction.userEvent.of("emacs.moveToBeginning"),
+			});
+			expect(view.state.selection.main.head).toBe(0);
+
+			// Step 2: kill-line = select from cursor to end of line, then delete
+			const line = view.state.doc.lineAt(0);
+
+			// The real Emacs kill-line sets selection first, copies, then replaces.
+			view.dispatch({ selection: EditorSelection.range(0, line.to) });
+			const clipboard = copiedText(view);
+
+			view.dispatch({
+				changes: {
+					from: view.state.selection.main.from,
+					to: view.state.selection.main.to,
+					insert: "",
+				},
+				selection: EditorSelection.cursor(view.state.selection.main.from),
+				annotations: [Transaction.userEvent.of("delete")],
+			});
+
+			expect(clipboard).toBe("[[Voting Systems in WA State]]");
+			expect(view.state.doc.toString()).toBe("\nnext line");
+			expect(view.state.selection.main.head).toBe(0);
+		});
+
+		it("kill-line after emacs.moveToBeginning on a line-start markdown link deletes the entire line", () => {
+			const doc = "[Voting Systems in WA State](https://example.com)\nnext line";
+			view = createTestView(doc, doc.indexOf("\n") - 1);
+
+			view.dispatch({
+				selection: EditorSelection.cursor(0),
+				scrollIntoView: true,
+				annotations: Transaction.userEvent.of("emacs.moveToBeginning"),
+			});
+			expect(view.state.selection.main.head).toBe(0);
+
+			const line = view.state.doc.lineAt(0);
+			view.dispatch({ selection: EditorSelection.range(0, line.to) });
+			const clipboard = copiedText(view);
+
+			view.dispatch({
+				changes: { from: 0, to: line.to, insert: "" },
+				selection: EditorSelection.cursor(0),
+				annotations: [Transaction.userEvent.of("delete")],
+			});
+
+			expect(clipboard).toBe("[Voting Systems in WA State](https://example.com)");
+			expect(view.state.doc.toString()).toBe("\nnext line");
+			expect(view.state.selection.main.head).toBe(0);
+		});
+
+		it("Enter after emacs.moveToBeginning on a line-start link inserts newline at line start", () => {
+			const doc = "[[target]] text";
+			view = createTestView(doc, doc.length);
+
+			// Emacs Ctrl+A
+			view.dispatch({
+				selection: EditorSelection.cursor(0),
+				scrollIntoView: true,
+				annotations: Transaction.userEvent.of("emacs.moveToBeginning"),
+			});
+
+			// Enter key: insert a newline at cursor position
+			view.dispatch({
+				changes: { from: 0, to: 0, insert: "\n" },
+				selection: EditorSelection.cursor(1),
+				annotations: [Transaction.userEvent.of("input")],
+			});
+
+			// Link should be intact on the second line
+			expect(view.state.doc.toString()).toBe("\n[[target]] text");
+		});
+	});
+
+	// ──────────────────────────────────────────────────────────────────────
+	// BUG GUARD: Enter at textFrom of a line-start link must not split link
+	//
+	// After arrow-key navigation to a line-start link, the cursor lands at
+	// textFrom (the visible text start).  Enter at textFrom would insert
+	// \n between the hidden [[ and visible text, breaking the link.
+	// The enterAtLinkEndFix must redirect to leading.from.
+	// ──────────────────────────────────────────────────────────────────────
+	describe("Enter at textFrom of line-start link", () => {
+		it("Enter at textFrom of line-start wikilink redirects newline to leading.from", () => {
+			// Doc: "bob\n[[target]] text"
+			// After arrow-down, cursor lands at textFrom=6 (leading=[4,6))
+			view = createTestView("bob\n[[target]] text", 6);
+
+			view.dispatch({
+				changes: { from: 6, to: 6, insert: "\n" },
+				selection: EditorSelection.cursor(7),
+				annotations: [Transaction.userEvent.of("input")],
+			});
+
+			// Newline should be inserted at leading.from (4), not at textFrom (6)
+			// Result: "bob\n\n[[target]] text"
+			expect(view.state.doc.toString()).toBe("bob\n\n[[target]] text");
+		});
+
+		it("Enter at textFrom of line-start markdown link redirects newline to leading.from", () => {
+			// Doc: "bob\n[text](url) more"
+			// leading=[4,5), textFrom=5
+			view = createTestView("bob\n[text](url) more", 5);
+
+			view.dispatch({
+				changes: { from: 5, to: 5, insert: "\n" },
+				selection: EditorSelection.cursor(6),
+				annotations: [Transaction.userEvent.of("input")],
+			});
+
+			expect(view.state.doc.toString()).toBe("bob\n\n[text](url) more");
+		});
+	});
+
+	// ──────────────────────────────────────────────────────────────────────
+	// BUG GUARD: Selection delete (Delete key, kill-region) must work on
+	// selections spanning links.
+	// ──────────────────────────────────────────────────────────────────────
+	describe("Selection delete on regions containing links", () => {
+		it("delete key on a selection spanning a wikilink deletes the link", () => {
+			view = createTestView("before [[target]] after", 0);
+
+			// Select the entire content
+			view.dispatch({
+				selection: EditorSelection.range(0, 23),
+			});
+
+			// Simulate Delete key via transaction
+			view.dispatch({
+				changes: { from: 0, to: 23, insert: "" },
+				selection: EditorSelection.cursor(0),
+				annotations: [Transaction.userEvent.of("delete")],
+			});
+
+			expect(view.state.doc.toString()).toBe("");
+		});
+
+		it("delete on a selection from visible text of link1 to link2 works", () => {
+			view = createTestView("[[link1]] mid [[link2]]", 0);
+
+			// Select from visible text start of link1 to visible text end of link2
+			// link1: from=0, to=9, textFrom=2, textTo=7
+			// link2: from=14, to=23, textFrom=16, textTo=21
+			view.dispatch({
+				selection: EditorSelection.range(2, 21),
+			});
+
+			view.dispatch({
+				changes: { from: 2, to: 21, insert: "" },
+				selection: EditorSelection.cursor(2),
+				annotations: [Transaction.userEvent.of("delete")],
+			});
+
+			// Both links and middle text should be fully deleted
+			expect(view.state.doc.toString()).toBe("");
+		});
+
+		it("programmatic replaceSelection delete on a selection spanning a link works", () => {
+			view = createTestView("text [[target]] more", 0);
+
+			// Select all visible content
+			view.dispatch({
+				selection: EditorSelection.range(0, 20),
+			});
+
+			// Simulate editor.replaceSelection("") — no userEvent annotation
+			view.dispatch({
+				changes: { from: 0, to: 20, insert: "" },
+				selection: EditorSelection.cursor(0),
+			});
+
+			expect(view.state.doc.toString()).toBe("");
 		});
 	});
 });
