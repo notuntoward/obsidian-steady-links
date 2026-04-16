@@ -278,6 +278,8 @@ const suppressNextBoundaryInputField = StateField.define<number | null>({
 
 const suppressSameLineCursorResetEffect = StateEffect.define<number | null>();
 
+const suppressSameLineCursorResetAnchorEffect = StateEffect.define<number | null>();
+
 const suppressSameLineCursorResetField = StateField.define<number | null>({
 	create() {
 		return null;
@@ -290,6 +292,30 @@ const suppressSameLineCursorResetField = StateField.define<number | null>({
 		if (tr.selection && value !== null) {
 			const main = tr.state.selection.main;
 			if (!main.empty && main.from !== value) {
+				return null;
+			}
+		}
+
+		return value;
+	},
+});
+
+const suppressSameLineCursorResetAnchorField = StateField.define<number | null>({
+	create() {
+		return null;
+	},
+	update(value, tr) {
+		for (const e of tr.effects) {
+			if (e.is(suppressSameLineCursorResetAnchorEffect)) return e.value;
+		}
+
+		if (tr.docChanged) {
+			return null;
+		}
+
+		if (tr.selection && value !== null) {
+			const main = tr.state.selection.main;
+			if (!main.empty) {
 				return null;
 			}
 		}
@@ -781,6 +807,10 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 		});
 	}
 	const suppressedResetPos = state.field(suppressSameLineCursorResetField, false);
+	const suppressedResetAnchor = state.field(suppressSameLineCursorResetAnchorField, false);
+	if (hidden.length === 0) return;
+	const linkSpans = buildVisibleLinkSpans(hidden, state.doc);
+
 	if (
 		suppressedResetPos !== null &&
 		newSel.main.empty &&
@@ -788,6 +818,44 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 		oldSel.main.head === suppressedResetPos &&
 		newSel.main.head > suppressedResetPos
 	) {
+		const suppressResetStartLine = state.doc.lineAt(
+			Math.min(suppressedResetPos, state.doc.length)
+		);
+		const suppressedResetSpan = linkSpans.find(
+			(span) =>
+				suppressedResetPos >= span.textFrom &&
+				suppressedResetPos <= span.textTo &&
+				(suppressedResetAnchor === null || suppressedResetAnchor === suppressedResetPos) &&
+				span.lineFrom === suppressResetStartLine.from &&
+				newSel.main.head >= span.textTo &&
+				newSel.main.head <= span.to
+		);
+		if (suppressedResetSpan) {
+			debugLog("suppress same-line cursor reset inside link", {
+				suppressedResetPos,
+				suppressedResetAnchor,
+				oldHead: oldSel.main.head,
+				newHead: newSel.main.head,
+				textFrom: suppressedResetSpan.textFrom,
+				textTo: suppressedResetSpan.textTo,
+				linkTo: suppressedResetSpan.to,
+			});
+			(update.view as any)[CORRECTING] = true;
+			try {
+				update.view.dispatch({
+					selection: EditorSelection.cursor(suppressedResetPos),
+					scrollIntoView: true,
+					effects: [
+						suppressSameLineCursorResetEffect.of(null),
+						suppressSameLineCursorResetAnchorEffect.of(null),
+					],
+				});
+			} finally {
+				(update.view as any)[CORRECTING] = false;
+			}
+			return;
+		}
+
 		debugLog("suppress same-line cursor reset", {
 			suppressedResetPos,
 			oldHead: oldSel.main.head,
@@ -798,17 +866,16 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 			update.view.dispatch({
 				selection: EditorSelection.cursor(suppressedResetPos),
 				scrollIntoView: true,
-				effects: [suppressSameLineCursorResetEffect.of(null)],
+				effects: [
+					suppressSameLineCursorResetEffect.of(null),
+					suppressSameLineCursorResetAnchorEffect.of(null),
+				],
 			});
 		} finally {
 			(update.view as any)[CORRECTING] = false;
 		}
 		return;
 	}
-
-	if (hidden.length === 0) return;
-	const linkSpans = buildVisibleLinkSpans(hidden, state.doc);
-
 	// Detect pointer-initiated selection changes (clicks / taps)
 	const isPointer = update.transactions.some((tr) => tr.isUserEvent("select.pointer"));
 
@@ -955,11 +1022,16 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 		// "Obsidian normalisation suppression must redirect to textFrom"
 		// will fail if you break this.  Always run npm run test:run.
 		if (!isPointer && !hasUserEvent) {
+			const explicitSuppressedResetAnchor = update.startState.field(
+				suppressSameLineCursorResetAnchorField,
+				false
+			);
 			const intentionalLeadingFrom = update.startState.field(
 				intentionalLeadingFromField,
 				false
 			);
 			debugLog("no-userEvent suppression check", {
+				explicitSuppressedResetAnchor,
 				intentionalLeadingFrom,
 				head,
 				oldHead,
@@ -976,6 +1048,76 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 					intentionalLeadingFrom,
 				});
 			} else {
+				if (
+					explicitSuppressedResetAnchor !== null &&
+					explicitSuppressedResetAnchor !== undefined &&
+					head === explicitSuppressedResetAnchor
+				) {
+					const resetAnchor = explicitSuppressedResetAnchor;
+					const preservedResetSpan = linkSpans.find(
+						(span) =>
+							resetAnchor >= span.textFrom &&
+							resetAnchor <= span.textTo &&
+							oldHead === resetAnchor
+					);
+					if (preservedResetSpan) {
+						debugLog("preserve explicit reset anchor in visible text", {
+							explicitSuppressedResetAnchor: resetAnchor,
+							oldHead,
+							head,
+							textFrom: preservedResetSpan.textFrom,
+							textTo: preservedResetSpan.textTo,
+						});
+						return range.empty
+							? EditorSelection.cursor(head)
+							: EditorSelection.range(range.anchor, head);
+					}
+				}
+
+				if (explicitSuppressedResetAnchor !== null) {
+					if (explicitSuppressedResetAnchor === undefined) {
+						const cameFromOutside = update.startState.field(
+							arrivedAtTextFromFromOutsideField,
+							false
+						);
+						if (cameFromOutside) {
+							const obsidianNorm = linkSpans.find(
+								(span) =>
+									head === span.leading.from &&
+									head === state.doc.lineAt(head).from &&
+									oldHead === span.textFrom
+							);
+							if (obsidianNorm) {
+								head = obsidianNorm.textFrom;
+								needsAdjust = true;
+							}
+						}
+						return range.empty
+							? EditorSelection.cursor(head)
+							: EditorSelection.range(range.anchor, head);
+					}
+					const resetAnchor = explicitSuppressedResetAnchor;
+					const suppressedResetLink = linkSpans.find(
+						(span) =>
+							resetAnchor >= span.textFrom &&
+							resetAnchor <= span.textTo &&
+							oldHead === resetAnchor &&
+							head === span.to
+					);
+					if (suppressedResetLink) {
+						debugLog("explicit suppress reset to trailing edge", {
+							explicitSuppressedResetAnchor: resetAnchor,
+							oldHead,
+							head,
+							textFrom: suppressedResetLink.textFrom,
+							textTo: suppressedResetLink.textTo,
+							linkTo: suppressedResetLink.to,
+						});
+						head = resetAnchor;
+						needsAdjust = true;
+					}
+				}
+
 				const cameFromOutside = update.startState.field(
 					arrivedAtTextFromFromOutsideField,
 					false
@@ -2652,6 +2794,10 @@ const clampSelectionDeleteFilter = EditorState.transactionFilter.of((tr) => {
 		effects.push(rewrittenSelectionDelete.of(null));
 	}
 	if (hasSelectionDelete) {
+		effects.push(
+			suppressSameLineCursorResetAnchorEffect.of(tr.startState.selection.main.anchor)
+		);
+
 		// When kill-line deletes a line-start link, the Emacs plugin
 		// follows up with editor.setCursor(original_cursor) which maps
 		// to a position past the now-empty line.  Suppress that.
@@ -2984,6 +3130,7 @@ export function createLinkSyntaxHiderExtension() {
 		arrivedAtTextFromFromOutsideField,
 		syntaxHiderModePlugin,
 		hiddenRangesField,
+		suppressSameLineCursorResetAnchorField,
 		bodyClassPlugin,
 		temporarilyVisibleLinkField,
 		Prec.highest(hiddenSyntaxReplacePlugin),
