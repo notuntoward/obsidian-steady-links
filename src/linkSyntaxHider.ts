@@ -180,6 +180,7 @@ const arrivedAtTextFromFromOutsideField = StateField.define<boolean>({
 interface PendingExternalSelectionExpansion {
 	from: number;
 	to: number;
+	text?: string;
 }
 
 const setPendingExternalSelectionExpansion =
@@ -808,6 +809,41 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 	}
 	const suppressedResetPos = state.field(suppressSameLineCursorResetField, false);
 	const suppressedResetAnchor = state.field(suppressSameLineCursorResetAnchorField, false);
+
+	// Same-line cursor reset suppression must run regardless of whether the
+	// current cursor position is inside a hidden range.  After a kill-line
+	// delete, the surviving line often has no hidden ranges at all, but we
+	// still need to intercept the follow-up setCursor(originalPos) that
+	// external plugins (Emacs) dispatch and redirect it back to the preserved
+	// post-delete cursor.
+	if (
+		suppressedResetPos !== null &&
+		newSel.main.empty &&
+		oldSel.main.empty &&
+		oldSel.main.head === suppressedResetPos &&
+		newSel.main.head !== suppressedResetPos
+	) {
+		debugLog("suppress same-line cursor reset (post-delete)", {
+			suppressedResetPos,
+			oldHead: oldSel.main.head,
+			newHead: newSel.main.head,
+		});
+		(update.view as any)[CORRECTING] = true;
+		try {
+			update.view.dispatch({
+				selection: EditorSelection.cursor(suppressedResetPos),
+				scrollIntoView: true,
+				effects: [
+					suppressSameLineCursorResetEffect.of(null),
+					suppressSameLineCursorResetAnchorEffect.of(null),
+				],
+			});
+		} finally {
+			(update.view as any)[CORRECTING] = false;
+		}
+		return;
+	}
+
 	if (hidden.length === 0) return;
 	const linkSpans = buildVisibleLinkSpans(hidden, state.doc);
 
@@ -1102,10 +1138,10 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 							resetAnchor >= span.textFrom &&
 							resetAnchor <= span.textTo &&
 							oldHead === resetAnchor &&
-							head === span.to
+							(head === span.to || head === span.textFrom)
 					);
 					if (suppressedResetLink) {
-						debugLog("explicit suppress reset to trailing edge", {
+						debugLog("explicit suppress reset within link", {
 							explicitSuppressedResetAnchor: resetAnchor,
 							oldHead,
 							head,
@@ -2387,7 +2423,8 @@ function expandSelectionTextToFullLinks(text: string, state: EditorState): strin
 
 	const pendingExpansion = state.field(pendingExternalSelectionExpansionField, false);
 	if (pendingExpansion) {
-		const pendingText = state.sliceDoc(pendingExpansion.from, pendingExpansion.to);
+		const pendingText =
+			pendingExpansion.text ?? state.sliceDoc(pendingExpansion.from, pendingExpansion.to);
 		debugLog("clipboard pending external expansion", {
 			selectionFrom: state.selection.main.from,
 			selectionTo: state.selection.main.to,
@@ -2407,6 +2444,18 @@ function expandSelectionTextToFullLinks(text: string, state: EditorState): strin
 
 	const sel = state.selection.main;
 	if (sel.empty) return text;
+
+	// External commands such as Emacs kill-line can start at the visible alias
+	// start of a mid-line piped wikilink. For clipboard output, treat the alias
+	// selection as the visible text of a plain wikilink so copied text reflects
+	// what the user selected, not the hidden destination prefix.
+	const aliasStartLink = links.find(
+		(link) => sel.from === link.textFrom && sel.to > link.textTo && isWikiLinkSpan(state, link)
+	);
+	if (aliasStartLink) {
+		const visibleSuffix = state.sliceDoc(aliasStartLink.to, sel.to);
+		return `[[${state.sliceDoc(aliasStartLink.textFrom, aliasStartLink.textTo)}]]${visibleSuffix}`;
+	}
 
 	const expanded = expandSelectionRangeToFullLinks(sel.from, sel.to, links);
 	if (expanded.from === sel.from && expanded.to === sel.to) {
@@ -2798,17 +2847,37 @@ const clampSelectionDeleteFilter = EditorState.transactionFilter.of((tr) => {
 			suppressSameLineCursorResetAnchorEffect.of(tr.startState.selection.main.anchor)
 		);
 
-		// When kill-line deletes a line-start link, the Emacs plugin
-		// follows up with editor.setCursor(original_cursor) which maps
-		// to a position past the now-empty line.  Suppress that.
-		// Detect: the delete starts at a line-start leading.from.
-		const deleteLine = tr.startState.doc.lineAt(clampedChanges[0].from);
-		if (clampedChanges[0].from === deleteLine.from) {
-			const deleteStartIsLeading = hidden.some(
-				(h) => h.side === "leading" && h.from === clampedChanges[0].from
-			);
-			if (deleteStartIsLeading) {
-				effects.push(suppressSameLineCursorResetEffect.of(cursorPos));
+		// When kill-line deletes from a link boundary through the end of the
+		// line, the Emacs plugin follows up with editor.setCursor(originalPos)
+		// which maps through the deleted range and lands on a later line.
+		// Arm the same-line reset suppression so the follow-up selection-only
+		// dispatch is redirected back to the post-delete cursor position
+		// (which is on the preserved line).
+		//
+		// Conditions:
+		//   - selection started at a link boundary (textFrom or from)
+		//   - selection extended to the end of the starting line
+		const startSelFrom = tr.startState.selection.main.from;
+		const startSelTo = tr.startState.selection.main.to;
+		const startSelLine = tr.startState.doc.lineAt(startSelFrom);
+		const selectionStartsAtLinkEdge = links.some(
+			(link) =>
+				startSelFrom === link.textFrom ||
+				startSelFrom === link.from ||
+				startSelFrom === link.textTo
+		);
+		if (selectionStartsAtLinkEdge && startSelTo === startSelLine.to) {
+			effects.push(suppressSameLineCursorResetEffect.of(cursorPos));
+		} else {
+			// Legacy: also suppress for line-start link deletes.
+			const deleteLine = tr.startState.doc.lineAt(clampedChanges[0].from);
+			if (clampedChanges[0].from === deleteLine.from) {
+				const deleteStartIsLeading = hidden.some(
+					(h) => h.side === "leading" && h.from === clampedChanges[0].from
+				);
+				if (deleteStartIsLeading) {
+					effects.push(suppressSameLineCursorResetEffect.of(cursorPos));
+				}
 			}
 		}
 	}
@@ -2868,25 +2937,44 @@ const expandSelectionToLeadingSyntaxFilter = EditorState.transactionFilter.of((t
 	const hidden = tr.startState.field(hiddenRangesField, false);
 	if (!hidden || hidden.length === 0) return tr;
 
-	// Check if selection starts at textFrom of a line-start leading range
-	for (const h of hidden) {
-		if (h.side !== "leading") continue;
-		const line = tr.startState.doc.lineAt(h.from);
-		if (h.from !== line.from) continue; // not at line start
-		if (sel.from !== h.to) continue; // selection doesn't start at textFrom
-		if (sel.to <= h.to) continue; // selection doesn't extend past textFrom
+	const links = buildLinkSpans(hidden);
 
-		// Expand selection anchor to leading.from
-		debugLog("expandSelectionToLeadingSyntax", {
+	// A selection that starts at a link boundary (link.from, link.textFrom)
+	// and extends to the right of that link misses the hidden leading syntax
+	// when the consumer bypasses CM6's clipboardOutputFilter (e.g. Emacs
+	// kill-line calling editor.getSelection() directly).  Expand the
+	// selection to include the full raw link text (all hidden syntax) so
+	// the clipboard and any external consumer sees the complete link.
+	for (const link of links) {
+		const startsAtLinkEdge = sel.from === link.from || sel.from === link.textFrom;
+		if (!startsAtLinkEdge) continue;
+		if (sel.to <= link.textFrom) continue;
+
+		const line = tr.startState.doc.lineAt(link.from);
+		if (sel.to > line.to) continue;
+
+		const expandedFrom = link.from;
+		const expandedTo = Math.max(sel.to, link.to);
+		if (expandedFrom === sel.from && expandedTo === sel.to) continue;
+
+		debugLog("expandSelectionToFullLinkSyntax", {
 			oldFrom: sel.from,
-			newFrom: h.from,
-			to: sel.to,
+			oldTo: sel.to,
+			expandedFrom,
+			expandedTo,
 		});
-		const newSel = EditorSelection.range(h.from, sel.to);
+
+		const newSel = EditorSelection.range(expandedFrom, expandedTo);
 		return [
 			tr,
 			{
 				selection: EditorSelection.create([newSel]),
+				effects: [
+					setPendingExternalSelectionExpansion.of({
+						from: expandedFrom,
+						to: expandedTo,
+					}),
+				],
 			},
 		];
 	}

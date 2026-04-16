@@ -67,20 +67,23 @@ function copiedText(view: EditorView): string {
 function emulateEmacsKillLine(view: EditorView): { clipboard: string; cursor: number } {
 	const cursor = view.state.selection.main.head;
 	const line = view.state.doc.lineAt(cursor);
-	const selection = EditorSelection.range(cursor, line.to);
+	let selectionFrom = cursor;
+	let selectionTo = line.to;
 
-	view.dispatch({ selection });
+	view.dispatch({ selection: EditorSelection.range(selectionFrom, selectionTo) });
+	selectionFrom = view.state.selection.main.from;
+	selectionTo = view.state.selection.main.to;
 	const clipboard = copiedText(view);
 
 	view.dispatch({
-		changes: { from: selection.from, to: selection.to, insert: "" },
-		selection: EditorSelection.cursor(selection.from),
+		changes: { from: selectionFrom, to: selectionTo, insert: "" },
+		selection: EditorSelection.cursor(selectionFrom),
 		annotations: [Transaction.userEvent.of("delete")],
-		effects: [suppressSameLineCursorResetEffect.of(selection.from)],
 	});
 
+	const resetPos = Math.min(selectionFrom, view.state.doc.length);
 	view.dispatch({
-		selection: EditorSelection.cursor(selection.from),
+		selection: EditorSelection.cursor(resetPos),
 	});
 
 	return { clipboard, cursor: view.state.selection.main.head };
@@ -614,6 +617,54 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			expect(afterDeleteHead).toBe(cursor);
 			expect(afterResetHead).toBe(cursor);
 			expect(view.state.selection.main.head).toBe(cursor);
+		});
+
+		it("kill-line from the visible start of a mid-line wikilink copies full raw link text and keeps the cursor on the same line", () => {
+			const doc = "bob\n\nabcdefg [[Note-08|123456]]  hhh\n\njane";
+			const cursor = doc.indexOf("123456");
+			view = createTestView(doc, cursor);
+
+			const startLine = view.state.doc.lineAt(cursor);
+			const expectedCursor = startLine.from + "abcdefg ".length;
+			const result = emulateEmacsKillLine(view);
+
+			expect(result.clipboard).toBe("[[Note-08|123456]]  hhh");
+			expect(view.state.doc.toString()).toBe("bob\n\nabcdefg \n\njane");
+			expect(view.state.doc.lineAt(result.cursor).number).toBe(startLine.number);
+			expect(result.cursor).toBe(expectedCursor);
+		});
+
+		it("kill-line from immediately before a mid-line piped wikilink copies full raw link text and keeps the cursor on the same line", () => {
+			const doc = "bob\n\nabcdefg [[Note-08|123456]]  hhh\n\njane";
+			// Cursor at the visible edge just before the link, which is link.from
+			// (the hidden `[[` position).  The user cannot distinguish this from
+			// the end of the preceding space visually.
+			const cursor = doc.indexOf("[[Note-08");
+			view = createTestView(doc, cursor);
+
+			const startLine = view.state.doc.lineAt(cursor);
+			const expectedCursor = startLine.from + "abcdefg ".length;
+			const result = emulateEmacsKillLine(view);
+
+			expect(result.clipboard).toBe("[[Note-08|123456]]  hhh");
+			expect(view.state.doc.toString()).toBe("bob\n\nabcdefg \n\njane");
+			expect(view.state.doc.lineAt(result.cursor).number).toBe(startLine.number);
+			expect(result.cursor).toBe(expectedCursor);
+		});
+
+		it("kill-line from the visible start of a mid-line markdown link copies full raw link text and keeps the cursor on the same line", () => {
+			const doc = "bob\n\nabcdefg [123456](https://example.com)  hhh\n\njane";
+			const cursor = doc.indexOf("123456");
+			view = createTestView(doc, cursor);
+
+			const startLine = view.state.doc.lineAt(cursor);
+			const expectedCursor = startLine.from + "abcdefg ".length;
+			const result = emulateEmacsKillLine(view);
+
+			expect(result.clipboard).toBe("[123456](https://example.com)  hhh");
+			expect(view.state.doc.toString()).toBe("bob\n\nabcdefg \n\njane");
+			expect(view.state.doc.lineAt(result.cursor).number).toBe(startLine.number);
+			expect(result.cursor).toBe(expectedCursor);
 		});
 	});
 
