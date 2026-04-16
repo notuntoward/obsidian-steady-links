@@ -587,6 +587,34 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			expect(afterResetHead).toBe(cursor);
 			expect(view.state.selection.main.head).toBe(cursor);
 		});
+
+		it("kill-line inside a markdown link text keeps the cursor at the same visible position", () => {
+			const doc = "[abcdefg](https://example.com) bob";
+			const cursor = doc.indexOf("d");
+			view = createTestView(doc, cursor);
+
+			const line = view.state.doc.lineAt(cursor);
+			const selection = EditorSelection.range(cursor, line.to);
+			view.dispatch({ selection });
+
+			view.dispatch({
+				changes: { from: selection.from, to: selection.to, insert: "" },
+				selection: EditorSelection.cursor(selection.from),
+				annotations: [Transaction.userEvent.of("delete")],
+				effects: [suppressSameLineCursorResetEffect.of(selection.from)],
+			});
+			const afterDeleteHead = view.state.selection.main.head;
+
+			view.dispatch({
+				selection: EditorSelection.cursor(selection.from),
+			});
+			const afterResetHead = view.state.selection.main.head;
+
+			expect(view.state.doc.toString()).toBe("[abc](https://example.com)");
+			expect(afterDeleteHead).toBe(cursor);
+			expect(afterResetHead).toBe(cursor);
+			expect(view.state.selection.main.head).toBe(cursor);
+		});
 	});
 
 	// ──────────────────────────────────────────────────────────────────────
