@@ -6,15 +6,30 @@ import type { EditLinkModal } from "./EditLinkModal";
 export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 	modal: EditLinkModal;
 	inputEl: HTMLInputElement;
+	private focusValue: string = "";
 
 	constructor(app: App, textInputEl: HTMLInputElement, modal: EditLinkModal) {
 		super(app, textInputEl);
 		this.modal = modal;
 		this.inputEl = textInputEl;
+
+		// Initialize focusValue to prevent suggestions on first focus
+		this.focusValue = this.inputEl.value;
+
+		// Track the input value when focus happens
+		this.inputEl.addEventListener("focus", (e) => {
+			this.focusValue = this.inputEl.value;
+		});
 	}
 
 	async getSuggestions(query: string): Promise<SuggestionItem[]> {
 		if (isUrl(query)) return [];
+
+		// Don't show suggestions automatically on focus when tabbing
+		// Only show if the user has actually modified the input
+		if (query === this.focusValue && query.trim().length > 0) {
+			return [];
+		}
 
 		const trimmedQuery = query.trim();
 
@@ -443,7 +458,7 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 
 		// Update link text after close so the suggester popup is gone and the
 		// text input is fully visible before we write to it.
-		if (newLinkText !== null) {
+		if (newLinkText !== null && this.modal.isTextProvisional()) {
 			const textEl = this.modal.textInput.inputEl;
 			textEl.value = newLinkText;
 			this.modal.link.text = newLinkText;

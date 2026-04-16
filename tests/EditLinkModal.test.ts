@@ -1,7 +1,12 @@
-import { describe, it, expect, vi } from 'vitest';
-import { validateSubmission, parseClipboardFlags, computeConversionNotice, isTextProvisional } from '../src/modalLogic';
-import { normalizeUrl, isUrl, validateLinkDestination } from '../src/utils';
-import { LinkInfo } from '../src/types';
+import { describe, it, expect, vi } from "vitest";
+import {
+	validateSubmission,
+	parseClipboardFlags,
+	computeConversionNotice,
+	isTextProvisional,
+} from "../src/modalLogic";
+import { normalizeUrl, isUrl, validateLinkDestination } from "../src/utils";
+import { LinkInfo } from "../src/types";
 
 // ============================================================================
 // Tests for URL Normalization Logic (used in EditLinkModal.submit)
@@ -16,73 +21,73 @@ import { LinkInfo } from '../src/types';
  * 5. URL normalization before validateLinkDestination (lines 414)
  */
 
-describe('URL Normalization in EditLinkModal.submit()', () => {
-	it('should normalize www URLs (add https:// prefix)', () => {
-		const original = 'www.google.com';
+describe("URL Normalization in EditLinkModal.submit()", () => {
+	it("should normalize www URLs (add https:// prefix)", () => {
+		const original = "www.google.com";
 		const trimmed = original.trim();
 		const normalized = normalizeUrl(trimmed);
-		
+
 		expect(isUrl(normalized)).toBe(true);
-		expect(normalized).toBe('https://www.google.com');
+		expect(normalized).toBe("https://www.google.com");
 	});
 
-	it('should not modify https URLs', () => {
-		const dest = 'https://example.com';
+	it("should not modify https URLs", () => {
+		const dest = "https://example.com";
 		const trimmed = dest.trim();
 		const normalized = normalizeUrl(trimmed);
-		
-		expect(normalized).toBe('https://example.com');
+
+		expect(normalized).toBe("https://example.com");
 		expect(isUrl(normalized)).toBe(true);
 	});
 
-	it('should not modify http URLs', () => {
-		const dest = 'http://example.com';
+	it("should not modify http URLs", () => {
+		const dest = "http://example.com";
 		const trimmed = dest.trim();
 		const normalized = normalizeUrl(trimmed);
-		
-		expect(normalized).toBe('http://example.com');
+
+		expect(normalized).toBe("http://example.com");
 	});
 
-	it('should not normalize wiki link destinations', () => {
-		const dest = 'my-note';
+	it("should not normalize wiki link destinations", () => {
+		const dest = "my-note";
 		const trimmed = dest.trim();
 		const normalized = normalizeUrl(trimmed);
-		
+
 		// Non-URLs should remain unchanged
-		expect(normalized).toBe('my-note');
+		expect(normalized).toBe("my-note");
 		expect(isUrl(normalized)).toBe(false);
 	});
 
-	it('should not normalize non-URL markdown destinations', () => {
-		const dest = 'local/path/file.md';
+	it("should not normalize non-URL markdown destinations", () => {
+		const dest = "local/path/file.md";
 		const trimmed = dest.trim();
 		const normalized = normalizeUrl(trimmed);
-		
-		expect(normalized).toBe('local/path/file.md');
+
+		expect(normalized).toBe("local/path/file.md");
 		expect(isUrl(normalized)).toBe(false);
 	});
 
-	it('should trim whitespace before determining if normalization is needed', () => {
-		const dest = '  www.example.com  ';
+	it("should trim whitespace before determining if normalization is needed", () => {
+		const dest = "  www.example.com  ";
 		const trimmed = dest.trim();
 		const normalized = normalizeUrl(trimmed);
-		
-		expect(normalized).toBe('https://www.example.com');
-		expect(normalized).not.toContain('  ');
+
+		expect(normalized).toBe("https://www.example.com");
+		expect(normalized).not.toContain("  ");
 	});
 
-	it('should handle case-insensitive www protocol detection', () => {
-		const dest = '  WWW.example.com  ';
+	it("should handle case-insensitive www protocol detection", () => {
+		const dest = "  WWW.example.com  ";
 		const trimmed = dest.trim();
 		const normalized = normalizeUrl(trimmed);
-		
-		expect(normalized).toBe('https://WWW.example.com');
+
+		expect(normalized).toBe("https://WWW.example.com");
 	});
 
-	it('should validate that normalized URLs pass isUrl check', () => {
-		const urls = ['www.example.com', 'www.test.org', 'www.site.co.uk'];
-		
-		urls.forEach(url => {
+	it("should validate that normalized URLs pass isUrl check", () => {
+		const urls = ["www.example.com", "www.test.org", "www.site.co.uk"];
+
+		urls.forEach((url) => {
 			const normalized = normalizeUrl(url);
 			expect(isUrl(normalized)).toBe(true);
 		});
@@ -93,115 +98,89 @@ describe('URL Normalization in EditLinkModal.submit()', () => {
 // Tests for Embed State Changes and updateUIState
 // ============================================================================
 
-describe('Embed State Change Impact on Validation (updateUIState behavior)', () => {
-	it('should generate different warnings when embed state changes from false to true', () => {
+describe("Embed State Change Impact on Validation (updateUIState behavior)", () => {
+	it("should generate different warnings when embed state changes from false to true", () => {
 		// With isEmbed: false, no self-embed warning for wiki links
 		const resultNonEmbed = validateLinkDestination(
-			'my-note',
-			'My Note',
+			"my-note",
+			"My Note",
 			true,
 			false,
-			'my-note.md'
+			"my-note.md"
 		);
-		
+
 		// With isEmbed: true, should potentially have self-embed warning
-		const resultEmbed = validateLinkDestination(
-			'my-note',
-			'My Note',
-			true,
-			true,
-			'my-note.md'
-		);
-		
+		const resultEmbed = validateLinkDestination("my-note", "My Note", true, true, "my-note.md");
+
 		// Verify that embed state affects validation
 		expect(resultNonEmbed).toBeDefined();
 		expect(resultEmbed).toBeDefined();
 	});
 
-	it('should pass isEmbed parameter to validateLinkDestination', () => {
+	it("should pass isEmbed parameter to validateLinkDestination", () => {
 		// This verifies the change on line 414:
 		// validateLinkDestination(dest, linkText, this.isWiki, isEmbed, currentFilePath)
-		
+
 		const validationWithoutEmbed = validateLinkDestination(
-			'media.pdf',
-			'PDF File',
+			"media.pdf",
+			"PDF File",
 			false,
 			false
 		);
-		
-		const validationWithEmbed = validateLinkDestination(
-			'media.pdf',
-			'PDF File',
-			false,
-			true
-		);
-		
+
+		const validationWithEmbed = validateLinkDestination("media.pdf", "PDF File", false, true);
+
 		expect(validationWithoutEmbed).toBeDefined();
 		expect(validationWithEmbed).toBeDefined();
 	});
 
-	it('should detect self-embedding for wiki links', () => {
+	it("should detect self-embedding for wiki links", () => {
 		// When currentFilePath matches destination, should warn about self-embed
-		const result = validateLinkDestination(
-			'my-note',
-			'My Note',
-			true,
-			true,
-			'my-note.md'
-		);
-		
+		const result = validateLinkDestination("my-note", "My Note", true, true, "my-note.md");
+
 		// Should have a warning about self-embedding
 		expect(result.warnings.length > 0).toBe(true);
-		const selfEmbedWarning = result.warnings.find(w => 
-			w.text.includes('embedding itself')
-		);
+		const selfEmbedWarning = result.warnings.find((w) => w.text.includes("embedding itself"));
 		expect(selfEmbedWarning).toBeDefined();
 	});
 
-	it('should not warn about self-embedding for different notes', () => {
+	it("should not warn about self-embedding for different notes", () => {
 		const result = validateLinkDestination(
-			'other-note',
-			'Other Note',
+			"other-note",
+			"Other Note",
 			true,
 			true,
-			'my-note.md'
+			"my-note.md"
 		);
-		
+
 		// Should not have self-embed warning
-		const selfEmbedWarning = result.warnings.find(w => 
-			w.text.includes('embedding itself')
-		);
+		const selfEmbedWarning = result.warnings.find((w) => w.text.includes("embedding itself"));
 		expect(selfEmbedWarning).toBeUndefined();
 	});
 
-	it('should warn about non-embeddable URLs when embed is true', () => {
-		const result = validateLinkDestination(
-			'https://example.com',
-			'Website',
-			false,
-			true
-		);
-		
+	it("should warn about non-embeddable URLs when embed is true", () => {
+		const result = validateLinkDestination("https://example.com", "Website", false, true);
+
 		// Should have a warning about non-embeddable URLs
-		const nonEmbeddableWarning = result.warnings.find(w =>
-			w.text.includes('cannot be embedded')
+		const nonEmbeddableWarning = result.warnings.find((w) =>
+			w.text.includes("cannot be embedded")
 		);
 		expect(nonEmbeddableWarning).toBeDefined();
 	});
 
-	it('should not warn about embeddable media URLs', () => {
-		const embedableExtensions = ['image.jpg', 'video.mp4', 'audio.mp3', 'document.pdf'];
-		
-		embedableExtensions.forEach(dest => {
+	it("should not warn about embeddable media URLs", () => {
+		const embedableExtensions = ["image.jpg", "video.mp4", "audio.mp3", "document.pdf"];
+
+		embedableExtensions.forEach((dest) => {
 			const result = validateLinkDestination(
-				'https://example.com/' + dest,
+				"https://example.com/" + dest,
 				dest,
 				false,
 				true
 			);
-			
-			const nonEmbeddableWarning = result.warnings.find(w =>
-				w.text.includes('cannot be embedded')
+
+			const nonEmbeddableWarning = result.warnings.find((w) =>
+				w.text.includes("cannot be embedded")
 			);
 			// Media files should not generate non-embeddable warning
 			expect(nonEmbeddableWarning).toBeUndefined();
@@ -213,31 +192,31 @@ describe('Embed State Change Impact on Validation (updateUIState behavior)', () 
 // Tests for Clipboard Conversion Notice Parsing
 // ============================================================================
 
-describe('Clipboard Flags Parsing (for conversion notice)', () => {
+describe("Clipboard Flags Parsing (for conversion notice)", () => {
 	it('should correctly parse "Used text & destination" notice', () => {
-		const flags = parseClipboardFlags('Used text & destination from link in clipboard');
-		
+		const flags = parseClipboardFlags("Used text & destination from link in clipboard");
+
 		expect(flags.clipboardUsedText).toBe(true);
 		expect(flags.clipboardUsedDest).toBe(true);
 	});
 
 	it('should correctly parse "Used text" only notice', () => {
-		const flags = parseClipboardFlags('Used text from link in clipboard');
-		
+		const flags = parseClipboardFlags("Used text from link in clipboard");
+
 		expect(flags.clipboardUsedText).toBe(true);
 		expect(flags.clipboardUsedDest).toBe(false);
 	});
 
 	it('should correctly parse "Used destination" only notice', () => {
-		const flags = parseClipboardFlags('Used destination from link in clipboard');
-		
+		const flags = parseClipboardFlags("Used destination from link in clipboard");
+
 		expect(flags.clipboardUsedText).toBe(false);
 		expect(flags.clipboardUsedDest).toBe(true);
 	});
 
-	it('should return false/false for unrelated notices', () => {
-		const flags = parseClipboardFlags('URL converted: www.x.com → https://www.x.com');
-		
+	it("should return false/false for unrelated notices", () => {
+		const flags = parseClipboardFlags("URL converted: www.x.com → https://www.x.com");
+
 		expect(flags.clipboardUsedText).toBe(false);
 		expect(flags.clipboardUsedDest).toBe(false);
 	});
@@ -247,61 +226,61 @@ describe('Clipboard Flags Parsing (for conversion notice)', () => {
 // Tests for Conversion Notice Computation Updates
 // ============================================================================
 
-describe('Conversion Notice Updates on Field Changes', () => {
-	it('should return null when clipboard text is modified', () => {
+describe("Conversion Notice Updates on Field Changes", () => {
+	it("should return null when clipboard text is modified", () => {
 		const notice = computeConversionNotice(
-			'modified text',      // current
-			'dest',               // current
-			'original text',      // original
-			'dest',               // original
-			true,                 // clipboardUsedText
-			false                 // clipboardUsedDest
+			"modified text", // current
+			"dest", // current
+			"original text", // original
+			"dest", // original
+			true, // clipboardUsedText
+			false // clipboardUsedDest
 		);
-		
+
 		// Notice should disappear when field is modified
 		expect(notice).toBeNull();
 	});
 
-	it('should return null when clipboard dest is modified', () => {
+	it("should return null when clipboard dest is modified", () => {
 		const notice = computeConversionNotice(
-			'text',               // current
-			'modified dest',      // current
-			'text',               // original
-			'original dest',      // original
-			false,                // clipboardUsedText
-			true                  // clipboardUsedDest
+			"text", // current
+			"modified dest", // current
+			"text", // original
+			"original dest", // original
+			false, // clipboardUsedText
+			true // clipboardUsedDest
 		);
-		
+
 		// Notice should disappear when field is modified
 		expect(notice).toBeNull();
 	});
 
-	it('should return notice when fields are not modified', () => {
+	it("should return notice when fields are not modified", () => {
 		const notice = computeConversionNotice(
-			'original text',      // current
-			'original dest',      // current
-			'original text',      // original
-			'original dest',      // original
-			true,                 // clipboardUsedText
-			true                  // clipboardUsedDest
+			"original text", // current
+			"original dest", // current
+			"original text", // original
+			"original dest", // original
+			true, // clipboardUsedText
+			true // clipboardUsedDest
 		);
-		
+
 		// Notice should remain
-		expect(notice).toBe('Used text & destination from link in clipboard');
+		expect(notice).toBe("Used text & destination from link in clipboard");
 	});
 
-	it('should update notice when only text flag is set', () => {
+	it("should update notice when only text flag is set", () => {
 		const notice = computeConversionNotice(
-			'original text',      // current
-			'any dest',           // current
-			'original text',      // original
-			'other dest',         // original
-			true,                 // clipboardUsedText
-			false                 // clipboardUsedDest
+			"original text", // current
+			"any dest", // current
+			"original text", // original
+			"other dest", // original
+			true, // clipboardUsedText
+			false // clipboardUsedDest
 		);
-		
+
 		// Notice should only mention text
-		expect(notice).toBe('Used text from link in clipboard');
+		expect(notice).toBe("Used text from link in clipboard");
 	});
 });
 
@@ -309,57 +288,57 @@ describe('Conversion Notice Updates on Field Changes', () => {
 // Tests for Preview Mode Embed Detection Notice Logic
 // ============================================================================
 
-describe('Preview Mode Embed Detection Notice Conditions', () => {
-	it('should generate embed detection warning for unembedded wiki links in preview mode', () => {
+describe("Preview Mode Embed Detection Notice Conditions", () => {
+	it("should generate embed detection warning for unembedded wiki links in preview mode", () => {
 		// Conditions:
 		// - isNewLink: false (existing link)
 		// - link.isEmbed: false (not embedded)
 		// - mode: 'preview' or 'live'
-		
+
 		const isNewLink = false;
 		const isEmbed = false;
-		const mode = 'preview';
-		
+		const mode = "preview";
+
 		// These conditions should trigger the notice
-		const shouldShowNotice = !isNewLink && !isEmbed && (mode === 'preview' || mode === 'live');
+		const shouldShowNotice = !isNewLink && !isEmbed && (mode === "preview" || mode === "live");
 		expect(shouldShowNotice).toBe(true);
 	});
 
-	it('should not generate notice for new links', () => {
+	it("should not generate notice for new links", () => {
 		const isNewLink = true;
 		const isEmbed = false;
-		
+
 		// New links should not show the notice
 		const shouldShowNotice = !isNewLink && !isEmbed;
 		expect(shouldShowNotice).toBe(false);
 	});
 
-	it('should not generate notice for already embedded links', () => {
+	it("should not generate notice for already embedded links", () => {
 		const isNewLink = false;
 		const isEmbed = true;
-		
+
 		// Embedded links should not show the notice
 		const shouldShowNotice = !isNewLink && !isEmbed;
 		expect(shouldShowNotice).toBe(false);
 	});
 
-	it('should not generate notice in source mode', () => {
+	it("should not generate notice in source mode", () => {
 		const isNewLink = false;
 		const isEmbed = false;
-		const mode = 'source' as string;
-		
+		const mode = "source" as string;
+
 		// Source mode should not show the notice
-		const shouldShowNotice = !isNewLink && !isEmbed && (mode === 'preview' || mode === 'live');
+		const shouldShowNotice = !isNewLink && !isEmbed && (mode === "preview" || mode === "live");
 		expect(shouldShowNotice).toBe(false);
 	});
 
-	it('should generate notice in live mode', () => {
+	it("should generate notice in live mode", () => {
 		const isNewLink = false;
 		const isEmbed = false;
-		const mode = 'live' as string;
-		
+		const mode = "live" as string;
+
 		// Live mode should show the notice
-		const shouldShowNotice = !isNewLink && !isEmbed && (mode === 'preview' || mode === 'live');
+		const shouldShowNotice = !isNewLink && !isEmbed && (mode === "preview" || mode === "live");
 		expect(shouldShowNotice).toBe(true);
 	});
 });
@@ -368,60 +347,45 @@ describe('Preview Mode Embed Detection Notice Conditions', () => {
 // Tests for URL Validation in Link Destination
 // ============================================================================
 
-describe('validateLinkDestination with URL normalization', () => {
-	it('should detect when URL will be normalized on submission', () => {
-		const result = validateLinkDestination(
-			'www.example.com',
-			'Example',
-			false,
-			false
-		);
-		
+describe("validateLinkDestination with URL normalization", () => {
+	it("should detect when URL will be normalized on submission", () => {
+		const result = validateLinkDestination("www.example.com", "Example", false, false);
+
 		// Should warn about URL conversion
-		const conversionWarning = result.warnings.find(w =>
-			w.text.includes('URL will be converted')
+		const conversionWarning = result.warnings.find((w) =>
+			w.text.includes("URL will be converted")
 		);
 		expect(conversionWarning).toBeDefined();
 	});
 
-	it('should not warn about https URLs that are already normalized', () => {
-		const result = validateLinkDestination(
-			'https://example.com',
-			'Example',
-			false,
-			false
-		);
-		
+	it("should not warn about https URLs that are already normalized", () => {
+		const result = validateLinkDestination("https://example.com", "Example", false, false);
+
 		// Should not have conversion warning
-		const conversionWarning = result.warnings.find(w =>
-			w.text.includes('URL will be converted')
+		const conversionWarning = result.warnings.find((w) =>
+			w.text.includes("URL will be converted")
 		);
 		expect(conversionWarning).toBeUndefined();
 	});
 
-	it('should handle empty destination gracefully', () => {
-		const result = validateLinkDestination(
-			'',
-			'Text',
-			false,
-			false
-		);
-		
+	it("should handle empty destination gracefully", () => {
+		const result = validateLinkDestination("", "Text", false, false);
+
 		// Should not crash
 		expect(result).toBeDefined();
 	});
 
-	it('should validate markdown links cannot be wikilinks', () => {
+	it("should validate markdown links cannot be wikilinks", () => {
 		const result = validateLinkDestination(
-			'https://example.com',
-			'Link',
-			true,  // isWiki: true
+			"https://example.com",
+			"Link",
+			true, // isWiki: true
 			false
 		);
-		
+
 		// Should warn that URLs cannot be wikilinks
-		const wikiLinkWarning = result.warnings.find(w =>
-			w.text.includes('cannot link to external URLs')
+		const wikiLinkWarning = result.warnings.find((w) =>
+			w.text.includes("cannot link to external URLs")
 		);
 		expect(wikiLinkWarning).toBeDefined();
 	});
@@ -431,41 +395,41 @@ describe('validateLinkDestination with URL normalization', () => {
 // Tests for Toggle Key Handlers (Space toggles, Enter submits)
 // ============================================================================
 
-describe('Toggle Key Handler Behavior', () => {
-	it('should toggle on Space key for link type toggle', () => {
+describe("Toggle Key Handler Behavior", () => {
+	it("should toggle on Space key for link type toggle", () => {
 		// The toggle key handler should respond to Space but not Enter
-		const spaceKey: string = ' ';
-		const enterKey: string = 'Enter';
-		
+		const spaceKey: string = " ";
+		const enterKey: string = "Enter";
+
 		// Space should trigger toggle
-		const shouldToggleOnSpace = spaceKey === ' ' || spaceKey === 'Spacebar';
+		const shouldToggleOnSpace = spaceKey === " " || spaceKey === "Spacebar";
 		expect(shouldToggleOnSpace).toBe(true);
-		
+
 		// Enter should NOT trigger toggle (it should submit)
-		const shouldToggleOnEnter = enterKey === ' ' || enterKey === 'Spacebar';
+		const shouldToggleOnEnter = enterKey === " " || enterKey === "Spacebar";
 		expect(shouldToggleOnEnter).toBe(false);
 	});
 
-	it('should toggle on Space key for embed toggle', () => {
+	it("should toggle on Space key for embed toggle", () => {
 		// Same behavior for embed toggle
-		const spaceKey: string = ' ';
-		const enterKey: string = 'Enter';
-		
-		const shouldToggleOnSpace = spaceKey === ' ' || spaceKey === 'Spacebar';
+		const spaceKey: string = " ";
+		const enterKey: string = "Enter";
+
+		const shouldToggleOnSpace = spaceKey === " " || spaceKey === "Spacebar";
 		expect(shouldToggleOnSpace).toBe(true);
-		
-		const shouldToggleOnEnter = enterKey === ' ' || enterKey === 'Spacebar';
+
+		const shouldToggleOnEnter = enterKey === " " || enterKey === "Spacebar";
 		expect(shouldToggleOnEnter).toBe(false);
 	});
 
-	it('should allow Enter to submit from toggle focus', () => {
+	it("should allow Enter to submit from toggle focus", () => {
 		// When Enter is pressed on a toggle, it should propagate to the modal's
 		// keydown handler which calls submit()
-		const enterKey: string = 'Enter';
-		
+		const enterKey: string = "Enter";
+
 		// The toggle handler should NOT prevent default for Enter
 		// (it only handles Space/Spacebar)
-		const handledByToggle = enterKey === ' ' || enterKey === 'Spacebar';
+		const handledByToggle = enterKey === " " || enterKey === "Spacebar";
 		expect(handledByToggle).toBe(false);
 	});
 });
@@ -474,36 +438,42 @@ describe('Toggle Key Handler Behavior', () => {
 // Tests for onCancel Callback
 // ============================================================================
 
-describe('onCancel Callback Behavior', () => {
-	it('should call onCancel when ESC is pressed', () => {
+describe("onCancel Callback Behavior", () => {
+	it("should call onCancel when ESC is pressed", () => {
 		// The modal should call onCancel before closing on ESC
 		let cancelCalled = false;
-		const onCancel = () => { cancelCalled = true; };
-		
+		const onCancel = () => {
+			cancelCalled = true;
+		};
+
 		// Simulate the ESC key handler behavior
-		const escapeKey: string = 'Escape';
-		if (escapeKey === 'Escape') {
+		const escapeKey: string = "Escape";
+		if (escapeKey === "Escape") {
 			if (onCancel) {
 				onCancel();
 			}
 		}
-		
+
 		expect(cancelCalled).toBe(true);
 	});
 
-	it('should not call onCancel on submit', () => {
+	it("should not call onCancel on submit", () => {
 		// The onCancel should only be called on ESC, not on submit
 		let cancelCalled = false;
-		const onCancel = () => { cancelCalled = true; };
-		
+		const onCancel = () => {
+			cancelCalled = true;
+		};
+
 		// Simulate submit behavior (should NOT call onCancel)
-		const onSubmit = () => { /* submit logic */ };
+		const onSubmit = () => {
+			/* submit logic */
+		};
 		onSubmit();
-		
+
 		expect(cancelCalled).toBe(false);
 	});
 
-	it('should allow onCancel to be undefined', () => {
+	it("should allow onCancel to be undefined", () => {
 		// The modal should work without an onCancel callback
 		// Test that the pattern used in the modal doesn't throw
 		const maybeCall = (callback: (() => void) | undefined) => {
@@ -511,7 +481,7 @@ describe('onCancel Callback Behavior', () => {
 				callback();
 			}
 		};
-		
+
 		// This should not throw when passed undefined
 		expect(() => maybeCall(undefined)).not.toThrow();
 	});
@@ -527,92 +497,116 @@ describe('onCancel Callback Behavior', () => {
 //   4. whether current text still matches link.text (the autofilled value)
 // ============================================================================
 
-describe('isTextProvisional() logic', () => {
-	it('returns true when text field is empty', () => {
-		expect(isTextProvisional({
-			textModifiedByUser: false,
-			currentText: '',
-			clipboardUsedText: false,
-			clipboardUsedDest: false,
-			linkText: '',
-		})).toBe(true);
+describe("isTextProvisional() logic", () => {
+	it("returns true when text field is empty", () => {
+		expect(
+			isTextProvisional({
+				textModifiedByUser: false,
+				currentText: "",
+				clipboardUsedText: false,
+				clipboardUsedDest: false,
+				linkText: "",
+				isNewLink: true,
+			})
+		).toBe(true);
 	});
 
-	it('returns true when text field contains only whitespace', () => {
-		expect(isTextProvisional({
-			textModifiedByUser: false,
-			currentText: '   ',
-			clipboardUsedText: false,
-			clipboardUsedDest: false,
-			linkText: '',
-		})).toBe(true);
+	it("returns true when text field contains only whitespace", () => {
+		expect(
+			isTextProvisional({
+				textModifiedByUser: false,
+				currentText: "   ",
+				clipboardUsedText: false,
+				clipboardUsedDest: false,
+				linkText: "",
+				isNewLink: true,
+			})
+		).toBe(true);
 	});
 
-	it('returns false when textModifiedByUser is true (even with empty text)', () => {
-		expect(isTextProvisional({
-			textModifiedByUser: true,
-			currentText: '',
-			clipboardUsedText: false,
-			clipboardUsedDest: false,
-			linkText: '',
-		})).toBe(false);
+	it("returns false when textModifiedByUser is true (even with empty text)", () => {
+		expect(
+			isTextProvisional({
+				textModifiedByUser: true,
+				currentText: "",
+				clipboardUsedText: false,
+				clipboardUsedDest: false,
+				linkText: "",
+				isNewLink: true,
+			})
+		).toBe(false);
 	});
 
-	it('returns false when text has content and no clipboard flags', () => {
+	it("returns false when text has content and no clipboard flags", () => {
 		// Text came from a selection — not provisional
-		expect(isTextProvisional({
-			textModifiedByUser: false,
-			currentText: 'Selected Text',
-			clipboardUsedText: false,
-			clipboardUsedDest: false,
-			linkText: 'Selected Text',
-		})).toBe(false);
+		expect(
+			isTextProvisional({
+				textModifiedByUser: false,
+				currentText: "Selected Text",
+				clipboardUsedText: false,
+				clipboardUsedDest: false,
+				linkText: "Selected Text",
+				isNewLink: false,
+			})
+		).toBe(false);
 	});
 
-	it('returns true when text matches clipboard-text-only autofill and not modified', () => {
+	it("returns true when text matches clipboard-text-only autofill and not modified", () => {
 		// conversionNotice = "Used text from link in clipboard" → clipboardUsedText=true, clipboardUsedDest=false
-		const flags = parseClipboardFlags('Used text from link in clipboard');
-		expect(isTextProvisional({
-			textModifiedByUser: false,
-			currentText: 'ClipText',
-			clipboardUsedText: flags.clipboardUsedText,
-			clipboardUsedDest: flags.clipboardUsedDest,
-			linkText: 'ClipText',
-		})).toBe(true);
+		const flags = parseClipboardFlags("Used text from link in clipboard");
+		expect(
+			isTextProvisional({
+				textModifiedByUser: false,
+				currentText: "ClipText",
+				clipboardUsedText: flags.clipboardUsedText,
+				clipboardUsedDest: flags.clipboardUsedDest,
+				linkText: "ClipText",
+				isNewLink: true,
+			})
+		).toBe(true);
 	});
 
-	it('returns false when clipboard text was autofilled but user has since modified it', () => {
-		const flags = parseClipboardFlags('Used text from link in clipboard');
-		expect(isTextProvisional({
-			textModifiedByUser: true,
-			currentText: 'ClipText',
-			clipboardUsedText: flags.clipboardUsedText,
-			clipboardUsedDest: flags.clipboardUsedDest,
-			linkText: 'ClipText',
-		})).toBe(false);
+	it("returns false when clipboard text was autofilled but user has since modified it", () => {
+		const flags = parseClipboardFlags("Used text from link in clipboard");
+		expect(
+			isTextProvisional({
+				textModifiedByUser: true,
+				currentText: "ClipText",
+				clipboardUsedText: flags.clipboardUsedText,
+				clipboardUsedDest: flags.clipboardUsedDest,
+				linkText: "ClipText",
+				isNewLink: true,
+			})
+		).toBe(false);
 	});
 
-	it('returns false when both text AND dest came from clipboard (full link autofill)', () => {
+	it("returns false when both text AND dest came from clipboard (full link autofill)", () => {
 		// conversionNotice = "Used text & destination from link in clipboard" → both true
-		const flags = parseClipboardFlags('Used text & destination from link in clipboard');
-		expect(isTextProvisional({
-			textModifiedByUser: false,
-			currentText: 'SomeText',
-			clipboardUsedText: flags.clipboardUsedText,
-			clipboardUsedDest: flags.clipboardUsedDest,
-			linkText: 'SomeText',
-		})).toBe(false);
+		const flags = parseClipboardFlags("Used text & destination from link in clipboard");
+		expect(
+			isTextProvisional({
+				textModifiedByUser: false,
+				currentText: "SomeText",
+				clipboardUsedText: flags.clipboardUsedText,
+				clipboardUsedDest: flags.clipboardUsedDest,
+				linkText: "SomeText",
+				isNewLink: true,
+			})
+		).toBe(false);
 	});
 
-	it('returns false when clipboard text changed from autofilled value', () => {
+	it("returns false when clipboard text changed from autofilled value", () => {
 		// User has cleared and retyped something different — no longer matches link.text
-		const flags = parseClipboardFlags('Used text from link in clipboard');
-		expect(isTextProvisional({
-			textModifiedByUser: false, // event not fired, but value changed externally
-			currentText: 'New text',
-			clipboardUsedText: flags.clipboardUsedText,
-			clipboardUsedDest: flags.clipboardUsedDest,
-			linkText: 'OriginalClipText',
-		})).toBe(false);
+		const flags = parseClipboardFlags("Used text from link in clipboard");
+		expect(
+			isTextProvisional({
+				textModifiedByUser: false, // event not fired, but value changed externally
+				currentText: "New text",
+				clipboardUsedText: flags.clipboardUsedText,
+				clipboardUsedDest: flags.clipboardUsedDest,
+				linkText: "OriginalClipText",
+				isNewLink: true,
+			})
+		).toBe(false);
 	});
 });

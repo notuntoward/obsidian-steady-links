@@ -305,9 +305,12 @@ export class EditLinkModal extends Modal {
 				if (document.activeElement === this.destInput.inputEl) {
 					const isOpen = this.fileSuggest.isSuggestOpen;
 					if (isOpen && this.destInput.getValue().trim().length > 0) {
-						e.preventDefault();
-						this.fileSuggest.selectCurrentSuggestion();
-						return; // Stay on dest input after accepting suggestion
+						// Only accept suggestion if text is provisional (not from existing link)
+						if (this.isTextProvisional()) {
+							e.preventDefault();
+							this.fileSuggest.selectCurrentSuggestion();
+							return; // Stay on dest input after accepting suggestion
+						}
 					}
 				}
 
@@ -616,6 +619,7 @@ export class EditLinkModal extends Modal {
 			clipboardUsedText: this.clipboardUsedText,
 			clipboardUsedDest: this.clipboardUsedDest,
 			linkText: this.link.text,
+			isNewLink: this.isNewLink,
 		});
 	}
 

@@ -63,6 +63,8 @@ export interface IsTextProvisionalParams {
 	clipboardUsedDest: boolean;
 	/** The text value that was set when the modal opened (link.text) */
 	linkText: string;
+	/** Whether this is a new link being created */
+	isNewLink: boolean;
 }
 
 /**
@@ -80,6 +82,11 @@ export function isTextProvisional(params: IsTextProvisionalParams): boolean {
 	if (!t) return true;
 	if (params.clipboardUsedText && !params.clipboardUsedDest) {
 		return t === params.linkText.trim();
+	}
+	// Return false for existing links (not new links) so existing link text
+	// is never automatically changed
+	if (!params.isNewLink) {
+		return false;
 	}
 	return false;
 }
@@ -111,30 +118,30 @@ export type FocusAction = "text-focus" | "text-select" | "dest-focus" | "dest-se
 export function determineInitialFocus(
 	linkText: string,
 	linkDest: string,
-	shouldSelectText: boolean,
+	shouldSelectText: boolean
 ): FocusAction {
 	// If the link text is empty, focus and select the text field
 	if (!linkText || linkText.length === 0) {
 		return "text-select";
 	}
-	
+
 	// If destination is empty, focus destination field
 	if (!linkDest || linkDest.length === 0) {
 		return "dest-focus";
 	}
-	
+
 	// If shouldSelectText is true (e.g., cursor was on a bare URL), prioritize focusing text
 	// This ensures the link text is focused and selected when editing bare URLs
 	if (shouldSelectText) {
 		return "text-select";
 	}
-	
+
 	// For very long destinations or almost-URLs without shouldSelectText flag,
 	// focus and select the destination field
 	if (linkDest.length > 500 || isAlmostUrl(linkDest)) {
 		return "dest-select";
 	}
-	
+
 	// Default: focus text and select (since text has content)
 	return "text-select";
 }
@@ -196,7 +203,7 @@ export function computeConversionNotice(
 	originalText: string,
 	originalDest: string,
 	clipboardUsedText: boolean,
-	clipboardUsedDest: boolean,
+	clipboardUsedDest: boolean
 ): string | null {
 	const textStillFromClipboard = clipboardUsedText && currentText === originalText;
 	const destStillFromClipboard = clipboardUsedDest && currentDest === originalDest;
@@ -355,7 +362,10 @@ export interface CloseCursorParams {
  * @param params  All the information needed to compute the position
  * @returns `{ line, ch }` cursor position that will close the link
  */
-export function computeCloseCursorPosition(params: CloseCursorParams): { line: number; ch: number } {
+export function computeCloseCursorPosition(params: CloseCursorParams): {
+	line: number;
+	ch: number;
+} {
 	const { linkStart, linkEnd, lineLength, line, preferRight, lineCount, prevLineLength } = params;
 
 	if (linkStart === 0 && linkEnd >= lineLength) {
@@ -452,7 +462,9 @@ export interface SkipLinkParams {
  * @param params All the information needed to compute the position
  * @returns `{ line, ch }` cursor position, or null if cursor is not in a link
  */
-export function computeSkipLinkPosition(params: SkipLinkParams): { line: number; ch: number } | null {
+export function computeSkipLinkPosition(
+	params: SkipLinkParams
+): { line: number; ch: number } | null {
 	const {
 		linkStart,
 		linkEnd,
@@ -464,7 +476,7 @@ export function computeSkipLinkPosition(params: SkipLinkParams): { line: number;
 		lineCount,
 		prevLineLength,
 		isSourceMode,
-		keepLinksSteady
+		keepLinksSteady,
 	} = params;
 
 	// Check if cursor is within the link (including edges)
@@ -487,7 +499,7 @@ export function computeSkipLinkPosition(params: SkipLinkParams): { line: number;
 			line,
 			lineCount,
 			prevLineLength,
-			skipRight: isNearerLeftEdge
+			skipRight: isNearerLeftEdge,
 		});
 	}
 

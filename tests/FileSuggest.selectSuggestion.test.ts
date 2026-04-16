@@ -45,6 +45,7 @@ function makeModalStub(initialText = "Old Alias") {
 		handleDestInput: vi.fn(),
 		showAliasNotice: vi.fn(),
 		clearAliasNotice: vi.fn(),
+		isTextProvisional: vi.fn().mockReturnValue(true),
 		// expose destInputEl so tests can read the final dest value
 		_destInputEl: destInputEl,
 	};
@@ -311,5 +312,131 @@ describe("FileSuggest.selectSuggestion — link text update", () => {
 		await suggest.selectSuggestion(item);
 
 		expect(modal.textInput.inputEl.value).toBe("diagram.png");
+	});
+
+	it("does not update link text when isTextProvisional returns false (existing links)", async () => {
+		const modal = makeModalStub("Existing Text");
+		modal.isTextProvisional = vi.fn().mockReturnValue(false); // Simulate existing link
+
+		const suggest = new FileSuggest(new App(), modal._destInputEl, modal);
+
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const file: any = new TFile({
+			path: "note.md",
+			name: "note.md",
+			basename: "note",
+			extension: "md",
+		});
+		const item: SuggestionItem = {
+			type: "file",
+			file,
+			basename: "note",
+			path: file.path,
+			name: "note.md",
+			extension: "md",
+			displayPath: "",
+		};
+
+		const originalText = modal.textInput.inputEl.value;
+
+		await suggest.selectSuggestion(item);
+
+		// Text should NOT be updated for existing links
+		expect(modal.textInput.inputEl.value).toBe(originalText);
+		expect(modal.link.text).toBe(originalText);
+		expect(modal.textModifiedByUser).toBe(false); // Should not be set
+		expect(modal.showAliasNotice).not.toHaveBeenCalled();
+		expect(modal.clearAliasNotice).not.toHaveBeenCalled();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tests for FileSuggest focus behavior
+// ---------------------------------------------------------------------------
+
+describe("FileSuggest focus behavior", () => {
+	let mockGetFiles: any;
+	let mockGetHeadingsInCurrentFile: any;
+	let mockGetAllHeadings: any;
+
+	beforeEach(() => {
+		// Mock the internal methods to return some test data
+		mockGetFiles = vi
+			.fn()
+			.mockReturnValue([
+				{ type: "file", basename: "Test Note", name: "Test Note.md", extension: "md" },
+			]);
+		mockGetHeadingsInCurrentFile = vi.fn().mockReturnValue([]);
+		mockGetAllHeadings = vi.fn().mockReturnValue([]);
+	});
+
+	it("returns empty suggestions when query matches focus value (tabbing to existing content)", async () => {
+		const modal = makeModalStub();
+		const app = new App();
+		const suggest = new FileSuggest(app, modal._destInputEl, modal);
+
+		// Mock the internal methods
+		(suggest as any).getFiles = mockGetFiles;
+		(suggest as any).getHeadingsInCurrentFile = mockGetHeadingsInCurrentFile;
+		(suggest as any).getAllHeadings = mockGetAllHeadings;
+
+		// Simulate tabbing to destination field with existing content
+		modal._destInputEl.value = "Test Note";
+		// Manually set focusValue since focus events may not fire reliably in tests
+		(suggest as any).focusValue = "Test Note";
+
+		// getSuggestions should return empty array when query matches focus value
+		const suggestions = await suggest.getSuggestions("Test Note");
+		expect(suggestions).toEqual([]);
+	});
+
+	it("returns suggestions when query differs from focus value (user typing)", async () => {
+		const modal = makeModalStub();
+		const app = new App();
+		const suggest = new FileSuggest(app, modal._destInputEl, modal);
+
+		// Mock the internal methods
+		(suggest as any).getFiles = mockGetFiles;
+		(suggest as any).getHeadingsInCurrentFile = mockGetHeadingsInCurrentFile;
+		(suggest as any).getAllHeadings = mockGetAllHeadings;
+
+		// Set up initial focus value
+		modal._destInputEl.value = "Test";
+		(suggest as any).focusValue = "Test"; // Manually set since focus events may not fire in tests
+
+		// Simulate user typing more - should return suggestions
+		const suggestions = await suggest.getSuggestions("Test Note");
+		expect(suggestions.length).toBeGreaterThan(0);
+	});
+
+	it("returns suggestions for empty focus value (new link creation)", async () => {
+		const modal = makeModalStub();
+		const app = new App();
+		const suggest = new FileSuggest(app, modal._destInputEl, modal);
+
+		// Mock the internal methods
+		(suggest as any).getFiles = mockGetFiles;
+		(suggest as any).getHeadingsInCurrentFile = mockGetHeadingsInCurrentFile;
+		(suggest as any).getAllHeadings = mockGetAllHeadings;
+
+		// Empty field should allow suggestions
+		const suggestions = await suggest.getSuggestions("Test Note");
+		expect(suggestions.length).toBeGreaterThan(0);
+	});
+
+	it("focus value is initialized correctly in constructor", async () => {
+		const modal = makeModalStub();
+		modal._destInputEl.value = "Test Note";
+		const app = new App();
+		const suggest = new FileSuggest(app, modal._destInputEl, modal);
+
+		// Mock the internal methods
+		(suggest as any).getFiles = mockGetFiles;
+		(suggest as any).getHeadingsInCurrentFile = mockGetHeadingsInCurrentFile;
+		(suggest as any).getAllHeadings = mockGetAllHeadings;
+
+		// Constructor should initialize focusValue to input value - should suppress matching queries
+		const suggestions = await suggest.getSuggestions("Test Note");
+		expect(suggestions).toEqual([]); // Should be suppressed
 	});
 });
