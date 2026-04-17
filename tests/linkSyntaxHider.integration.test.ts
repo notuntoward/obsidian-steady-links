@@ -124,22 +124,20 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			expect(anchor.style.display).toBe("inline-block");
 			expect(anchor.style.width).toBe("1px");
 			expect(anchor.style.minWidth).toBe("1px");
-			// height:0 is the only value that guarantees the anchor contributes
-			// zero vertical extent to the line box.  Any non-zero height on an
-			// inline-block participates in line-box sizing and shifts the
-			// coordsAtPos rect for adjacent visible characters, which is what
-			// causes the block cursor character to appear raised or lowered at
-			// link edges.  DO NOT change this to any non-zero height.
-			expect(anchor.style.height).toBe("0px");
+			expect(anchor.style.height).toBe("1em");
+			expect(anchor.style.lineHeight).toBe("1");
 			expect(anchor.style.marginRight).toBe("-1px");
 			expect(anchor.style.opacity).toBe("0");
 			expect(anchor.style.pointerEvents).toBe("auto");
-			// No verticalAlign, position, or top overrides — height:0 at the
-			// default baseline means no line-box participation and no neighbour
-			// character shifting.
-			expect(anchor.style.verticalAlign).toBe("");
-			expect(anchor.style.position).toBe("");
-			expect(anchor.style.top).toBe("");
+			// Must use baseline + relative/top rather than negative verticalAlign.
+			// verticalAlign:"-0.2em" on an inline-block shifts the line's effective
+			// baseline for adjacent characters, causing the first visible alias char
+			// to appear visually shifted downward inside the block cursor overlay.
+			// position:relative + top achieves the same downward extension of the
+			// measurable box without displacing neighbour character baselines.
+			expect(anchor.style.verticalAlign).toBe("baseline");
+			expect(anchor.style.position).toBe("relative");
+			expect(anchor.style.top).toBe("0.2em");
 		});
 	});
 

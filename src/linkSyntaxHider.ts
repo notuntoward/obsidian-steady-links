@@ -375,14 +375,12 @@ function createHiddenSyntaxAnchor(): HTMLSpanElement {
 	span.style.display = "inline-block";
 	span.style.width = "1px";
 	span.style.minWidth = "1px";
-	// height:0 is critical. Any non-zero height on an inline-block participates
-	// in line-box sizing, which shifts the coordsAtPos rect returned for the
-	// adjacent visible characters (textFrom / textTo). That shift is what causes
-	// the block cursor character to appear raised or lowered at link edges.
-	// height:0 means the anchor contributes zero vertical extent to the line box
-	// and has no effect whatsoever on surrounding text metrics.
-	// The visible-cursor plugin handles zero-height rects via its own fallback.
-	span.style.height = "0";
+	// Keep the anchor's own box tied to the text metrics instead of the full
+	// line box, otherwise the inline widget can sit too high on the baseline and
+	// lift block-cursor overlays. Use baseline-preserving metrics here and let
+	// the inline-block alignment below position the measurable box correctly.
+	span.style.height = "1em";
+	span.style.lineHeight = "1";
 	span.style.marginRight = "-1px";
 	span.style.overflow = "hidden";
 	span.style.opacity = "0";
@@ -392,6 +390,16 @@ function createHiddenSyntaxAnchor(): HTMLSpanElement {
 	// that starts with hidden link syntax can fail because there is no hittable
 	// geometry at the goal column.
 	span.style.pointerEvents = "auto";
+	// Extend the measurable box downward to cover descender space at end-of-line
+	// caret positions so the visible-cursor plugin can measure a full-height DOM
+	// rect there.  position:relative + top shifts the rendered box without
+	// changing the inline layout baseline of adjacent characters.
+	// verticalAlign:"-0.2em" (the previous approach) caused the first visible
+	// alias character to appear shifted downward because negative verticalAlign
+	// on an inline-block displaces the line's effective baseline for neighbours.
+	span.style.verticalAlign = "baseline";
+	span.style.position = "relative";
+	span.style.top = "0.2em";
 
 	return span;
 }
