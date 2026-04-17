@@ -391,15 +391,8 @@ function createHiddenSyntaxAnchor(): HTMLSpanElement {
 	// geometry at the goal column.
 	span.style.pointerEvents = "auto";
 	// Extend the measurable box downward to cover descender space at end-of-line
-	// caret positions so the visible-cursor plugin can measure a full-height DOM
-	// rect there.  position:relative + top shifts the rendered box without
-	// changing the inline layout baseline of adjacent characters.
-	// verticalAlign:"-0.2em" (the previous approach) caused the first visible
-	// alias character to appear shifted downward because negative verticalAlign
-	// on an inline-block displaces the line's effective baseline for neighbours.
-	span.style.verticalAlign = "baseline";
-	span.style.position = "relative";
-	span.style.top = "0.2em";
+	// caret positions without increasing the line's layout height.
+	span.style.verticalAlign = "-0.2em";
 
 	return span;
 }

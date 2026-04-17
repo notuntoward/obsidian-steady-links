@@ -129,15 +129,7 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			expect(anchor.style.marginRight).toBe("-1px");
 			expect(anchor.style.opacity).toBe("0");
 			expect(anchor.style.pointerEvents).toBe("auto");
-			// Must use baseline + relative/top rather than negative verticalAlign.
-			// verticalAlign:"-0.2em" on an inline-block shifts the line's effective
-			// baseline for adjacent characters, causing the first visible alias char
-			// to appear visually shifted downward inside the block cursor overlay.
-			// position:relative + top achieves the same downward extension of the
-			// measurable box without displacing neighbour character baselines.
-			expect(anchor.style.verticalAlign).toBe("baseline");
-			expect(anchor.style.position).toBe("relative");
-			expect(anchor.style.top).toBe("0.2em");
+			expect(anchor.style.verticalAlign).toBe("-0.2em");
 		});
 	});
 
