@@ -135,6 +135,60 @@ export class Workspace {
 	private activeFile: TFile | null = null;
 	private activeEditor: Editor | null = null;
 
+	leftSplit: any;
+	rightSplit: any;
+	leftRibbon: any;
+	rightRibbon: any;
+	activeLeaf: any;
+	layoutReady: boolean;
+	requestSaveLayout: any;
+	requestSaveHistory: any;
+	containerEl: any;
+	layoutChanged: any;
+	protocolHandlers: any;
+	editorExtensions: any;
+	mobileToolbar: any;
+	rootSplit: any;
+	onLayoutReady: any;
+	changeLayout: any;
+	getLayout: any;
+	createLeafInParent: any;
+	createLeafBySplit: any;
+	splitActiveLeaf: any;
+	duplicateLeaf: any;
+	getUnpinnedLeaf: any;
+	getLeaf: any;
+	moveLeafToPopout: any;
+	openPopoutLeaf: any;
+
+	constructor() {
+		this.leftSplit = {};
+		this.rightSplit = {};
+		this.leftRibbon = {};
+		this.rightRibbon = {};
+		this.activeLeaf = null;
+		this.layoutReady = false;
+		this.requestSaveLayout = {};
+		this.requestSaveHistory = {};
+		this.containerEl = {};
+		this.layoutChanged = {};
+		this.protocolHandlers = {};
+		this.editorExtensions = [];
+		this.mobileToolbar = {};
+		this.rootSplit = {};
+		this.onLayoutReady = {};
+		this.changeLayout = {};
+		this.getLayout = {};
+		this.createLeafInParent = {};
+		this.createLeafBySplit = {};
+		this.splitActiveLeaf = {};
+		this.duplicateLeaf = {};
+		this.getUnpinnedLeaf = {};
+		this.getLeaf = {};
+		this.moveLeafToPopout = {};
+		this.openPopoutLeaf = {};
+	}
+
 	getActiveFile(): TFile | null {
 		return this.activeFile;
 	}
@@ -320,11 +374,35 @@ export class App {
 	vault: Vault;
 	workspace: Workspace;
 	metadataCache: MetadataCache;
+	keymap: any;
+	scope: any;
+	fileManager: any;
+	lastEvent: any;
+	customCss: any;
+	dom: any;
+	loadProgress: any;
+	commands: any;
+	renderContext: any;
+	isDarkMode: boolean;
+	loadLocalStorage: any;
+	saveLocalStorage: any;
 
 	constructor() {
 		this.vault = new Vault();
 		this.workspace = new Workspace();
 		this.metadataCache = new MetadataCache();
+		this.keymap = {};
+		this.scope = {};
+		this.fileManager = {};
+		this.lastEvent = null;
+		this.customCss = {};
+		this.dom = {};
+		this.loadProgress = {};
+		this.commands = {};
+		this.renderContext = {};
+		this.isDarkMode = false;
+		this.loadLocalStorage = {};
+		this.saveLocalStorage = {};
 	}
 
 	// Test helper to reset all state

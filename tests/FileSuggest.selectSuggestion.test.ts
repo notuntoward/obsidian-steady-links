@@ -318,7 +318,7 @@ describe("FileSuggest.selectSuggestion — link text update", () => {
 		const modal = makeModalStub("Existing Text");
 		modal.isTextProvisional = vi.fn().mockReturnValue(false); // Simulate existing link
 
-		const suggest = new FileSuggest(new App(), modal._destInputEl, modal);
+		const suggest = new FileSuggest(new App() as any, modal._destInputEl, modal as any);
 
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		const file: any = new TFile({
@@ -372,8 +372,8 @@ describe("FileSuggest focus behavior", () => {
 
 	it("returns empty suggestions when query matches focus value (tabbing to existing content)", async () => {
 		const modal = makeModalStub();
-		const app = new App();
-		const suggest = new FileSuggest(app, modal._destInputEl, modal);
+		const app = new App() as any;
+		const suggest = new FileSuggest(app, modal._destInputEl, modal as any);
 
 		// Mock the internal methods
 		(suggest as any).getFiles = mockGetFiles;
@@ -392,8 +392,8 @@ describe("FileSuggest focus behavior", () => {
 
 	it("returns suggestions when query differs from focus value (user typing)", async () => {
 		const modal = makeModalStub();
-		const app = new App();
-		const suggest = new FileSuggest(app, modal._destInputEl, modal);
+		const app = new App() as any;
+		const suggest = new FileSuggest(app, modal._destInputEl, modal as any);
 
 		// Mock the internal methods
 		(suggest as any).getFiles = mockGetFiles;
@@ -411,8 +411,8 @@ describe("FileSuggest focus behavior", () => {
 
 	it("returns suggestions for empty focus value (new link creation)", async () => {
 		const modal = makeModalStub();
-		const app = new App();
-		const suggest = new FileSuggest(app, modal._destInputEl, modal);
+		const app = new App() as any;
+		const suggest = new FileSuggest(app, modal._destInputEl, modal as any);
 
 		// Mock the internal methods
 		(suggest as any).getFiles = mockGetFiles;
@@ -427,8 +427,8 @@ describe("FileSuggest focus behavior", () => {
 	it("focus value is initialized correctly in constructor", async () => {
 		const modal = makeModalStub();
 		modal._destInputEl.value = "Test Note";
-		const app = new App();
-		const suggest = new FileSuggest(app, modal._destInputEl, modal);
+		const app = new App() as any;
+		const suggest = new FileSuggest(app, modal._destInputEl, modal as any);
 
 		// Mock the internal methods
 		(suggest as any).getFiles = mockGetFiles;
