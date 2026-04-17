@@ -2445,6 +2445,30 @@ function expandSelectionTextToFullLinks(text: string, state: EditorState): strin
 	const sel = state.selection.main;
 	if (sel.empty) return text;
 
+	// Cursor is inside a link's visible text and the selection extends past the
+	// link's trailing hidden syntax (e.g. cursor after "123" in [[Note|123456]],
+	// selection to end of line). Strip the trailing syntax so the clipboard
+	// receives only the visible text suffix plus any text after the link —
+	// never raw ]] or ](url) characters. This applies to both wikilinks and
+	// markdown links since the visible-text bounds are the same for both.
+	const midLinkLink = links.find(
+		(link) => sel.from > link.textFrom && sel.from < link.textTo && sel.to > link.textTo
+	);
+	if (midLinkLink) {
+		const visibleSuffix = state.sliceDoc(sel.from, midLinkLink.textTo);
+		const textAfterLink = state.sliceDoc(midLinkLink.to, sel.to);
+		debugLog("clipboard mid-link strip trailing syntax", {
+			selectionFrom: sel.from,
+			selectionTo: sel.to,
+			textFrom: midLinkLink.textFrom,
+			textTo: midLinkLink.textTo,
+			linkTo: midLinkLink.to,
+			visibleSuffix,
+			textAfterLink,
+		});
+		return visibleSuffix + textAfterLink;
+	}
+
 	// External commands such as Emacs kill-line can start at the visible alias
 	// start of a mid-line piped wikilink. For clipboard output, treat the alias
 	// selection as the visible text of a plain wikilink so copied text reflects
@@ -2704,6 +2728,7 @@ const clampSelectionDeleteFilter = EditorState.transactionFilter.of((tr) => {
 	if (tr.effects.some((e) => e.is(rewrittenSelectionDelete))) return tr;
 
 	const userEvent = tr.annotation(Transaction.userEvent) ?? null;
+
 	debugLog("delete transaction seen", {
 		userEvent,
 		selectionFrom: tr.startState.selection.main.from,
@@ -3202,6 +3227,57 @@ export function findLinkRangeAtPos(
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
+
+/**
+ * Given text that an external plugin (e.g. Emacs kill-line) is about to
+ * write to the clipboard via navigator.clipboard.writeText(editor.getSelection()),
+ * check whether the text was obtained from a selection that starts inside a
+ * link's visible text and extends past the link's trailing hidden syntax.
+ * If so, return the stripped version (visible suffix + text after link).
+ * Otherwise return the text unchanged.
+ *
+ * This is needed because navigator.clipboard.writeText() bypasses CM6's
+ * clipboardOutputFilter, which is already patched to handle this stripping
+ * for the CM6 clipboard pipeline.  Both code paths must produce the same
+ * result for consistency.
+ */
+export function stripTrailingLinkSyntaxForClipboard(text: string, state: EditorState): string {
+	if (!text) return text;
+	if (!state.field(syntaxHiderEnabledField, false)) return text;
+
+	const hidden = state.field(hiddenRangesField, false);
+	if (!hidden || hidden.length === 0) return text;
+
+	const links = buildLinkSpans(hidden);
+	if (links.length === 0) return text;
+
+	const sel = state.selection.main;
+	if (sel.empty) return text;
+
+	// Cursor is inside a link's visible text and the selection extends past
+	// the link's trailing hidden syntax. Strip the trailing syntax so that
+	// the clipboard receives only the visible text suffix plus any text after
+	// the link. This mirrors the logic in expandSelectionTextToFullLinks.
+	const midLinkLink = links.find(
+		(link) => sel.from > link.textFrom && sel.from < link.textTo && sel.to > link.textTo
+	);
+	if (midLinkLink) {
+		const visibleSuffix = state.sliceDoc(sel.from, midLinkLink.textTo);
+		const textAfterLink = state.sliceDoc(midLinkLink.to, sel.to);
+		const stripped = visibleSuffix + textAfterLink;
+		debugLog("stripTrailingLinkSyntaxForClipboard: stripped trailing syntax", {
+			original: text,
+			stripped,
+			selFrom: sel.from,
+			selTo: sel.to,
+			textTo: midLinkLink.textTo,
+			linkTo: midLinkLink.to,
+		});
+		return stripped;
+	}
+
+	return text;
+}
 
 export function createLinkSyntaxHiderExtension() {
 	// CM6 applies transactionFilters in REVERSE registration order

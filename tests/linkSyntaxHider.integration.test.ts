@@ -21,6 +21,7 @@ import {
 	setSyntaxHiderEnabled,
 	handleHomeKey,
 	suppressSameLineCursorResetEffect,
+	stripTrailingLinkSyntaxForClipboard,
 } from "../src/linkSyntaxHider";
 
 // ============================================================================
@@ -665,6 +666,240 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			expect(view.state.doc.toString()).toBe("bob\n\nabcdefg \n\njane");
 			expect(view.state.doc.lineAt(result.cursor).number).toBe(startLine.number);
 			expect(result.cursor).toBe(expectedCursor);
+		});
+
+		it("kill-line from INSIDE a mid-line wikilink alias strips trailing syntax from clipboard", () => {
+			// Bug guard: cursor after "123" inside [[Note-08|123456]]; kill-line
+			// must put "456 hhh" in clipboard, NOT "456]] hhh".
+			const doc = "bob\n\nabcdefg [[Note-08|123456]] hhh\n\njane";
+			// Position cursor after "123" (i.e. 3 chars into the alias "123456")
+			const aliasStart = doc.indexOf("123456");
+			const cursor = aliasStart + 3; // after "123", before "456"
+			view = createTestView(doc, cursor);
+
+			const startLine = view.state.doc.lineAt(cursor);
+			const result = emulateEmacsKillLine(view);
+
+			// Clipboard must contain the visible alias suffix + trailing plain text,
+			// with NO link syntax (no ]] characters).
+			expect(result.clipboard).toBe("456 hhh");
+			// The line must be trimmed to the text before the cursor position;
+			// the alias suffix and everything after the link are gone.
+			const lineText = view.state.doc.lineAt(result.cursor).text;
+			expect(lineText).toBe("abcdefg [[Note-08|123]]");
+			expect(view.state.doc.lineAt(result.cursor).number).toBe(startLine.number);
+		});
+
+		it("kill-line from INSIDE a mid-line markdown link text strips trailing syntax from clipboard", () => {
+			// Bug guard: cursor after "abc" inside [abcdefg](url); kill-line
+			// must put "defg hhh" in clipboard, NOT "defg](url) hhh".
+			const doc = "bob\n\nabcdefg [abcdefg](https://example.com) hhh\n\njane";
+			const textStart = doc.indexOf("[abcdefg]") + 1; // position of 'a' in link text
+			const cursor = textStart + 3; // after "abc", before "defg"
+			view = createTestView(doc, cursor);
+
+			const startLine = view.state.doc.lineAt(cursor);
+			const result = emulateEmacsKillLine(view);
+
+			// Clipboard must contain visible text suffix + plain text after link,
+			// with NO markdown link syntax.
+			expect(result.clipboard).toBe("defg hhh");
+			expect(result.clipboard).not.toContain("](");
+			expect(result.clipboard).not.toContain("https://");
+			expect(view.state.doc.lineAt(result.cursor).number).toBe(startLine.number);
+		});
+	});
+
+	// ──────────────────────────────────────────────────────────────────────
+	// BUG GUARD: stripTrailingLinkSyntaxForClipboard
+	//
+	// This function is called from the navigator.clipboard.writeText
+	// interceptor in main.ts to fix the Emacs kill-line clipboard path that
+	// bypasses CM6's clipboardOutputFilter.
+	// ──────────────────────────────────────────────────────────────────────
+	describe("stripTrailingLinkSyntaxForClipboard: navigator.clipboard.writeText interceptor", () => {
+		it("strips trailing ]] from mid-link wikilink selection (Emacs kill-line scenario)", () => {
+			// Cursor after "123" in [[Note-08|123456]]; raw editor.getSelection()
+			// would return "456]] hhh".  The interceptor must return "456 hhh".
+			const doc = "bob\n\nabcdefg [[Note-08|123456]] hhh\n\njane";
+			const aliasStart = doc.indexOf("123456");
+			const cursor = aliasStart + 3; // after "123"
+			view = createTestView(doc, cursor);
+
+			// Simulate the selection Emacs dispatches for kill-line
+			const line = view.state.doc.lineAt(cursor);
+			view.dispatch({ selection: EditorSelection.range(cursor, line.to) });
+
+			// What editor.getSelection() would return (raw slice)
+			const rawSelection = view.state.sliceDoc(
+				view.state.selection.main.from,
+				view.state.selection.main.to
+			);
+			expect(rawSelection).toBe("456]] hhh");
+
+			// What the interceptor returns
+			const fixed = stripTrailingLinkSyntaxForClipboard(rawSelection, view.state);
+			expect(fixed).toBe("456 hhh");
+			expect(fixed).not.toContain("]]");
+		});
+
+		it("strips trailing ](url) from mid-link markdown link selection (Emacs kill-line scenario)", () => {
+			const doc = "bob\n\nabcdefg [abcdefg](https://example.com) hhh\n\njane";
+			const textStart = doc.indexOf("[abcdefg]") + 1;
+			const cursor = textStart + 3; // after "abc"
+			view = createTestView(doc, cursor);
+
+			const line = view.state.doc.lineAt(cursor);
+			view.dispatch({ selection: EditorSelection.range(cursor, line.to) });
+
+			const rawSelection = view.state.sliceDoc(
+				view.state.selection.main.from,
+				view.state.selection.main.to
+			);
+			// Raw selection includes "](https://example.com)"
+			expect(rawSelection).toContain("](https://example.com)");
+
+			const fixed = stripTrailingLinkSyntaxForClipboard(rawSelection, view.state);
+			expect(fixed).toBe("defg hhh");
+			expect(fixed).not.toContain("](");
+			expect(fixed).not.toContain("https://");
+		});
+
+		it("does NOT strip text when selection starts at link start (full link on clipboard is correct)", () => {
+			// Cursor at link.textFrom — this case is handled by expandSelectionToLeadingSyntaxFilter
+			// which expands the selection; stripTrailingLinkSyntaxForClipboard must not interfere.
+			const doc = "abcdefg [[Note-08|123456]] hhh";
+			const cursor = doc.indexOf("123456");
+			view = createTestView(doc, cursor);
+
+			const line = view.state.doc.lineAt(cursor);
+			view.dispatch({ selection: EditorSelection.range(cursor, line.to) });
+
+			// After expandSelectionToLeadingSyntaxFilter fires, selection is expanded
+			// to link.from; the raw text starts with [[
+			const rawSelection = view.state.sliceDoc(
+				view.state.selection.main.from,
+				view.state.selection.main.to
+			);
+			// sel.from == link.from (not > link.textFrom), so mid-link check doesn't fire
+			const result = stripTrailingLinkSyntaxForClipboard(rawSelection, view.state);
+			expect(result).toBe(rawSelection); // unchanged
+		});
+
+		it("does NOT strip text when selection is entirely outside the link", () => {
+			const doc = "abcdefg [[Note-08|123456]] hhh";
+			const cursor = doc.indexOf("hhh");
+			view = createTestView(doc, cursor);
+
+			const line = view.state.doc.lineAt(cursor);
+			view.dispatch({ selection: EditorSelection.range(cursor, line.to) });
+
+			const rawSelection = view.state.sliceDoc(
+				view.state.selection.main.from,
+				view.state.selection.main.to
+			);
+			expect(rawSelection).toBe("hhh");
+			const result = stripTrailingLinkSyntaxForClipboard(rawSelection, view.state);
+			expect(result).toBe("hhh");
+		});
+
+		it("strips when cursor is at the first char of the alias (one char inside textFrom)", () => {
+			// Cursor at the very first character of the alias "1" in [[Note-08|123456]]
+			// selection to end of line.  Raw = "123456]] hhh".  Stripped = "123456 hhh".
+			const doc = "abcdefg [[Note-08|123456]] hhh";
+			const cursor = doc.indexOf("123456"); // cursor at first alias char = textFrom + 0?
+			// Wait: textFrom is the position of "1", so cursor = textFrom, which means
+			// sel.from == link.textFrom.  The mid-link check requires sel.from > textFrom,
+			// so this should NOT strip (it's handled by the full-link expansion path).
+			view = createTestView(doc, cursor);
+			const line = view.state.doc.lineAt(cursor);
+			view.dispatch({ selection: EditorSelection.range(cursor, line.to) });
+			// After expandSelectionToLeadingSyntaxFilter, sel.from == link.from (expanded)
+			const sel = view.state.selection.main;
+			const rawSelection = view.state.sliceDoc(sel.from, sel.to);
+			// The expanded selection starts with [[ so the function must not strip it
+			const result = stripTrailingLinkSyntaxForClipboard(rawSelection, view.state);
+			expect(result).toBe(rawSelection); // unchanged — full link is correct
+			expect(result).toContain("[[");
+		});
+
+		it("strips when cursor is 1 char before the end of visible text", () => {
+			// Cursor at "6" (the last char) in [[Note-08|123456]], selection to EOL.
+			// Raw = "6]] hhh".  Stripped = "6 hhh".
+			const doc = "abcdefg [[Note-08|123456]] hhh";
+			const cursor = doc.indexOf("123456") + 5; // position of "6"
+			view = createTestView(doc, cursor);
+			const line = view.state.doc.lineAt(cursor);
+			view.dispatch({ selection: EditorSelection.range(cursor, line.to) });
+			const rawSelection = view.state.sliceDoc(
+				view.state.selection.main.from,
+				view.state.selection.main.to
+			);
+			expect(rawSelection).toBe("6]] hhh");
+			const result = stripTrailingLinkSyntaxForClipboard(rawSelection, view.state);
+			expect(result).toBe("6 hhh");
+			expect(result).not.toContain("]]");
+		});
+
+		it("strips when cursor is inside an unpiped wikilink [[target]] (no alias)", () => {
+			// For [[target]], textFrom = position of 't', textTo = position after 't'...'t'.
+			// Cursor mid-way: raw = "get]] hhh", stripped = "get hhh".
+			const doc = "before [[target]] after";
+			const cursor = doc.indexOf("target") + 3; // after "tar", before "get"
+			view = createTestView(doc, cursor);
+			const line = view.state.doc.lineAt(cursor);
+			view.dispatch({ selection: EditorSelection.range(cursor, line.to) });
+			const rawSelection = view.state.sliceDoc(
+				view.state.selection.main.from,
+				view.state.selection.main.to
+			);
+			expect(rawSelection).toBe("get]] after");
+			const result = stripTrailingLinkSyntaxForClipboard(rawSelection, view.state);
+			expect(result).toBe("get after");
+			expect(result).not.toContain("]]");
+		});
+
+		it("strips correctly for a line-start wikilink with cursor inside the alias", () => {
+			// Line starts with [[Note|alias]], cursor inside alias.
+			const doc = "[[Note-08|abcdef]] after";
+			const cursor = doc.indexOf("abcdef") + 3; // after "abc"
+			view = createTestView(doc, cursor);
+			const line = view.state.doc.lineAt(cursor);
+			view.dispatch({ selection: EditorSelection.range(cursor, line.to) });
+			const rawSelection = view.state.sliceDoc(
+				view.state.selection.main.from,
+				view.state.selection.main.to
+			);
+			expect(rawSelection).toBe("def]] after");
+			const result = stripTrailingLinkSyntaxForClipboard(rawSelection, view.state);
+			expect(result).toBe("def after");
+		});
+
+		it("strips correctly for a line-start markdown link with cursor inside the text", () => {
+			const doc = "[abcdef](https://example.com) after";
+			const cursor = doc.indexOf("abcdef") + 3; // after "abc"
+			view = createTestView(doc, cursor);
+			const line = view.state.doc.lineAt(cursor);
+			view.dispatch({ selection: EditorSelection.range(cursor, line.to) });
+			const rawSelection = view.state.sliceDoc(
+				view.state.selection.main.from,
+				view.state.selection.main.to
+			);
+			expect(rawSelection).toBe("def](https://example.com) after");
+			const result = stripTrailingLinkSyntaxForClipboard(rawSelection, view.state);
+			expect(result).toBe("def after");
+			expect(result).not.toContain("](");
+		});
+
+		it("does NOT strip when text contains no ]] or ]() — plain text passthrough", () => {
+			// Sanity check: function is a no-op when there are no link syntax ranges.
+			const doc = "hello world";
+			view = createTestView(doc, 0);
+			view.dispatch({ selection: EditorSelection.range(3, 8) });
+			const rawSelection = view.state.sliceDoc(3, 8);
+			expect(rawSelection).toBe("lo wo");
+			const result = stripTrailingLinkSyntaxForClipboard(rawSelection, view.state);
+			expect(result).toBe("lo wo");
 		});
 	});
 
