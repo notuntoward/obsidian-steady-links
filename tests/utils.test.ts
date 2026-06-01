@@ -8,6 +8,7 @@ import {
 	parseMarkdownLink,
 	parseClipboardLink,
 	resolveClipboardToLinkDestination,
+	isFilePath,
 	isUrl,
 	normalizeUrl,
 	isAlmostUrl,
@@ -539,13 +540,70 @@ describe('resolveClipboardToLinkDestination', () => {
 		expect(resolveClipboardToLinkDestination('javascript:alert(1)')).toBeNull();
 	});
 
-	// Cross-platform: Windows absolute paths must not be treated as URIs
-	it('does not treat Windows path C:\\folder\\file as a URI (no URL found → null)', () => {
-		expect(resolveClipboardToLinkDestination('C:\\Users\\user\\Documents\\file.txt')).toBeNull();
+	// File-system paths (Pass 3)
+	it('returns a Windows absolute path', () => {
+		expect(resolveClipboardToLinkDestination('C:\\Users\\scott\\Desktop')).toBe('C:\\Users\\scott\\Desktop');
 	});
 
-	it('does not treat Windows UNC path as a URI', () => {
-		expect(resolveClipboardToLinkDestination('C:\\NoSpacesHere\\file.txt')).toBeNull();
+	it('strips surrounding quotes from a Windows path', () => {
+		expect(resolveClipboardToLinkDestination('"C:\\Users\\scott\\Desktop"')).toBe('C:\\Users\\scott\\Desktop');
+	});
+
+	it('returns a Unix absolute path', () => {
+		expect(resolveClipboardToLinkDestination('/home/scott/documents/file.txt')).toBe('/home/scott/documents/file.txt');
+	});
+
+	it('returns a UNC path', () => {
+		expect(resolveClipboardToLinkDestination('\\\\server\\share\\folder')).toBe('\\\\server\\share\\folder');
+	});
+});
+
+// ============================================================================
+// isFilePath Tests
+// ============================================================================
+describe('isFilePath', () => {
+	it('returns false for empty string', () => {
+		expect(isFilePath('')).toBe(false);
+	});
+
+	it('detects Windows drive-letter path with backslash', () => {
+		expect(isFilePath('C:\\Users\\scott\\Desktop')).toBe(true);
+	});
+
+	it('detects Windows drive-letter path with forward slash', () => {
+		expect(isFilePath('C:/Users/scott/Desktop')).toBe(true);
+	});
+
+	it('detects quoted Windows path', () => {
+		expect(isFilePath('"C:\\Users\\scott\\Desktop"')).toBe(true);
+	});
+
+	it('detects Unix absolute path', () => {
+		expect(isFilePath('/home/scott/documents/file.txt')).toBe(true);
+	});
+
+	it('detects macOS absolute path', () => {
+		expect(isFilePath('/Users/scott/Documents/file.txt')).toBe(true);
+	});
+
+	it('detects UNC path with backslashes', () => {
+		expect(isFilePath('\\\\server\\share')).toBe(true);
+	});
+
+	it('detects UNC path with forward slashes', () => {
+		expect(isFilePath('//server/share')).toBe(true);
+	});
+
+	it('returns false for plain text', () => {
+		expect(isFilePath('hello world')).toBe(false);
+	});
+
+	it('returns false for a URL', () => {
+		expect(isFilePath('https://example.com')).toBe(false);
+	});
+
+	it('returns false for a relative path', () => {
+		expect(isFilePath('folder/file.txt')).toBe(false);
 	});
 });
 

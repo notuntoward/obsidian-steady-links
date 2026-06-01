@@ -304,14 +304,48 @@ export function parseClipboardLink(clipboardText: string): { text: string; desti
 // ============================================================================
 
 /**
+ * Strip surrounding double or single quotes from a string if they match.
+ * Used to normalise file paths that Windows Explorer copies with quotes.
+ */
+function stripSurroundingQuotes(s: string): string {
+	if (
+		(s.startsWith('"') && s.endsWith('"')) ||
+		(s.startsWith("'") && s.endsWith("'"))
+	) {
+		return s.slice(1, -1);
+	}
+	return s;
+}
+
+/**
+ * Return true if the string looks like an absolute file-system path.
+ * Recognises (after stripping surrounding quotes):
+ *   - Windows absolute:  C:\...  or  C:/...
+ *   - Windows UNC:       \\server\share  or  //server/share
+ *   - Unix/macOS absolute:  /path/...
+ */
+export function isFilePath(str: string): boolean {
+	if (!str) return false;
+	const s = stripSurroundingQuotes(str.trim());
+	// Windows drive letter path: X:\ or X:/
+	if (/^[a-zA-Z]:[/\\]/.test(s)) return true;
+	// Windows or Unix UNC: \\ or //
+	if (/^[/\\]{2}/.test(s)) return true;
+	// Unix / macOS absolute path
+	if (s.startsWith("/")) return true;
+	return false;
+}
+
+/**
  * Resolve raw clipboard text to the best single URL to use as an Obsidian
- * markdown link destination.  Handles two cases:
+ * markdown link destination.  Handles three cases:
  *
  *   1. Multi-line clipboard with custom URI scheme lines (onenote:, vscode:, …)
  *      and optional HTTP(S) web-fallback lines.  Custom scheme wins.
  *   2. Single standard HTTP/HTTPS URL — passed through normalizeUrl() as-is.
+ *   3. Absolute file-system path (Windows or Unix), optionally quoted.
  *
- * Returns `null` when no recognisable URL is found (plain text, empty, etc.).
+ * Returns `null` when no recognisable URL or path is found (plain text, etc.).
  * Callers that need a last-resort string must handle `null` themselves.
  *
  * Lines ending with the literal token `&end` have that suffix stripped before
@@ -364,7 +398,15 @@ export function resolveClipboardToLinkDestination(clipboardText: string): string
 		}
 	}
 
-	// No recognisable URL found.
+	// Pass 3: absolute file-system path (Windows or Unix), optionally quoted.
+	// Strip surrounding quotes so the destination is the bare path.
+	for (const line of lines) {
+		if (isFilePath(line)) {
+			return stripSurroundingQuotes(line);
+		}
+	}
+
+	// No recognisable URL or path found.
 	return null;
 }
 
