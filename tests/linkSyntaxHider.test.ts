@@ -16,6 +16,7 @@ import {
 	isMarkdownLinkSpan,
 	buildVisibleLinkSpans,
 	isEmptyLinkText,
+	findEmptyLinkMarkerPositions,
 	type HiddenRange,
 	type VisibleLinkSpan,
 } from "../src/linkSyntaxHider";
@@ -2037,6 +2038,69 @@ describe("isEmptyLinkText", () => {
 		const spans = buildVisibleLinkSpans(hidden, doc);
 		expect(spans).toHaveLength(1);
 		expect(isEmptyLinkText(spans[0], doc)).toBe(true);
+	});
+});
+
+// ============================================================================
+// findEmptyLinkMarkerPositions — viewport-wide empty-link marker placement
+//
+// The faint "[]" marker must be placed on every empty-text link across the
+// given lines, independent of the cursor line.  This guards the regression
+// where empty-text links on inactive lines rendered nothing.
+// ============================================================================
+
+describe("findEmptyLinkMarkerPositions", () => {
+	function makeDocState(text: string): EditorState {
+		return EditorState.create({ doc: text });
+	}
+
+	function allLineNumbers(state: EditorState): number[] {
+		const nums: number[] = [];
+		for (let n = 1; n <= state.doc.lines; n += 1) nums.push(n);
+		return nums;
+	}
+
+	it("finds the marker position for an empty markdown link", () => {
+		const state = makeDocState("[](https://example.com)");
+		// leading [0,1), text [1,1) → marker at 1
+		expect(findEmptyLinkMarkerPositions(state, [1])).toEqual([1]);
+	});
+
+	it("finds the marker position for an empty wikilink alias", () => {
+		const state = makeDocState("[[Note|]]");
+		// leading [0,7), text [7,7) → marker at 7
+		expect(findEmptyLinkMarkerPositions(state, [1])).toEqual([7]);
+	});
+
+	it("finds an empty-text link on a line other than the cursor line", () => {
+		const state = makeDocState("top\n[](url)");
+		// line 2 starts at 4; "[" at 4, text at 5
+		expect(findEmptyLinkMarkerPositions(state, allLineNumbers(state))).toEqual([5]);
+	});
+
+	it("finds multiple empty-text links across several lines", () => {
+		const state = makeDocState("cursor\n[](a)\n[[B|]]\nend");
+		// line2: "[](a)" starts at 7 → text at 8
+		// line3: "[[B|]]" starts at 13 → "[[B|" is 4 chars → text at 17
+		const positions = findEmptyLinkMarkerPositions(state, allLineNumbers(state));
+		expect(positions).toHaveLength(2);
+		expect(positions[0]).toBeLessThan(positions[1]);
+	});
+
+	it("returns no positions for links that have display text", () => {
+		const state = makeDocState("[label](url)\n[[Note|Alias]]\n[[Plain]]");
+		expect(findEmptyLinkMarkerPositions(state, allLineNumbers(state))).toEqual([]);
+	});
+
+	it("returns no positions when there are no links", () => {
+		const state = makeDocState("just some text\nmore text");
+		expect(findEmptyLinkMarkerPositions(state, allLineNumbers(state))).toEqual([]);
+	});
+
+	it("treats a whitespace-only alias as empty", () => {
+		const state = makeDocState("[[Note| ]]");
+		// leading "[[Note|" [0,7); alias " " [7,8) is whitespace-only → marker at 7
+		expect(findEmptyLinkMarkerPositions(state, [1])).toEqual([7]);
 	});
 });
 

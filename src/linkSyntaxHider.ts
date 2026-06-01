@@ -567,6 +567,42 @@ function computeHiddenRanges(state: EditorState): HiddenRange[] {
 	return ranges;
 }
 
+/**
+ * Find the text-start position of every empty-display-text link on the given
+ * lines.  Empty-text links are `[](dest)` (markdown) and `[[dest|]]`
+ * (wikilink with an empty alias).  Unlike computeHiddenRanges, this scans
+ * arbitrary lines (not just the cursor line) because the faint "[]" marker
+ * must render on every empty-text link in the viewport — otherwise an
+ * empty-text link on an inactive line shows nothing at all.
+ *
+ * Returns a sorted, de-duplicated list of document positions where the marker
+ * should be placed (each equals the link's textFrom === textTo position).
+ */
+function findEmptyLinkMarkerPositions(
+	state: EditorState,
+	lineNumbers: Iterable<number>
+): number[] {
+	const positions: number[] = [];
+
+	for (const lineNo of lineNumbers) {
+		const line = state.doc.line(lineNo);
+		const lineRanges = [
+			...findMarkdownLinkSyntaxRanges(line.text, line.from),
+			...findWikiLinkSyntaxRanges(line.text, line.from),
+		];
+		const spans = buildVisibleLinkSpans(lineRanges, state.doc);
+		for (const span of spans) {
+			if (isEmptyLinkText(span, state.doc)) {
+				positions.push(span.textFrom);
+			}
+		}
+	}
+
+	positions.sort((a, b) => a - b);
+	// De-duplicate (defensive: a position should only appear once).
+	return positions.filter((p, i) => i === 0 || p !== positions[i - 1]);
+}
+
 // ---------------------------------------------------------------------------
 // StateField
 // ---------------------------------------------------------------------------
@@ -621,7 +657,7 @@ class HiddenSyntaxReplacePlugin implements PluginValue {
 	decorations: DecorationSet;
 
 	constructor(view: EditorView) {
-		this.decorations = this.build(view.state);
+		this.decorations = this.build(view);
 	}
 
 	update(update: ViewUpdate) {
@@ -640,16 +676,34 @@ class HiddenSyntaxReplacePlugin implements PluginValue {
 			update.viewportChanged ||
 			tempVisibleChanged
 		) {
-			this.decorations = this.build(update.state);
+			this.decorations = this.build(update.view);
 		}
 	}
 
-	private build(state: EditorState): DecorationSet {
+	private build(view: EditorView): DecorationSet {
+		const state = view.state;
 		if (!state.field(syntaxHiderEnabledField, false)) {
 			return Decoration.none;
 		}
+
+		// Syntax-hiding replacement ranges are only needed on the cursor line(s),
+		// where Obsidian would otherwise reveal raw link syntax.
 		const ranges = computeHiddenRanges(state);
-		if (ranges.length === 0) return Decoration.none;
+
+		// The faint "[]" marker for empty-text links must appear on every such
+		// link in the viewport, not just the cursor line — otherwise an
+		// empty-text link on an inactive line is completely invisible.
+		const markerLineNumbers = new Set<number>();
+		for (const { from, to } of view.visibleRanges) {
+			const fromLine = state.doc.lineAt(from).number;
+			const toLine = state.doc.lineAt(to).number;
+			for (let n = fromLine; n <= toLine; n += 1) markerLineNumbers.add(n);
+		}
+		const markerPositions = findEmptyLinkMarkerPositions(state, markerLineNumbers);
+
+		if (ranges.length === 0 && markerPositions.length === 0) {
+			return Decoration.none;
+		}
 
 		// Collect all decorations first, then add them to the builder in the
 		// strict ascending order CodeMirror requires. Two kinds of decoration:
@@ -668,12 +722,10 @@ class HiddenSyntaxReplacePlugin implements PluginValue {
 			}
 		}
 
-		const linkSpans = buildVisibleLinkSpans(ranges, state.doc);
-		for (const span of linkSpans) {
-			if (!isEmptyLinkText(span, state.doc)) continue;
+		for (const pos of markerPositions) {
 			pending.push({
-				from: span.textFrom,
-				to: span.textFrom,
+				from: pos,
+				to: pos,
 				deco: emptyLinkBrackets,
 				point: true,
 			});
@@ -3514,6 +3566,7 @@ export {
 	isMarkdownLinkSpan,
 	buildVisibleLinkSpans,
 	isEmptyLinkText,
+	findEmptyLinkMarkerPositions,
 	suppressSameLineCursorResetEffect,
 	setPendingExternalSelectionExpansion,
 };

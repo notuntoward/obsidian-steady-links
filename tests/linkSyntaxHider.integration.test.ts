@@ -1845,3 +1845,5 @@ describe("Integration: empty-text link deletion", () => {
 		expect(view.state.doc.toString()).toBe("foo  bar");
 	});
 });
+
+
