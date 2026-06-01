@@ -3182,58 +3182,11 @@ const protectSyntaxFilter = EditorState.transactionFilter.of((tr) => {
 		return tr;
 	}
 	if (tr.effects.some((e) => e.is(rewrittenEmptyLinkDelete))) {
+		// Whole-link delete for an empty-text link, already vetted and rewritten
+		// by deleteAtLinkStartFix / deleteAtLinkEndFix (single-char deletes) or by
+		// rewriteDeleteChangeForLinks (selection / Emacs kill). Let it through.
 		traceFilter("protectSyntaxFilter", tr, "PASS (rewrittenEmptyLinkDelete)");
 		return tr;
-	}
-
-	// Detect and handle single-char deletes that touch the hidden syntax of an
-	// empty-text link (textFrom === textTo). For these links the boundary fixes
-	// cannot delete "one visible character" because there are none — the correct
-	// behaviour is to delete the whole link (leading + trailing).
-	// We do this rewrite here in protectSyntaxFilter (which runs last) rather
-	// than relying on deleteAtLinkStartFix/deleteAtLinkEndFix because those
-	// filters produce a rewritten transaction that still overlaps hidden syntax,
-	// which would be re-blocked by protectSyntaxFilter on the next pass unless
-	// tagged explicitly. Handling it here is simpler and avoids that cycle.
-	if (isPureDeleteTransaction(tr)) {
-		let deleteFrom = -1;
-		let deleteTo = -1;
-		let deleteCount = 0;
-		tr.changes.iterChanges((fromA, toA) => {
-			deleteCount += 1;
-			deleteFrom = fromA;
-			deleteTo = toA;
-		});
-		if (deleteCount === 1 && deleteTo - deleteFrom === 1) {
-			const hiddenForEmptyCheck = tr.startState.field(hiddenRangesField, false);
-			if (hiddenForEmptyCheck && hiddenForEmptyCheck.length > 0) {
-				const linkSpans = buildVisibleLinkSpans(hiddenForEmptyCheck, tr.startState.doc);
-				const emptySpan = linkSpans.find(
-					(s) =>
-						s.textFrom === s.textTo &&
-						((deleteFrom >= s.leading.from && deleteTo <= s.leading.to) ||
-							(deleteFrom >= s.trailing.from && deleteTo <= s.trailing.to))
-				);
-				if (emptySpan) {
-					traceFilter(
-						"protectSyntaxFilter",
-						tr,
-						"REWRITE (whole-link delete for empty-text link)"
-					);
-					const userEvent = tr.annotation(Transaction.userEvent) ?? undefined;
-					return tr.startState.update({
-						changes: { from: emptySpan.from, to: emptySpan.to, insert: "" },
-						selection: EditorSelection.cursor(emptySpan.from),
-						scrollIntoView: true,
-						userEvent,
-						effects: [
-							suppressSuggestAfterDelete.of(emptySpan.from),
-							rewrittenEmptyLinkDelete.of(null),
-						],
-					});
-				}
-			}
-		}
 	}
 
 	// Note: We no longer unconditionally bypass protection for non-empty
