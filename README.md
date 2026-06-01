@@ -109,11 +109,15 @@ Otherwise, the modal opens with convenient defaults for a new link. These are ba
 | Cursor on a bare URL                             | Original URL text        | Normalized URL                  | Markdown | Ignores plain-text clipboard content; the URL under the cursor wins |
 | Selection is a URL                               | Original URL text        | Normalized URL                  | Markdown | `www.` URLs are normalized to `https://...`                         |
 | Has selection + clipboard has URL                | Selection                | Normalized URL                  | Markdown | Useful for turning selected text into an external link              |
+| Has selection + clipboard has custom URI scheme  | Selection                | Custom-scheme URL from clipboard | Markdown | e.g. `onenote:`, `vscode://`, `obsidian://`; custom scheme wins over `https` fallback |
+| Has selection + clipboard has file path          | Selection                | File path from clipboard        | Markdown | Windows (`C:\…`), macOS/Unix (`/…`), UNC (`\\…`); quotes stripped  |
 | Has selection + clipboard has full wiki link     | Selection                | Destination from clipboard link | WikiLink | Uses the clipboard link destination, not its display text           |
 | Has selection + clipboard has full markdown link | Selection                | Destination from clipboard link | Markdown | Uses the clipboard link destination, not its display text           |
 | Has selection + clipboard has plain text         | Selection                | Clipboard text                  | WikiLink | Plain clipboard text becomes the destination unchanged              |
 | Has selection + clipboard empty                  | Selection                | _(empty)_                       | WikiLink | Good starting point for a new internal link                         |
 | No selection + clipboard has URL                 | Normalized URL           | Normalized URL                  | Markdown | Link text is preselected so you can replace it quickly              |
+| No selection + clipboard has custom URI scheme   | Custom-scheme URL        | Custom-scheme URL from clipboard | Markdown | Link text is preselected; custom scheme wins over `https` fallback  |
+| No selection + clipboard has file path           | File path                | File path from clipboard        | Markdown | Link text is preselected; quotes stripped                           |
 | No selection + clipboard has wiki link           | Text from clipboard link | Destination from clipboard link | WikiLink | Reuses both text and destination from the clipboard link            |
 | No selection + clipboard has markdown link       | Text from clipboard link | Destination from clipboard link | Markdown | Reuses both text and destination from the clipboard link            |
 | No selection + clipboard has plain text          | _(empty)_                | _(empty)_                       | WikiLink | Plain clipboard text is ignored to avoid stale autofill             |
@@ -124,6 +128,8 @@ Otherwise, the modal opens with convenient defaults for a new link. These are ba
 - When the cursor is on an existing link, the modal is pre-filled from that link instead of defaults.
 - A bare URL means plain text like `www.example.com` or `https://example.com` that is under the cursor and not already part of a link.
 - URL normalization ensures a working link destination: plain `www.` URLs are prepended with `https://`
+- Clipboard content with custom URI schemes (e.g. `onenote:`, `vscode://`, `obsidian://`) is detected automatically and used as a markdown link destination. When both a custom-scheme line and an `https` line are present (e.g. OneNote's dual-format clipboard), the custom scheme is preferred.
+- Absolute file paths (Windows `C:\…`, macOS/Unix `/…`, UNC `\\server\…`) copied to the clipboard are also detected and placed in the destination as markdown links.
 - When there is a selection and the clipboard contains plain text that is not a link or URL, the clipboard contents are used as the destination.
 
 ![Workflow GIF](https://via.placeholder.com/600x300?text=Workflow+GIF)
