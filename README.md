@@ -67,13 +67,13 @@ The _Link Text_ field will autocomplete to selected text when you have a URL in 
 
 These are commands for opening the link editor, and for easier link manipulation, if you prefer Obsidian's default link expanding behavior (what you get when the `Keep links steady` setting is `false`)
 
-| Command                | Description                                                             | Suggested Hotkey | ID                                |
-| ---------------------- | ----------------------------------------------------------------------- | ---------------- | --------------------------------- |
-| **Edit Link**          | Modal to create a new link or to edit the one at the cursor             | Ctrl + K         | `steady-links:edit-link`          |
-| **Skip Link**          | Moves the cursor past the current link, avoiding link expansion| Alt + S          | `steady-links:skip-link`          |
-| **Toggle Link Expand** | Toggle between expanded and collapsed link       | Alt + T | `steady-links:toggle-link-expand` |
-| **Expand Link**        | Temporarily expands the link at cursor                   | Alt + E          | `steady-links:expand-link`        |
-| **Collapse Link**      | Collapses the link at cursor                             | Alt + C          | `steady-links:collapse-link`      |
+| Command                | Description                                                             | Suggested Hotkey (Win / macOS)    | ID                                |
+| ---------------------- | ----------------------------------------------------------------------- | --------------------------------- | --------------------------------- |
+| **Edit Link**          | Modal to create a new link or to edit the one at the cursor             | Ctrl+K / ⌘K                       | `steady-links:edit-link`          |
+| **Skip Link**          | Moves the cursor past the current link, avoiding link expansion| Alt+S / ⌥S                        | `steady-links:skip-link`          |
+| **Toggle Link Expand** | Toggle between expanded and collapsed link       | Alt+T / ⌥T | `steady-links:toggle-link-expand` |
+| **Expand Link**        | Temporarily expands the link at cursor                   | Alt+E / ⌥E                        | `steady-links:expand-link`        |
+| **Collapse Link**      | Collapses the link at cursor                             | Alt+C / ⌥C                        | `steady-links:collapse-link`      |
 
 ## Editing Policy for Hidden Links
 
@@ -136,7 +136,7 @@ Otherwise, the modal opens with convenient defaults for a new link. These are ba
 - **Headings** within a file (type `#` after a filename)
 - **Block references** (type `^` after a filename)
 
-Tab accepts the current suggestion. `Ctrl+N`/`Ctrl+P` navigate the list.
+Tab accepts the current suggestion. `Ctrl+N`/`Ctrl+P` (macOS: `⌘N`/`⌘P`) navigate the list.
 
 ![Heading Suggestions](https://via.placeholder.com/600x300?text=Heading+Suggestions)
 
