@@ -826,6 +826,37 @@ describe('detectMarkdownLinkAtCursor', () => {
 		expect(result?.end).toBe(17); // 5 + 12 = 17
 		expect(result?.link.isEmbed).toBe(true);
 	});
+
+	// Empty display text: [](dest) — the link text is empty but the destination
+	// is complete. Edit Link must still detect this so it opens pre-filled with
+	// the destination instead of falling back to "create new link" mode.
+	it('should detect an empty-text markdown link [](dest)', () => {
+		const line = '[](https://example.com)';
+		const result = detectMarkdownLinkAtCursor(line, 1);
+		expect(result).not.toBeNull();
+		expect(result?.link.text).toBe('');
+		expect(result?.link.destination).toBe('https://example.com');
+		expect(result?.link.isWiki).toBe(false);
+		expect(result?.start).toBe(0);
+		expect(result?.end).toBe(23);
+	});
+
+	it('should detect an empty-text markdown link mid-line', () => {
+		const line = 'foo [](bar) baz';
+		const result = detectMarkdownLinkAtCursor(line, 5);
+		expect(result?.link.text).toBe('');
+		expect(result?.link.destination).toBe('bar');
+		expect(result?.start).toBe(4);
+		expect(result?.end).toBe(11);
+	});
+
+	it('should detect an empty-text embed markdown link ![](dest)', () => {
+		const line = '![](image.png)';
+		const result = detectMarkdownLinkAtCursor(line, 2);
+		expect(result?.link.text).toBe('');
+		expect(result?.link.destination).toBe('image.png');
+		expect(result?.link.isEmbed).toBe(true);
+	});
 });
 
 // ============================================================================
@@ -960,6 +991,24 @@ describe('detectLinkAtCursor', () => {
 		const line = '[text](dest)';
 		const result = detectLinkAtCursor(line, 3);
 		expect(result?.link.isWiki).toBe(false);
+	});
+
+	// Empty-text links must be detected so Edit Link opens pre-filled with the
+	// existing destination instead of an empty "create new link" form.
+	it('should detect an empty-text markdown link [](dest)', () => {
+		const line = '[](https://example.com)';
+		const result = detectLinkAtCursor(line, 1);
+		expect(result?.link.isWiki).toBe(false);
+		expect(result?.link.text).toBe('');
+		expect(result?.link.destination).toBe('https://example.com');
+	});
+
+	it('should detect an empty-alias wikilink [[Note|]]', () => {
+		const line = '[[Note|]]';
+		const result = detectLinkAtCursor(line, 7);
+		expect(result?.link.isWiki).toBe(true);
+		expect(result?.link.text).toBe('');
+		expect(result?.link.destination).toBe('Note');
 	});
 });
 

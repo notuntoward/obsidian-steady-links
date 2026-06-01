@@ -429,7 +429,9 @@ export interface LinkAtCursor {
  * Detect if there's a Markdown link at the cursor position
  */
 export function detectMarkdownLinkAtCursor(line: string, cursorCh: number): LinkAtCursor | null {
-	const mdRegex = /(!?)\[([^\]]+)\]\(([^)]+)\)/g;
+	// Note: the display-text group is [^\]]* (zero-or-more) so that empty-text
+	// links like [](url) are detected. The destination remains [^)]+ (required).
+	const mdRegex = /(!?)\[([^\]]*)\]\(([^)]+)\)/g;
 	let match: RegExpExecArray | null;
 
 	while ((match = mdRegex.exec(line)) !== null) {
