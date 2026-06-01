@@ -7,6 +7,7 @@ import {
 	parseWikiLink,
 	parseMarkdownLink,
 	parseClipboardLink,
+	resolveClipboardToLinkDestination,
 	isUrl,
 	normalizeUrl,
 	isAlmostUrl,
@@ -435,6 +436,116 @@ describe('parseClipboardLink', () => {
 
 	it('should return null for non-link text', () => {
 		expect(parseClipboardLink('just regular text')).toBe(null);
+	});
+
+	it('should parse a plain https URL as a markdown link with empty text', () => {
+		const result = parseClipboardLink('https://example.com');
+		expect(result).toEqual({ text: '', destination: 'https://example.com', isWiki: false, isEmbed: false });
+	});
+
+	it('should parse an onenote: URL as a markdown link with empty text', () => {
+		const result = parseClipboardLink('onenote:https://d.docs.live.net/abc/path');
+		expect(result).toEqual({ text: '', destination: 'onenote:https://d.docs.live.net/abc/path', isWiki: false, isEmbed: false });
+	});
+
+	it('should prefer the onenote: line from multi-line OneNote clipboard', () => {
+		const clipboard = 'https://onedrive.live.com/view.aspx?resid=ABC\nonenote:https://d.docs.live.net/abc/path&end';
+		const result = parseClipboardLink(clipboard);
+		expect(result?.destination).toBe('onenote:https://d.docs.live.net/abc/path');
+		expect(result?.isWiki).toBe(false);
+	});
+});
+
+// ============================================================================
+// resolveClipboardToLinkDestination Tests
+// ============================================================================
+describe('resolveClipboardToLinkDestination', () => {
+	it('returns null for empty input', () => {
+		expect(resolveClipboardToLinkDestination('')).toBeNull();
+	});
+
+	it('returns null for whitespace-only input', () => {
+		expect(resolveClipboardToLinkDestination('   ')).toBeNull();
+	});
+
+	it('passes a single https URL through normalizeUrl', () => {
+		expect(resolveClipboardToLinkDestination('https://example.com')).toBe('https://example.com');
+	});
+
+	it('normalizes a www URL', () => {
+		expect(resolveClipboardToLinkDestination('www.example.com')).toBe('https://www.example.com');
+	});
+
+	it('returns null for plain text (no URL found)', () => {
+		expect(resolveClipboardToLinkDestination('hello world')).toBeNull();
+	});
+
+	it('returns null for plain text without spaces (no URL)', () => {
+		expect(resolveClipboardToLinkDestination('MyNote')).toBeNull();
+	});
+
+	it('prefers onenote: over https even when https line comes first', () => {
+		const clipboard = 'https://onedrive.live.com/view.aspx?resid=ABC\nonenote:https://d.docs.live.net/abc/path';
+		expect(resolveClipboardToLinkDestination(clipboard)).toBe('onenote:https://d.docs.live.net/abc/path');
+	});
+
+	it('prefers onenote: over https even when onenote line comes first', () => {
+		const clipboard = 'onenote:https://d.docs.live.net/abc/path\nhttps://onedrive.live.com/view.aspx?resid=ABC';
+		expect(resolveClipboardToLinkDestination(clipboard)).toBe('onenote:https://d.docs.live.net/abc/path');
+	});
+
+	it('strips trailing &end from the selected line', () => {
+		const clipboard = 'https://onedrive.live.com/view.aspx?resid=ABC&end\nonenote:https://d.docs.live.net/abc/path&end';
+		expect(resolveClipboardToLinkDestination(clipboard)).toBe('onenote:https://d.docs.live.net/abc/path');
+	});
+
+	it('falls back to https when no custom URI scheme present', () => {
+		const clipboard = 'https://example.com&end\nhttps://fallback.example.com';
+		expect(resolveClipboardToLinkDestination(clipboard)).toBe('https://example.com');
+	});
+
+	it('handles vscode:// custom URI scheme', () => {
+		expect(resolveClipboardToLinkDestination('vscode://file/path/to/file')).toBe('vscode://file/path/to/file');
+	});
+
+	it('handles obsidian:// custom URI scheme', () => {
+		expect(resolveClipboardToLinkDestination('obsidian://open?vault=test')).toBe('obsidian://open?vault=test');
+	});
+
+	it('ignores blank lines', () => {
+		const clipboard = '\n\nhttps://example.com\n\n';
+		expect(resolveClipboardToLinkDestination(clipboard)).toBe('https://example.com');
+	});
+
+	// Blocked / dangerous schemes — should fall through to http fallback or null
+	it('blocks file: scheme and falls through to https fallback', () => {
+		const clipboard = 'file:///etc/passwd\nhttps://example.com';
+		expect(resolveClipboardToLinkDestination(clipboard)).toBe('https://example.com');
+	});
+
+	it('blocks file: scheme with no http fallback → returns null', () => {
+		expect(resolveClipboardToLinkDestination('file:///etc/passwd')).toBeNull();
+	});
+
+	it('blocks mailto: scheme', () => {
+		expect(resolveClipboardToLinkDestination('mailto:user@example.com')).toBeNull();
+	});
+
+	it('blocks data: scheme', () => {
+		expect(resolveClipboardToLinkDestination('data:text/html,<h1>hi</h1>')).toBeNull();
+	});
+
+	it('blocks javascript: scheme', () => {
+		expect(resolveClipboardToLinkDestination('javascript:alert(1)')).toBeNull();
+	});
+
+	// Cross-platform: Windows absolute paths must not be treated as URIs
+	it('does not treat Windows path C:\\folder\\file as a URI (no URL found → null)', () => {
+		expect(resolveClipboardToLinkDestination('C:\\Users\\user\\Documents\\file.txt')).toBeNull();
+	});
+
+	it('does not treat Windows UNC path as a URI', () => {
+		expect(resolveClipboardToLinkDestination('C:\\NoSpacesHere\\file.txt')).toBeNull();
 	});
 });
 
@@ -979,6 +1090,70 @@ describe('determineLinkFromContext', () => {
 		};
 		const result = determineLinkFromContext(context);
 		expect(result.shouldSelectText).toBe(true);
+	});
+
+	// ── OneNote / custom URI scheme clipboard scenarios ──────────────────────
+
+	it('no selection: single onenote: URL in clipboard goes to dest, type=markdown', () => {
+		const context = {
+			selection: '',
+			clipboardText: 'onenote:https://d.docs.live.net/abc/path',
+			cursorUrl: null,
+			line: '',
+			cursorCh: 0,
+		};
+		const result = determineLinkFromContext(context);
+		expect(result.destination).toBe('onenote:https://d.docs.live.net/abc/path');
+		expect(result.isWiki).toBe(false);
+		expect(result.shouldSelectText).toBe(true);
+	});
+
+	it('no selection: multi-line OneNote clipboard, onenote: line preferred over https', () => {
+		const clipboard =
+			'https://onedrive.live.com/view.aspx?resid=4BBD96B3698748F8%21214&id=documents&wd=target%28%29&end\n' +
+			'onenote:https://d.docs.live.net/4bbd96b3698748f8/Documents/path&end';
+		const context = {
+			selection: '',
+			clipboardText: clipboard,
+			cursorUrl: null,
+			line: '',
+			cursorCh: 0,
+		};
+		const result = determineLinkFromContext(context);
+		expect(result.destination).toBe('onenote:https://d.docs.live.net/4bbd96b3698748f8/Documents/path');
+		expect(result.isWiki).toBe(false);
+		expect(result.shouldSelectText).toBe(true);
+	});
+
+	it('with selection: selection→text, onenote: clipboard→dest, type=markdown', () => {
+		const context = {
+			selection: 'My OneNote Page',
+			clipboardText: 'onenote:https://d.docs.live.net/abc/path',
+			cursorUrl: null,
+			line: '',
+			cursorCh: 0,
+		};
+		const result = determineLinkFromContext(context);
+		expect(result.text).toBe('My OneNote Page');
+		expect(result.destination).toBe('onenote:https://d.docs.live.net/abc/path');
+		expect(result.isWiki).toBe(false);
+	});
+
+	it('with selection: selection→text, multi-line OneNote clipboard→dest, type=markdown', () => {
+		const clipboard =
+			'https://onedrive.live.com/view.aspx?resid=4BBD96B3698748F8%21214&end\n' +
+			'onenote:https://d.docs.live.net/4bbd96b3698748f8/Documents/path&end';
+		const context = {
+			selection: 'My Page',
+			clipboardText: clipboard,
+			cursorUrl: null,
+			line: '',
+			cursorCh: 0,
+		};
+		const result = determineLinkFromContext(context);
+		expect(result.text).toBe('My Page');
+		expect(result.destination).toBe('onenote:https://d.docs.live.net/4bbd96b3698748f8/Documents/path');
+		expect(result.isWiki).toBe(false);
 	});
 });
 

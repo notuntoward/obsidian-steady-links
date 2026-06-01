@@ -220,34 +220,6 @@ export function parseMarkdownLink(text: string): { text: string; destination: st
 }
 
 /**
- * Parse clipboard content to extract link information
- * Returns null if clipboard doesn't contain a valid link
- */
-export function parseClipboardLink(clipboardText: string): { text: string; destination: string; isWiki: boolean; isEmbed: boolean } | null {
-	if (!clipboardText) return null;
-
-	const trimmed = clipboardText.trim();
-
-	// Try to parse as wiki link first
-	const wikiLink = parseWikiLink(trimmed);
-	if (wikiLink) {
-		return { ...wikiLink, isWiki: true };
-	}
-
-	// Try to parse as markdown link
-	const markdownLink = parseMarkdownLink(trimmed);
-	if (markdownLink) {
-		return { ...markdownLink, isWiki: false };
-	}
-
-	return null;
-}
-
-// ============================================================================
-// NEW: Refactored functions for improved testability
-// ============================================================================
-
-/**
  * Check if a string is a URL
  */
 export function isUrl(str: string): boolean {
@@ -289,6 +261,110 @@ export function urlAtCursor(text: string, pos: number): string | null {
 			return match[0];
 		}
 	}
+	return null;
+}
+
+/**
+ * Parse clipboard content to extract link information.
+ * Handles wiki links [[]], markdown links [text](url), and raw/multi-line
+ * URL clipboard content (including custom URI schemes like onenote:, vscode:,
+ * etc.) via resolveClipboardToLinkDestination().
+ * Returns null if clipboard doesn't contain a valid link.
+ */
+export function parseClipboardLink(clipboardText: string): { text: string; destination: string; isWiki: boolean; isEmbed: boolean } | null {
+	if (!clipboardText) return null;
+
+	const trimmed = clipboardText.trim();
+
+	// Try to parse as wiki link first (only for single-line [[...]] syntax)
+	const wikiLink = parseWikiLink(trimmed);
+	if (wikiLink) {
+		return { ...wikiLink, isWiki: true };
+	}
+
+	// Try to parse as markdown link (only for single-line [text](url) syntax)
+	const markdownLink = parseMarkdownLink(trimmed);
+	if (markdownLink) {
+		return { ...markdownLink, isWiki: false };
+	}
+
+	// Try resolving as a raw URL or multi-line clipboard with URL schemes.
+	// resolveClipboardToLinkDestination() returns null when no recognisable
+	// URL is found, so a non-null result is always a genuine URL.
+	const resolved = resolveClipboardToLinkDestination(clipboardText);
+	if (resolved !== null) {
+		return { text: "", destination: resolved, isWiki: false, isEmbed: false };
+	}
+
+	return null;
+}
+
+// ============================================================================
+// NEW: Refactored functions for improved testability
+// ============================================================================
+
+/**
+ * Resolve raw clipboard text to the best single URL to use as an Obsidian
+ * markdown link destination.  Handles two cases:
+ *
+ *   1. Multi-line clipboard with custom URI scheme lines (onenote:, vscode:, …)
+ *      and optional HTTP(S) web-fallback lines.  Custom scheme wins.
+ *   2. Single standard HTTP/HTTPS URL — passed through normalizeUrl() as-is.
+ *
+ * Returns `null` when no recognisable URL is found (plain text, empty, etc.).
+ * Callers that need a last-resort string must handle `null` themselves.
+ *
+ * Lines ending with the literal token `&end` have that suffix stripped before
+ * evaluation.
+ *
+ * This function is pure (no side effects, no Obsidian API) and is used by
+ * both parseClipboardLink() and determineLinkFromContext().
+ */
+export function resolveClipboardToLinkDestination(clipboardText: string): string | null {
+	if (!clipboardText) return null;
+
+	const trimmed = clipboardText.trim();
+	if (!trimmed) return null;
+
+	// Split into non-blank lines, stripping the `&end` trailer from each.
+	const lines = trimmed
+		.split(/\r?\n/)
+		.map((l) => {
+			const t = l.trim();
+			return t.endsWith("&end") ? t.slice(0, -4).trimEnd() : t;
+		})
+		.filter((l) => l.length > 0);
+
+	// Matches a URI scheme token of 2+ characters followed by a colon: "scheme:"
+	// Single-character "schemes" (e.g. Windows drive letters like C:) are
+	// excluded by requiring at least two characters before the colon.
+	const customSchemeRe = /^[a-zA-Z][a-zA-Z0-9+\-.]+:/;
+
+	// Standard schemes that should NOT be promoted as "app" link destinations.
+	// These are standard protocol schemes that are either unsafe (javascript:,
+	// data:, vbscript:) or not useful as Obsidian link targets (mailto:, ftp:,
+	// file:).  Blocked regardless of OS so the behaviour is consistent.
+	const blockedSchemeRe = /^(file|data|mailto|javascript|vbscript|ftp|ftps|blob):/i;
+
+	// Pass 1: look for a custom (non-http/https) URI scheme line.
+	for (const line of lines) {
+		if (
+			customSchemeRe.test(line) &&
+			!/^https?:/i.test(line) &&
+			!blockedSchemeRe.test(line)
+		) {
+			return line;
+		}
+	}
+
+	// Pass 2: fall back to the first standard http/https line.
+	for (const line of lines) {
+		if (isUrl(line)) {
+			return normalizeUrl(line);
+		}
+	}
+
+	// No recognisable URL found.
 	return null;
 }
 
@@ -638,13 +714,24 @@ export function determineLinkFromContext(context: LinkContext): LinkFromContext 
 	} 
 	// No selection, clipboard might have link or text
 	else {
-		// Check if clipboard contains a valid link (wiki or markdown)
+		// Check if clipboard contains a valid link (wiki, markdown, or URL)
 		const parsedLink = parseClipboardLink(clipboardText);
 		if (parsedLink) {
-			linkText = parsedLink.text;
-			linkDest = parsedLink.destination;
-			shouldBeMarkdown = !parsedLink.isWiki;
-			conversionNotice = `Used text & destination from link in clipboard`;
+			if (parsedLink.isWiki || parsedLink.text) {
+				// Structured wiki/markdown link — use both text and destination
+				linkText = parsedLink.text;
+				linkDest = parsedLink.destination;
+				shouldBeMarkdown = !parsedLink.isWiki;
+				conversionNotice = `Used text & destination from link in clipboard`;
+			} else {
+				// Raw URL resolved from clipboard (text is empty) — treat like
+				// the isClipboardUrl branch: pre-fill dest and select text field
+				// so the user can type a meaningful title.
+				linkDest = parsedLink.destination;
+				linkText = parsedLink.destination;
+				shouldBeMarkdown = true;
+				shouldSelectText = true;
+			}
 		} else {
 			// Clipboard has plain text but no link — leave both fields empty.
 			// Plain clipboard text is too likely to be stale/unrelated to be
