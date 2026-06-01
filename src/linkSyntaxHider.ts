@@ -132,6 +132,10 @@ const setSyntaxHiderEnabled = StateEffect.define<boolean>();
 // The value is the cursor position to move to after the delete.
 const suppressSuggestAfterDelete = StateEffect.define<number>();
 const rewrittenSelectionDelete = StateEffect.define<null>();
+/** Marks a transaction that deletes an entire empty-text link (leading + trailing syntax).
+ *  protectSyntaxFilter must pass these through — they are whole-link deletes, not
+ *  accidental syntax corruption. */
+const rewrittenEmptyLinkDelete = StateEffect.define<null>();
 const setSuppressNextBoundaryInput = StateEffect.define<number | null>();
 
 // Marks a rewritten follow-up text insertion so the suppress-next-input filter
@@ -411,6 +415,56 @@ const hiddenSyntaxReplace = Decoration.replace({
 	widget: new HiddenSyntaxWidget(),
 });
 
+/**
+ * Widget that renders a faint "[]" marker at the position of a link whose
+ * visible display text is empty (e.g. markdown `[](url)` or wikilink
+ * `[[Note|]]`). Without this marker such links are invisible "holes" in the
+ * editor where the cursor can sit but the user sees nothing.
+ *
+ * This is purely presentational: the widget is a zero-width point decoration
+ * that inserts no real document text, so cursor positions, link-range math,
+ * and all Steady Links commands continue to operate off the real positions
+ * (textFrom/textTo and the hidden ranges).
+ */
+class EmptyLinkBracketsWidget extends WidgetType {
+	toDOM(): HTMLElement {
+		const span = document.createElement("span");
+		span.className = "le-empty-link-brackets";
+		span.setAttribute("aria-hidden", "true");
+		span.setAttribute("data-steady-links-empty", "true");
+		span.textContent = "[]";
+		return span;
+	}
+
+	eq(): boolean {
+		// All instances render identically, so they are interchangeable.
+		return true;
+	}
+
+	ignoreEvent(): boolean {
+		return false;
+	}
+}
+
+const emptyLinkBrackets = Decoration.widget({
+	widget: new EmptyLinkBracketsWidget(),
+	side: 1,
+});
+
+/**
+ * Returns true when a link's visible display text is empty or whitespace-only.
+ * Works for both markdown links (`[](url)` → text between brackets) and
+ * wikilinks (`[[Note|]]` → alias after the last pipe) because
+ * buildVisibleLinkSpans normalises both to the same textFrom/textTo region.
+ *
+ * For empty-text links the span builder yields textFrom === textTo, so the
+ * slice is the empty string; whitespace-only aliases are also treated as empty.
+ */
+function isEmptyLinkText(span: VisibleLinkSpan, doc: EditorState["doc"]): boolean {
+	const text = doc.sliceString(span.textFrom, span.textTo);
+	return text.trim().length === 0;
+}
+
 // ---------------------------------------------------------------------------
 // Link detection (raw line text)
 // ---------------------------------------------------------------------------
@@ -597,9 +651,45 @@ class HiddenSyntaxReplacePlugin implements PluginValue {
 		const ranges = computeHiddenRanges(state);
 		if (ranges.length === 0) return Decoration.none;
 
-		const builder = new RangeSetBuilder<Decoration>();
+		// Collect all decorations first, then add them to the builder in the
+		// strict ascending order CodeMirror requires. Two kinds of decoration:
+		//   1. replace ranges that hide the link syntax (from < to)
+		//   2. zero-width "[]" markers for links with empty display text
+		// For an empty-text link the leading replace ends and the trailing
+		// replace begins at the same position (textFrom === textTo); the point
+		// widget must sort before the trailing range that starts there, which
+		// the comparator below guarantees (point decorations first at equal from).
+		type Pending = { from: number; to: number; deco: Decoration; point: boolean };
+		const pending: Pending[] = [];
+
 		for (const r of ranges) {
-			if (r.from < r.to) builder.add(r.from, r.to, hiddenSyntaxReplace);
+			if (r.from < r.to) {
+				pending.push({ from: r.from, to: r.to, deco: hiddenSyntaxReplace, point: false });
+			}
+		}
+
+		const linkSpans = buildVisibleLinkSpans(ranges, state.doc);
+		for (const span of linkSpans) {
+			if (!isEmptyLinkText(span, state.doc)) continue;
+			pending.push({
+				from: span.textFrom,
+				to: span.textFrom,
+				deco: emptyLinkBrackets,
+				point: true,
+			});
+		}
+
+		pending.sort((a, b) => {
+			if (a.from !== b.from) return a.from - b.from;
+			// At the same start position, point (zero-width) decorations must
+			// come before range decorations.
+			if (a.point !== b.point) return a.point ? -1 : 1;
+			return a.to - b.to;
+		});
+
+		const builder = new RangeSetBuilder<Decoration>();
+		for (const p of pending) {
+			builder.add(p.from, p.to, p.deco);
 		}
 		return builder.finish();
 	}
@@ -2232,6 +2322,28 @@ const deleteAtLinkEndFix = EditorState.transactionFilter.of((tr) => {
 		if (range.head !== h.to && range.head !== h.from) continue;
 
 		const userEvent = tr.annotation(Transaction.userEvent) ?? undefined;
+
+		// Special case: empty-text link (textFrom === textTo, i.e. h.from
+		// immediately follows the leading range). Backspace or Del at the
+		// empty text position should delete the entire link, not try to
+		// delete h.from-1 (which would be inside the leading syntax).
+		const linkSpans = buildVisibleLinkSpans(hidden, tr.startState.doc);
+		const emptySpan = linkSpans.find(
+			(s) => s.textFrom === s.textTo && s.trailing.from === h.from
+		);
+		if (emptySpan) {
+			return tr.startState.update({
+				changes: { from: emptySpan.from, to: emptySpan.to, insert: "" },
+				selection: EditorSelection.cursor(emptySpan.from),
+				scrollIntoView: true,
+				userEvent,
+				effects: [
+					suppressSuggestAfterDelete.of(emptySpan.from),
+					rewrittenEmptyLinkDelete.of(null),
+				],
+			});
+		}
+
 		return tr.startState.update({
 			changes: { from: h.from - 1, to: h.from, insert: "" },
 			selection: EditorSelection.cursor(h.from - 1),
@@ -2303,6 +2415,27 @@ const deleteAtLinkStartFix = EditorState.transactionFilter.of((tr) => {
 		// Case 2: Backspace from inside-left — cursor at h.to, deletion targets [h.to-1, h.to)
 		// Redirect to delete the character before the link (h.from - 1).
 		if (range.head === h.to) {
+			// Special case: empty-text link (h.to === trailing.from, meaning the
+			// leading range immediately abuts the trailing range with no display
+			// text between them). Backspace at the only visible position (the []
+			// widget) should delete the entire link.
+			const linkSpans = buildVisibleLinkSpans(hidden, tr.startState.doc);
+			const emptySpan = linkSpans.find(
+				(s) => s.textFrom === s.textTo && s.leading.to === h.to
+			);
+			if (emptySpan) {
+				return tr.startState.update({
+					changes: { from: emptySpan.from, to: emptySpan.to, insert: "" },
+					selection: EditorSelection.cursor(emptySpan.from),
+					scrollIntoView: true,
+					userEvent,
+					effects: [
+						suppressSuggestAfterDelete.of(emptySpan.from),
+						rewrittenEmptyLinkDelete.of(null),
+					],
+				});
+			}
+
 			if (h.from === 0) return tr; // Nothing before the link to delete
 			return tr.startState.update({
 				changes: { from: h.from - 1, to: h.from, insert: "" },
@@ -2319,6 +2452,25 @@ const deleteAtLinkStartFix = EditorState.transactionFilter.of((tr) => {
 		// Case 1: Del from outside-left — cursor at h.from, deletion targets [h.from, h.from+1)
 		// Redirect to delete the first display character (h.to).
 		if (range.head === h.from) {
+			// Special case: empty-text link — Del at lead.from should delete
+			// the whole link instead of the (non-existent) first display char.
+			const linkSpansCase1 = buildVisibleLinkSpans(hidden, doc);
+			const emptySpanCase1 = linkSpansCase1.find(
+				(s) => s.textFrom === s.textTo && s.leading.from === h.from
+			);
+			if (emptySpanCase1) {
+				return tr.startState.update({
+					changes: { from: emptySpanCase1.from, to: emptySpanCase1.to, insert: "" },
+					selection: EditorSelection.cursor(emptySpanCase1.from),
+					scrollIntoView: true,
+					userEvent,
+					effects: [
+						suppressSuggestAfterDelete.of(emptySpanCase1.from),
+						rewrittenEmptyLinkDelete.of(null),
+					],
+				});
+			}
+
 			if (h.to >= doc.length) return tr; // Nothing after the leading syntax to delete
 			return tr.startState.update({
 				changes: { from: h.to, to: h.to + 1, insert: "" },
@@ -2567,7 +2719,17 @@ function rewriteDeleteChangeForLinks(change: ChangeSpec, links: LinkSpan[]): Cha
 			selectedDisplayFrom <= link.textFrom &&
 			selectedDisplayTo >= link.textTo;
 
-		if (deletesEntireDisplay) {
+		// Empty-text link (textFrom === textTo): any change that covers the
+		// link's full span, or that reaches the empty text position from either
+		// side, should delete the entire link.  The normal overlapsDisplay check
+		// is never true for zero-width text, so we need this special path.
+		const isEmptyTextLink = link.textFrom === link.textTo;
+		const coversEmptyLink =
+			isEmptyTextLink &&
+			change.from <= link.textFrom &&
+			change.to >= link.textTo;
+
+		if (deletesEntireDisplay || coversEmptyLink) {
 			rewritten.push({ from: link.from, to: link.to, insert: "" });
 		} else if (overlapsDisplay) {
 			rewritten.push({
@@ -2726,6 +2888,9 @@ const clampSelectionDeleteFilter = EditorState.transactionFilter.of((tr) => {
 	if (!isPureDeleteTransaction(tr)) return tr;
 	if (!tr.startState.field(syntaxHiderEnabledField, false)) return tr;
 	if (tr.effects.some((e) => e.is(rewrittenSelectionDelete))) return tr;
+	// Whole-link deletes for empty-text links must not be clamped — the entire
+	// link is hidden syntax, so clampDeleteChangeAgainstHidden would eat the change.
+	if (tr.effects.some((e) => e.is(rewrittenEmptyLinkDelete))) return tr;
 
 	const userEvent = tr.annotation(Transaction.userEvent) ?? null;
 
@@ -3015,6 +3180,60 @@ const protectSyntaxFilter = EditorState.transactionFilter.of((tr) => {
 	if (tr.effects.some((e) => e.is(rewrittenSelectionDelete))) {
 		traceFilter("protectSyntaxFilter", tr, "PASS (rewrittenSelectionDelete)");
 		return tr;
+	}
+	if (tr.effects.some((e) => e.is(rewrittenEmptyLinkDelete))) {
+		traceFilter("protectSyntaxFilter", tr, "PASS (rewrittenEmptyLinkDelete)");
+		return tr;
+	}
+
+	// Detect and handle single-char deletes that touch the hidden syntax of an
+	// empty-text link (textFrom === textTo). For these links the boundary fixes
+	// cannot delete "one visible character" because there are none — the correct
+	// behaviour is to delete the whole link (leading + trailing).
+	// We do this rewrite here in protectSyntaxFilter (which runs last) rather
+	// than relying on deleteAtLinkStartFix/deleteAtLinkEndFix because those
+	// filters produce a rewritten transaction that still overlaps hidden syntax,
+	// which would be re-blocked by protectSyntaxFilter on the next pass unless
+	// tagged explicitly. Handling it here is simpler and avoids that cycle.
+	if (isPureDeleteTransaction(tr)) {
+		let deleteFrom = -1;
+		let deleteTo = -1;
+		let deleteCount = 0;
+		tr.changes.iterChanges((fromA, toA) => {
+			deleteCount += 1;
+			deleteFrom = fromA;
+			deleteTo = toA;
+		});
+		if (deleteCount === 1 && deleteTo - deleteFrom === 1) {
+			const hiddenForEmptyCheck = tr.startState.field(hiddenRangesField, false);
+			if (hiddenForEmptyCheck && hiddenForEmptyCheck.length > 0) {
+				const linkSpans = buildVisibleLinkSpans(hiddenForEmptyCheck, tr.startState.doc);
+				const emptySpan = linkSpans.find(
+					(s) =>
+						s.textFrom === s.textTo &&
+						((deleteFrom >= s.leading.from && deleteTo <= s.leading.to) ||
+							(deleteFrom >= s.trailing.from && deleteTo <= s.trailing.to))
+				);
+				if (emptySpan) {
+					traceFilter(
+						"protectSyntaxFilter",
+						tr,
+						"REWRITE (whole-link delete for empty-text link)"
+					);
+					const userEvent = tr.annotation(Transaction.userEvent) ?? undefined;
+					return tr.startState.update({
+						changes: { from: emptySpan.from, to: emptySpan.to, insert: "" },
+						selection: EditorSelection.cursor(emptySpan.from),
+						scrollIntoView: true,
+						userEvent,
+						effects: [
+							suppressSuggestAfterDelete.of(emptySpan.from),
+							rewrittenEmptyLinkDelete.of(null),
+						],
+					});
+				}
+			}
+		}
 	}
 
 	// Note: We no longer unconditionally bypass protection for non-empty
@@ -3341,6 +3560,7 @@ export {
 	setSyntaxHiderEnabled,
 	isMarkdownLinkSpan,
 	buildVisibleLinkSpans,
+	isEmptyLinkText,
 	suppressSameLineCursorResetEffect,
 	setPendingExternalSelectionExpansion,
 };

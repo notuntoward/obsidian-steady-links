@@ -1677,3 +1677,171 @@ describe("Integration: cursor correction with real CM6 state", () => {
 		});
 	});
 });
+
+// ============================================================================
+// Empty-text link deletion
+//
+// Links with no visible display text ([](url) and [[Note|]]) must be
+// deletable with Backspace, Delete, selection-delete, and Emacs kill commands.
+// Without explicit handling the boundary fixes redirect to positions inside
+// the syntax, producing no-ops or deleting wrong characters.
+// ============================================================================
+
+describe("Integration: empty-text link deletion", () => {
+	let view: EditorView;
+
+	afterEach(() => {
+		view?.destroy();
+		document.body.innerHTML = "";
+	});
+
+	// ── Markdown [](url) ──────────────────────────────────────────────────
+
+	it("Backspace at the empty text position of [](url) deletes the whole link", () => {
+		// "[](https://x.com)" — leading=[0,1), textFrom=textTo=1, trailing=[1,17)
+		view = createTestView("[](https://x.com)", 1);
+
+		view.dispatch({
+			changes: { from: 0, to: 1, insert: "" }, // Backspace targets [0,1)
+			selection: EditorSelection.cursor(0),
+			annotations: [Transaction.userEvent.of("delete")],
+		});
+
+		expect(view.state.doc.toString()).toBe("");
+	});
+
+	it("Delete at the empty text position of [](url) deletes the whole link", () => {
+		// Delete from cursor at textFrom=1 targets [1,2) which is inside trailing
+		view = createTestView("[](https://x.com)", 1);
+
+		view.dispatch({
+			changes: { from: 1, to: 2, insert: "" }, // Delete targets first char of trailing
+			selection: EditorSelection.cursor(1),
+			annotations: [Transaction.userEvent.of("delete")],
+		});
+
+		expect(view.state.doc.toString()).toBe("");
+	});
+
+	it("Selection-delete covering [](url) entirely removes the link", () => {
+		view = createTestView("[](https://x.com)", 1);
+
+		view.dispatch({
+			selection: EditorSelection.range(0, 17),
+		});
+
+		view.dispatch({
+			changes: { from: 0, to: 17, insert: "" },
+			selection: EditorSelection.cursor(0),
+			annotations: [Transaction.userEvent.of("delete")],
+		});
+
+		expect(view.state.doc.toString()).toBe("");
+	});
+
+	it("Selection-delete from textFrom to textTo (zero-width) of [](url) removes the link", () => {
+		// textFrom === textTo === 1; selection from 1 to 1 still covers the link
+		// via coversEmptyLink when change range spans link.from..link.to
+		view = createTestView("before [](https://x.com) after", 8);
+
+		// Select the entire link [7, 24)
+		view.dispatch({
+			selection: EditorSelection.range(7, 24),
+		});
+
+		view.dispatch({
+			changes: { from: 7, to: 24, insert: "" },
+			selection: EditorSelection.cursor(7),
+			annotations: [Transaction.userEvent.of("delete")],
+		});
+
+		expect(view.state.doc.toString()).toBe("before  after");
+	});
+
+	it("Emacs kill-line from textFrom of [](url) deletes the whole link", () => {
+		view = createTestView("[](https://x.com)", 1);
+		const result = emulateEmacsKillLine(view);
+		expect(view.state.doc.toString()).toBe("");
+		expect(result.cursor).toBe(0);
+	});
+
+	// ── Wikilink [[Note|]] ────────────────────────────────────────────────
+
+	it("Backspace at the empty alias position of [[Note|]] deletes the whole link", () => {
+		// "[[Note|]]" — leading=[0,7), textFrom=textTo=7, trailing=[7,9)
+		view = createTestView("[[Note|]]", 7);
+
+		view.dispatch({
+			changes: { from: 6, to: 7, insert: "" }, // Backspace targets [6,7) inside leading
+			selection: EditorSelection.cursor(6),
+			annotations: [Transaction.userEvent.of("delete")],
+		});
+
+		expect(view.state.doc.toString()).toBe("");
+	});
+
+	it("Delete at the empty alias position of [[Note|]] deletes the whole link", () => {
+		view = createTestView("[[Note|]]", 7);
+
+		view.dispatch({
+			changes: { from: 7, to: 8, insert: "" }, // Delete targets [7,8) inside trailing
+			selection: EditorSelection.cursor(7),
+			annotations: [Transaction.userEvent.of("delete")],
+		});
+
+		expect(view.state.doc.toString()).toBe("");
+	});
+
+	it("Selection-delete covering [[Note|]] removes the link", () => {
+		view = createTestView("[[Note|]]", 7);
+
+		view.dispatch({
+			selection: EditorSelection.range(0, 9),
+		});
+
+		view.dispatch({
+			changes: { from: 0, to: 9, insert: "" },
+			selection: EditorSelection.cursor(0),
+			annotations: [Transaction.userEvent.of("delete")],
+		});
+
+		expect(view.state.doc.toString()).toBe("");
+	});
+
+	it("Emacs kill-line from textFrom of [[Note|]] deletes the whole link", () => {
+		view = createTestView("[[Note|]]", 7);
+		const result = emulateEmacsKillLine(view);
+		expect(view.state.doc.toString()).toBe("");
+		expect(result.cursor).toBe(0);
+	});
+
+	// ── Surrounding context preserved ─────────────────────────────────────
+
+	it("Backspace on empty markdown link in mid-line preserves surrounding text", () => {
+		// "foo [](url) bar" — leading=[4,5), textFrom=textTo=5, trailing=[5,10)
+		// Backspace with cursor at 5 (textFrom) produces change {from:4, to:5}
+		view = createTestView("foo [](url) bar", 5);
+
+		view.dispatch({
+			changes: { from: 4, to: 5, insert: "" }, // Backspace from cursor=5
+			selection: EditorSelection.cursor(5),
+			annotations: [Transaction.userEvent.of("delete")],
+		});
+
+		expect(view.state.doc.toString()).toBe("foo  bar");
+	});
+
+	it("Delete on empty markdown link in mid-line preserves surrounding text", () => {
+		// "foo [](url) bar" — leading=[4,5), textFrom=textTo=5, trailing=[5,10)
+		// Del with cursor at 4 (lead.from) produces change {from:4, to:5}
+		view = createTestView("foo [](url) bar", 4);
+
+		view.dispatch({
+			changes: { from: 4, to: 5, insert: "" }, // Del from cursor=4
+			selection: EditorSelection.cursor(4),
+			annotations: [Transaction.userEvent.of("delete")],
+		});
+
+		expect(view.state.doc.toString()).toBe("foo  bar");
+	});
+});

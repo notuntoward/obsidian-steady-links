@@ -15,6 +15,7 @@ import {
 	setSyntaxHiderEnabled,
 	isMarkdownLinkSpan,
 	buildVisibleLinkSpans,
+	isEmptyLinkText,
 	type HiddenRange,
 	type VisibleLinkSpan,
 } from "../src/linkSyntaxHider";
@@ -1937,3 +1938,106 @@ describe("isMarkdownLinkSpan", () => {
 		expect(isMarkdownLinkSpan(doc, spans[0])).toBe(true);
 	});
 });
+
+// ============================================================================
+// isEmptyLinkText — faint "[]" marker detection
+//
+// Links whose visible display text is empty (markdown `[](url)`, wikilink
+// `[[Note|]]`) must be detectable so the plugin can render a faint "[]" marker
+// and avoid invisible cursor traps.
+// ============================================================================
+
+describe("isEmptyLinkText", () => {
+	function makeSpanDoc(text: string) {
+		return EditorState.create({ doc: text }).doc;
+	}
+
+	// Build the real VisibleLinkSpan via buildVisibleLinkSpans using the hidden
+	// ranges that computeHiddenRanges would produce, so the test exercises the
+	// same span shape the plugin uses at runtime.
+
+	it("returns true for an empty markdown link [](url)", () => {
+		const doc = makeSpanDoc("[](https://x.com)");
+		// "[" = leading [0,1); "](https://x.com)" = trailing [1,17); text [1,1)
+		const hidden: HiddenRange[] = [
+			{ from: 0, to: 1, side: "leading" },
+			{ from: 1, to: 17, side: "trailing" },
+		];
+		const spans = buildVisibleLinkSpans(hidden, doc);
+		expect(spans).toHaveLength(1);
+		expect(spans[0].textFrom).toBe(spans[0].textTo);
+		expect(isEmptyLinkText(spans[0], doc)).toBe(true);
+	});
+
+	it("returns false for a markdown link with text [Label](url)", () => {
+		const doc = makeSpanDoc("[Label](https://x.com)");
+		const hidden: HiddenRange[] = [
+			{ from: 0, to: 1, side: "leading" },
+			{ from: 6, to: 22, side: "trailing" },
+		];
+		const spans = buildVisibleLinkSpans(hidden, doc);
+		expect(spans).toHaveLength(1);
+		expect(isEmptyLinkText(spans[0], doc)).toBe(false);
+	});
+
+	it("returns true for a piped wikilink with empty alias [[Note|]]", () => {
+		const doc = makeSpanDoc("[[Note|]]");
+		// leading "[[Note|" = [0,7); trailing "]]" = [7,9); text [7,7)
+		const hidden: HiddenRange[] = [
+			{ from: 0, to: 7, side: "leading" },
+			{ from: 7, to: 9, side: "trailing" },
+		];
+		const spans = buildVisibleLinkSpans(hidden, doc);
+		expect(spans).toHaveLength(1);
+		expect(spans[0].textFrom).toBe(spans[0].textTo);
+		expect(isEmptyLinkText(spans[0], doc)).toBe(true);
+	});
+
+	it("returns false for a plain wikilink [[Note]]", () => {
+		const doc = makeSpanDoc("[[Note]]");
+		const hidden: HiddenRange[] = [
+			{ from: 0, to: 2, side: "leading" },
+			{ from: 6, to: 8, side: "trailing" },
+		];
+		const spans = buildVisibleLinkSpans(hidden, doc);
+		expect(spans).toHaveLength(1);
+		expect(isEmptyLinkText(spans[0], doc)).toBe(false);
+	});
+
+	it("returns false for a piped wikilink with alias [[Note|Alias]]", () => {
+		const doc = makeSpanDoc("[[Note|Alias]]");
+		const hidden: HiddenRange[] = [
+			{ from: 0, to: 7, side: "leading" },
+			{ from: 12, to: 14, side: "trailing" },
+		];
+		const spans = buildVisibleLinkSpans(hidden, doc);
+		expect(spans).toHaveLength(1);
+		expect(isEmptyLinkText(spans[0], doc)).toBe(false);
+	});
+
+	it("returns true for a whitespace-only alias [[Note| ]]", () => {
+		const doc = makeSpanDoc("[[Note| ]]");
+		// leading "[[Note|" = [0,7); trailing "]]" = [8,10); text " " [7,8)
+		const hidden: HiddenRange[] = [
+			{ from: 0, to: 7, side: "leading" },
+			{ from: 8, to: 10, side: "trailing" },
+		];
+		const spans = buildVisibleLinkSpans(hidden, doc);
+		expect(spans).toHaveLength(1);
+		expect(isEmptyLinkText(spans[0], doc)).toBe(true);
+	});
+
+	it("returns true for an empty embed markdown link ![](url)", () => {
+		const doc = makeSpanDoc("![](https://img.png)");
+		// "![" = leading [0,2); "](https://img.png)" = trailing [2,20); text [2,2)
+		const hidden: HiddenRange[] = [
+			{ from: 0, to: 2, side: "leading" },
+			{ from: 2, to: 20, side: "trailing" },
+		];
+		const spans = buildVisibleLinkSpans(hidden, doc);
+		expect(spans).toHaveLength(1);
+		expect(isEmptyLinkText(spans[0], doc)).toBe(true);
+	});
+});
+
+

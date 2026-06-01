@@ -17,6 +17,16 @@ body.le-keep-links-steady .le-hidden-syntax-anchor {
 	pointer-events: none;
 }
 
+/* Steady Links: faint "[]" marker for links whose display text is empty
+ * (e.g. markdown `[](url)` or wikilink `[[Note|]]`). Without this the link
+ * is an invisible hole where the cursor can sit but nothing is shown.
+ * Uses the theme's --text-faint so it adapts to light/dark and custom themes. */
+body.le-keep-links-steady .le-empty-link-brackets {
+	color: var(--text-faint);
+	pointer-events: none;
+	user-select: none;
+}
+
 /* Ensure cursor remains visible when inside hidden link syntax.
  * CodeMirror calculates cursor height from font metrics, so we need to
  * ensure the cursor element has a minimum height. */
