@@ -1,5 +1,10 @@
 # Steady Links
 
+[![Build](https://github.com/notuntoward/obsidian-steady-links/actions/workflows/build.yml/badge.svg)](https://github.com/notuntoward/obsidian-steady-links/actions/workflows/build.yml)
+[![CodeQL](https://github.com/notuntoward/obsidian-steady-links/actions/workflows/codeql.yml/badge.svg)](https://github.com/notuntoward/obsidian-steady-links/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://github.com/notuntoward/obsidian-steady-links/actions/workflows/scorecard.yml/badge.svg)](https://github.com/notuntoward/obsidian-steady-links/actions/workflows/scorecard.yml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/notuntoward/obsidian-steady-links/badge)](https://securityscorecards.dev/viewer/?uri=github.com/notuntoward/obsidian-steady-links)
+
 Steady Links simplifies editing links and optionally keeps them collapsed, showing only link text, hiding link syntax.
 
 ### Stock Obsidian Links
