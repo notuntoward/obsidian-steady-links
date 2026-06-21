@@ -1,0 +1,11 @@
+# OSV-Scanner configuration
+# Used by OpenSSF Scorecard's Vulnerabilities check.
+# See: https://google.github.io/osv-scanner/configuration/
+
+[[IgnoredVulns]]
+id = "GHSA-gv7w-rqvm-qjhr"
+reason = "Advisory has been withdrawn; no known impacted version"
+
+[[IgnoredVulns]]
+id = "GHSA-g7r4-m6w7-qqqr"
+reason = "Low severity; only affects esbuild dev server on Windows when running `esbuild --serve`. Not applicable to production plugin builds."
