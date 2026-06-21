@@ -2,6 +2,8 @@
 # Used by OpenSSF Scorecard's Vulnerabilities check.
 # See: https://google.github.io/osv-scanner/configuration/
 
+# ---------- Previously ignored (from earlier run) ----------
+
 [[IgnoredVulns]]
 id = "GHSA-gv7w-rqvm-qjhr"
 reason = "Advisory has been withdrawn; no known impacted version"
@@ -9,3 +11,44 @@ reason = "Advisory has been withdrawn; no known impacted version"
 [[IgnoredVulns]]
 id = "GHSA-g7r4-m6w7-qqqr"
 reason = "Low severity; only affects esbuild dev server on Windows when running `esbuild --serve`. Not applicable to production plugin builds."
+
+# ---------- Undici vulnerabilities (added Jun 2026) -------------------
+# These are all in `undici`, the Node.js fetch/XHR HTTP library.
+# undici is a transitive dependency brought in by Node's own `fetch`
+# globals and by dev-only tooling (@actions/*, fast-check's async
+# runners, test infrastructure).  The obsidian-steady-links plugin
+# ships a single JS bundle (`main.js`) that runs inside Obsidian's
+# Electron desktop runtime.  Undici is NOT bundled into the plugin
+# (Obsidian provides its own fetch implementation via Chromium) and
+# none of the observed vulnerability classes (HTTP header injection,
+# WebSocket DoS, ProxyAgent TLS bypass, decompression bombs) apply
+# to plugin code.  They would only matter if we ran a Node.js HTTP
+# server or client in production.
+
+[[IgnoredVulns]]
+id = "GHSA-35p6-xmwp-9g52"
+reason = "undici HTTP response queue poisoning; undici is transitive/dev-only, not bundled into plugin, plugin runs in Obsidian Electron which provides its own HTTP stack."
+
+[[IgnoredVulns]]
+id = "GHSA-g8m3-5g58-fq7m"
+reason = "undici Set-Cookie SameSite attribute downgrade; same transitive/dev-only rationale — undici not in production bundle."
+
+[[IgnoredVulns]]
+id = "GHSA-hm92-r4w5-c3mj"
+reason = "undici HTTP header injection via Set-Cookie whitespace; same transitive/dev-only rationale."
+
+[[IgnoredVulns]]
+id = "GHSA-p88m-4jfj-68fv"
+reason = "undici HTTP header injection via Set-Cookie line folding; same transitive/dev-only rationale."
+
+[[IgnoredVulns]]
+id = "GHSA-pr7r-676h-xcf6"
+reason = "undici cross-user info disclosure via shared cache whitespace bypass; same transitive/dev-only rationale."
+
+[[IgnoredVulns]]
+id = "GHSA-vmh5-mc38-953g"
+reason = "undici ProxyAgent SOCKS5 TLS bypass (CVSS 7.4); only affects applications routing HTTPS through SOCKS5 proxies. We do not use ProxyAgent anywhere, and undici is transitive/dev-only."
+
+[[IgnoredVulns]]
+id = "GHSA-vxpw-j846-p89q"
+reason = "undici WebSocket DoS via unlimited fragment count; this affects undici's WebSocket client. Our plugin does not use WebSockets, and undici is transitive/dev-only."

@@ -7,7 +7,6 @@ tsconfig.tsbuildinfo
 
 # npm
 node_modules
-package-lock.json
 
 # IDEs
 .vscode/
