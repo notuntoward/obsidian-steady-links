@@ -365,7 +365,15 @@ export class EditLinkModal extends Modal {
 		this.eventListeners.push([this.modalEl, "keydown", modalKeydownHandler as EventListener]);
 
 		this.updateUIState();
-		this.populateFromClipboard();
+		// Clipboard auto-fill is only a convenience for NEW links. For existing
+		// links the text/destination/type are already populated from the document,
+		// and populateFromClipboard() would otherwise asynchronously overwrite
+		// this.isWiki based on whatever happens to be in the clipboard — flipping a
+		// correctly-detected wikilink to Markdown (intermittently, depending on
+		// clipboard contents and async timing).
+		if (this.isNewLink) {
+			this.populateFromClipboard();
+		}
 		this.setInitialFocus();
 	}
 
