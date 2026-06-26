@@ -112,6 +112,7 @@ Otherwise, the modal opens with convenient defaults for a new link. These are ba
 | Condition                                        | Link Text                | Destination                     | Format   | Notes                                                               |
 | ------------------------------------------------ | ------------------------ | ------------------------------- | -------- | ------------------------------------------------------------------- |
 | Cursor on a bare URL                             | Original URL text        | Normalized URL                  | Markdown | Ignores plain-text clipboard content; the URL under the cursor wins |
+| Cursor on a bare file name                       | File name                | File name                       | WikiLink | A bare name like `diagram.canvas` or `notes.pdf` becomes a link to that file when it exists in your vault |
 | Selection is a URL                               | Original URL text        | Normalized URL                  | Markdown | `www.` URLs are normalized to `https://...`                         |
 | Has selection + clipboard has URL                | Selection                | Normalized URL                  | Markdown | Useful for turning selected text into an external link              |
 | Has selection + clipboard has custom URI scheme  | Selection                | Custom-scheme URL from clipboard | Markdown | e.g. `onenote:`, `vscode://`, `obsidian://`; custom scheme wins over `https` fallback |

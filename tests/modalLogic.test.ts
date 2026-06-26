@@ -369,6 +369,25 @@ describe('determineInitialLinkType', () => {
 		expect(result.isWiki).toBe(false);
 		expect(result.wasUrl).toBe(false);
 	});
+
+	it('should keep wiki for a bare-domain-shaped dest that resolves to a note', () => {
+		const result = determineInitialLinkType('my.project.notes', true, true);
+		expect(result.isWiki).toBe(true);
+		expect(result.wasUrl).toBe(false);
+	});
+
+	it('should force markdown for a bare-domain-shaped dest with no matching note', () => {
+		const result = determineInitialLinkType('my.project.notes', true, false);
+		expect(result.isWiki).toBe(false);
+		expect(result.wasUrl).toBe(true);
+	});
+
+	it('should ignore destResolvesToNote for non-wiki links', () => {
+		// A markdown link to a real URL stays markdown regardless of note resolution.
+		const result = determineInitialLinkType('https://example.com', false, true);
+		expect(result.isWiki).toBe(false);
+		expect(result.wasUrl).toBe(true);
+	});
 });
 
 // ============================================================================

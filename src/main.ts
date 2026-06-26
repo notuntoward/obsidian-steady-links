@@ -9,6 +9,8 @@ import {
 	determineLinkFromContext,
 	urlAtCursor,
 	computeDisplayedTextRange,
+	bareDomainNoteTargetFromUrl,
+	fileExtTokenAtCursor,
 } from "./utils";
 import {
 	buildLinkText,
@@ -493,6 +495,53 @@ export default class SteadyLinksPlugin extends Plugin {
 	 * Handle creating a new link - infers link context from selection/clipboard/cursor position.
 	 * Intelligently determines link text, destination, and range for the new link.
 	 */
+	/**
+	 * Return true when `cursorUrl` is a scheme-less bare-domain string whose
+	 * exact name matches an existing note in the vault. Explicit URLs (with an
+	 * http(s):// scheme or www. prefix) always return false — an explicit scheme
+	 * signals web intent regardless of any same-named note.
+	 */
+	private bareDomainResolvesToNote(cursorUrl: string): boolean {
+		const trimmed = cursorUrl.trim();
+		if (/^(https?:\/\/|www\.)/i.test(trimmed)) return false;
+
+		const noteTarget = bareDomainNoteTargetFromUrl(trimmed);
+		if (noteTarget === null) return false;
+
+		const sourcePath = this.app.workspace.getActiveFile()?.path ?? "";
+		try {
+			return (
+				this.app.metadataCache.getFirstLinkpathDest(noteTarget, sourcePath) !== null
+			);
+		} catch {
+			return false;
+		}
+	}
+
+	/**
+	 * If the cursor sits on a bare file reference with a linkable extension
+	 * (e.g. diagram.canvas, assets/photo.png) AND that file exists in the vault,
+	 * return the token; otherwise null. Existence is required so we never make a
+	 * wikilink to a non-existent file.
+	 */
+	private resolveCursorFileLink(line: string, cursorCh: number): string | null {
+		const token = fileExtTokenAtCursor(line, cursorCh);
+		if (token === null) return null;
+
+		// Resolve against the vault. Strip any trailing #heading/^block.
+		const linkpath = token.split("#")[0].trim();
+		if (!linkpath) return null;
+
+		const sourcePath = this.app.workspace.getActiveFile()?.path ?? "";
+		try {
+			return this.app.metadataCache.getFirstLinkpathDest(linkpath, sourcePath) !== null
+				? token
+				: null;
+		} catch {
+			return null;
+		}
+	}
+
 	private async handleNewLinkCreation(
 		editor: Editor,
 		cursor: { line: number; ch: number },
@@ -509,12 +558,26 @@ export default class SteadyLinksPlugin extends Plugin {
 		}
 
 		const cursorUrl = urlAtCursor(line, cursor.ch);
+
+		// If the cursor is on a scheme-less bare-domain string that matches an
+		// existing note (e.g. a note literally named community.cloud.databricks.com),
+		// treat it as a note link rather than promoting it to a web URL.
+		const cursorUrlResolvesToNote =
+			cursorUrl !== null && this.bareDomainResolvesToNote(cursorUrl);
+
+		// If the cursor is on a bare file reference with a linkable extension
+		// (e.g. diagram.canvas, assets/photo.png) that exists in the vault, make
+		// a wikilink to that file.
+		const cursorFileLink = this.resolveCursorFileLink(line, cursor.ch);
+
 		const linkContext = determineLinkFromContext({
 			selection,
 			clipboardText,
 			cursorUrl,
 			line,
 			cursorCh: cursor.ch,
+			cursorUrlResolvesToNote,
+			cursorFileLink,
 		});
 
 		const link: LinkInfo = {
@@ -533,7 +596,7 @@ export default class SteadyLinksPlugin extends Plugin {
 			const selEnd = editor.getCursor("to");
 			start = selStart.ch;
 			end = selEnd.ch;
-		} else if (cursorUrl) {
+		} else if (cursorUrl || cursorFileLink) {
 			start = linkContext.start;
 			end = linkContext.end;
 		}

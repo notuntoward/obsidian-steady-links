@@ -11,6 +11,9 @@ import {
 	isFilePath,
 	isUrl,
 	normalizeUrl,
+	bareDomainNoteTargetFromUrl,
+	hasLinkableFileExtension,
+	fileExtTokenAtCursor,
 	isAlmostUrl,
 	urlAtCursor,
 	detectMarkdownLinkAtCursor,
@@ -639,6 +642,34 @@ describe('isUrl', () => {
 		expect(isUrl('  https://example.com  ')).toBe(true);
 		expect(isUrl('\thttps://example.com\n')).toBe(true);
 	});
+
+	it('should detect bare multi-dot domains', () => {
+		expect(isUrl('community.cloud.databricks.com')).toBe(true);
+		expect(isUrl('a.b.c.io')).toBe(true);
+		expect(isUrl('docs.github.io')).toBe(true);
+		expect(isUrl('  community.cloud.databricks.com  ')).toBe(true);
+	});
+
+	it('should keep single-dot bare names as note names (not URLs)', () => {
+		expect(isUrl('example.com')).toBe(false);
+		expect(isUrl('databricks.com')).toBe(false);
+		expect(isUrl('nytimes.com')).toBe(false);
+	});
+
+	it('should not treat dotted file/note names as bare-domain URLs', () => {
+		expect(isUrl('my.notes.md')).toBe(false);
+		expect(isUrl('report.final.docx')).toBe(false);
+		expect(isUrl('diagram.v2.canvas')).toBe(false);
+		expect(isUrl('photo.edited.png')).toBe(false);
+	});
+
+	it('should reject bare-domain candidates with invalid shape', () => {
+		expect(isUrl('a.b.c.1')).toBe(false); // numeric TLD
+		expect(isUrl('a.b.-c.com')).toBe(false); // label starts with hyphen
+		expect(isUrl('a.b.c-.com')).toBe(false); // label ends with hyphen
+		expect(isUrl('two words.foo.com')).toBe(false); // whitespace
+		expect(isUrl('a..b.com')).toBe(false); // empty label
+	});
 });
 
 // ============================================================================
@@ -668,6 +699,119 @@ describe('normalizeUrl', () => {
 	it('should be case insensitive for protocols', () => {
 		expect(normalizeUrl('HTTPS://example.com')).toBe('HTTPS://example.com');
 		expect(normalizeUrl('WWW.example.com')).toBe('https://WWW.example.com');
+	});
+
+	it('should add https to bare multi-dot domains', () => {
+		expect(normalizeUrl('community.cloud.databricks.com')).toBe(
+			'https://community.cloud.databricks.com'
+		);
+		expect(normalizeUrl('  docs.github.io  ')).toBe('https://docs.github.io');
+	});
+
+	it('should leave single-dot names and dotted file names unchanged', () => {
+		expect(normalizeUrl('example.com')).toBe('example.com');
+		expect(normalizeUrl('my.notes.md')).toBe('my.notes.md');
+	});
+});
+
+// ============================================================================
+// bareDomainNoteTargetFromUrl Tests
+// ============================================================================
+describe('bareDomainNoteTargetFromUrl', () => {
+	it('should strip the scheme from a host-only bare-domain URL', () => {
+		expect(bareDomainNoteTargetFromUrl('https://community.cloud.databricks.com')).toBe(
+			'community.cloud.databricks.com'
+		);
+		expect(bareDomainNoteTargetFromUrl('http://docs.github.io')).toBe('docs.github.io');
+	});
+
+	it('should handle a www. prefix and surrounding whitespace', () => {
+		expect(bareDomainNoteTargetFromUrl('https://www.a.b.com')).toBe('a.b.com');
+		expect(bareDomainNoteTargetFromUrl('  https://docs.github.io  ')).toBe('docs.github.io');
+	});
+
+	it('should accept a scheme-less bare domain', () => {
+		expect(bareDomainNoteTargetFromUrl('community.cloud.databricks.com')).toBe(
+			'community.cloud.databricks.com'
+		);
+	});
+
+	it('should return null for URLs with a path, query, fragment, or port', () => {
+		expect(bareDomainNoteTargetFromUrl('https://a.b.com/workspace')).toBe(null);
+		expect(bareDomainNoteTargetFromUrl('https://a.b.com?x=1')).toBe(null);
+		expect(bareDomainNoteTargetFromUrl('https://a.b.com#frag')).toBe(null);
+		expect(bareDomainNoteTargetFromUrl('https://a.b.com:8080')).toBe(null);
+	});
+
+	it('should return null for single-dot and file-like hosts', () => {
+		expect(bareDomainNoteTargetFromUrl('https://example.com')).toBe(null);
+		expect(bareDomainNoteTargetFromUrl('https://my.notes.md')).toBe(null);
+	});
+
+	it('should return null for empty input', () => {
+		expect(bareDomainNoteTargetFromUrl('')).toBe(null);
+	});
+});
+
+// ============================================================================
+// hasLinkableFileExtension Tests
+// ============================================================================
+describe('hasLinkableFileExtension', () => {
+	it('should accept native Obsidian extensions', () => {
+		expect(hasLinkableFileExtension('diagram.canvas')).toBe(true);
+		expect(hasLinkableFileExtension('photo.png')).toBe(true);
+		expect(hasLinkableFileExtension('clip.mp4')).toBe(true);
+		expect(hasLinkableFileExtension('song.flac')).toBe(true);
+		expect(hasLinkableFileExtension('doc.pdf')).toBe(true);
+		expect(hasLinkableFileExtension('data.base')).toBe(true);
+		expect(hasLinkableFileExtension('note.md')).toBe(true);
+	});
+
+	it('should accept html files', () => {
+		expect(hasLinkableFileExtension('page.html')).toBe(true);
+		expect(hasLinkableFileExtension('page.htm')).toBe(true);
+	});
+
+	it('should accept paths with folders', () => {
+		expect(hasLinkableFileExtension('assets/diagram.canvas')).toBe(true);
+		expect(hasLinkableFileExtension('a/b/c/photo.JPG')).toBe(true);
+	});
+
+	it('should reject non-linkable extensions and non-files', () => {
+		expect(hasLinkableFileExtension('report.docx')).toBe(false);
+		expect(hasLinkableFileExtension('data.xlsx')).toBe(false);
+		expect(hasLinkableFileExtension('archive.zip')).toBe(false);
+		expect(hasLinkableFileExtension('plainname')).toBe(false);
+		expect(hasLinkableFileExtension('community.cloud.databricks.com')).toBe(false);
+		expect(hasLinkableFileExtension('')).toBe(false);
+	});
+});
+
+// ============================================================================
+// fileExtTokenAtCursor Tests
+// ============================================================================
+describe('fileExtTokenAtCursor', () => {
+	it('should find a bare file reference at the cursor', () => {
+		const text = 'see diagram.canvas here';
+		expect(fileExtTokenAtCursor(text, 8)).toBe('diagram.canvas');
+		expect(fileExtTokenAtCursor(text, 4)).toBe('diagram.canvas');
+	});
+
+	it('should find a path with folders (no spaces)', () => {
+		const text = 'open assets/photo.png now';
+		expect(fileExtTokenAtCursor(text, 12)).toBe('assets/photo.png');
+	});
+
+	it('should not bleed across whitespace or existing link syntax', () => {
+		const text = 'a [[note]] and diagram.canvas';
+		expect(fileExtTokenAtCursor(text, 20)).toBe('diagram.canvas');
+		// Cursor on prose word, not the file token.
+		expect(fileExtTokenAtCursor(text, 0)).toBe(null);
+	});
+
+	it('should return null when cursor not on a linkable file token', () => {
+		expect(fileExtTokenAtCursor('just some words', 5)).toBe(null);
+		expect(fileExtTokenAtCursor('report.docx here', 3)).toBe(null);
 	});
 });
 
@@ -738,6 +882,18 @@ describe('urlAtCursor', () => {
 		expect(urlAtCursor(text, 0)).toBe('https://example.com/path');
 		expect(urlAtCursor(text, 10)).toBe('https://example.com/path');
 		expect(urlAtCursor(text, text.length)).toBe('https://example.com/path');
+	});
+
+	it('should find a bare multi-dot domain at cursor', () => {
+		const text = 'see community.cloud.databricks.com here';
+		expect(urlAtCursor(text, 10)).toBe('community.cloud.databricks.com');
+		expect(urlAtCursor(text, 4)).toBe('community.cloud.databricks.com');
+	});
+
+	it('should not treat plain words or dotted file names as bare-domain URLs', () => {
+		expect(urlAtCursor('Some text without url', 5)).toBe(null);
+		expect(urlAtCursor('open my.notes.md please', 9)).toBe(null);
+		expect(urlAtCursor('the example.com note', 11)).toBe(null);
 	});
 });
 
@@ -1068,6 +1224,67 @@ describe('determineLinkFromContext', () => {
 		expect(result.text).toBe('https://example.com');
 	});
 
+	it('should promote a bare-domain cursor URL to a markdown web link when no note matches', () => {
+		const context = {
+			selection: '',
+			clipboardText: '',
+			cursorUrl: 'community.cloud.databricks.com',
+			line: 'see community.cloud.databricks.com here',
+			cursorCh: 10,
+			cursorUrlResolvesToNote: false,
+		};
+		const result = determineLinkFromContext(context);
+		expect(result.isWiki).toBe(false);
+		expect(result.destination).toBe('https://community.cloud.databricks.com');
+	});
+
+	it('should make a wikilink to the note when a bare-domain cursor URL matches an existing note', () => {
+		const context = {
+			selection: '',
+			clipboardText: '',
+			cursorUrl: 'community.cloud.databricks.com',
+			line: 'see community.cloud.databricks.com here',
+			cursorCh: 10,
+			cursorUrlResolvesToNote: true,
+		};
+		const result = determineLinkFromContext(context);
+		expect(result.isWiki).toBe(true);
+		expect(result.destination).toBe('community.cloud.databricks.com');
+		expect(result.text).toBe('community.cloud.databricks.com');
+		expect(result.conversionNotice).toBe(null);
+	});
+
+	it('should make a wikilink to a file when cursorFileLink is provided', () => {
+		const context = {
+			selection: '',
+			clipboardText: '',
+			cursorUrl: null,
+			line: 'see diagram.canvas here',
+			cursorCh: 8,
+			cursorFileLink: 'diagram.canvas',
+		};
+		const result = determineLinkFromContext(context);
+		expect(result.isWiki).toBe(true);
+		expect(result.destination).toBe('diagram.canvas');
+		expect(result.text).toBe('diagram.canvas');
+		expect(result.conversionNotice).toBe(null);
+	});
+
+	it('should still promote an explicit-scheme cursor URL even if a same-named note exists', () => {
+		const context = {
+			selection: '',
+			clipboardText: '',
+			cursorUrl: 'www.example.com',
+			line: 'see www.example.com here',
+			cursorCh: 8,
+			// Explicit www. URL: web intent regardless of note resolution.
+			cursorUrlResolvesToNote: true,
+		};
+		const result = determineLinkFromContext(context);
+		expect(result.isWiki).toBe(false);
+		expect(result.destination).toBe('https://www.example.com');
+	});
+
 	it('should use selection as link text with clipboard destination', () => {
 		const context = {
 			selection: 'My Link',
@@ -1334,6 +1551,30 @@ describe('validateLinkDestination', () => {
 	it('should accept valid markdown destination', () => {
 		const result = validateLinkDestination('path/to/file.md', 'Link', false);
 		expect(result.isValid).toBe(true);
+	});
+
+	it('should NOT warn about external URL for a scheme-less bare-domain wikilink (valid note target)', () => {
+		// A bare-domain-shaped string with no scheme is a legitimate wikilink note
+		// name, even if no note exists yet — Obsidian links to not-yet-created notes.
+		const result = validateLinkDestination('community.cloud.databricks.com', 'Link', true, false, undefined, false);
+		expect(result.warnings.some(w => w.text.includes('cannot link to external URLs'))).toBe(false);
+		// And it should not be flagged as an invalid wikilink destination either.
+		expect(result.warnings.some(w => w.text.includes('Invalid WikiLink'))).toBe(false);
+	});
+
+	it('should still warn when a wikilink destination is an explicit http(s):// URL', () => {
+		const result = validateLinkDestination('https://example.com', 'Link', true, false, undefined, false);
+		expect(result.warnings.some(w => w.text.includes('cannot link to external URLs'))).toBe(true);
+	});
+
+	it('should still warn when a wikilink destination is an explicit www. URL', () => {
+		const result = validateLinkDestination('www.example.com', 'Link', true, false, undefined, false);
+		expect(result.warnings.some(w => w.text.includes('cannot link to external URLs'))).toBe(true);
+	});
+
+	it('should NOT warn about URL when an explicit-URL wikilink resolves to a note', () => {
+		const result = validateLinkDestination('https://example.com', 'Link', true, false, undefined, true);
+		expect(result.warnings.some(w => w.text.includes('cannot link to external URLs'))).toBe(false);
 	});
 
 	it('should not have errors when empty destination', () => {

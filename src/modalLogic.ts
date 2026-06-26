@@ -292,11 +292,27 @@ export interface InitialLinkState {
  * If the destination is a URL, force markdown (since wikilinks can't link to URLs).
  * Otherwise, respect the provided isWiki flag.
  *
- * @param destination  The link destination
- * @param isWiki       Whether the link was originally a wiki link
+ * Exception: a wikilink whose destination merely *looks* URL-shaped under the
+ * bare-domain heuristic (e.g. `[[my.project.notes]]`) but actually resolves to
+ * an existing note in the vault must stay a wikilink — it is a note link, not a
+ * web URL. Callers pass `destResolvesToNote` based on a vault lookup.
+ *
+ * @param destination         The link destination
+ * @param isWiki              Whether the link was originally a wiki link
+ * @param destResolvesToNote  Whether the destination resolves to an existing note
  * @returns The initial link state including isWiki and wasUrl flags
  */
-export function determineInitialLinkType(destination: string, isWiki: boolean): InitialLinkState {
+export function determineInitialLinkType(
+	destination: string,
+	isWiki: boolean,
+	destResolvesToNote: boolean = false
+): InitialLinkState {
+	// A wikilink that points at an existing note is never treated as a URL,
+	// even if its destination is bare-domain-shaped.
+	if (isWiki && destResolvesToNote) {
+		return { isWiki: true, wasUrl: false };
+	}
+
 	const destIsUrl = isUrl(destination);
 	return {
 		isWiki: destIsUrl ? false : isWiki,

@@ -8,6 +8,7 @@ import {
 	validateLinkDestination,
 	normalizeUrl,
 	isUrl,
+	bareDomainNoteTargetFromUrl,
 } from "./utils";
 import {
 	parseClipboardFlags,
@@ -101,6 +102,26 @@ export class EditLinkModal extends Modal {
 		}
 	}
 
+	/**
+	 * Return true if a wikilink destination resolves to an existing note in the
+	 * vault. Strips any `#heading`/`^block` and `|alias` suffix before resolving,
+	 * since those are not part of the link target path.
+	 */
+	private destResolvesToNote(destination: string): boolean {
+		if (!destination) return false;
+		const linkpath = destination.split("|")[0].split("#")[0].trim();
+		if (!linkpath) return false;
+
+		const sourcePath = this.app.workspace.getActiveFile()?.path ?? "";
+		try {
+			return (
+				this.app.metadataCache.getFirstLinkpathDest(linkpath, sourcePath) !== null
+			);
+		} catch {
+			return false;
+		}
+	}
+
 	onOpen() {
 		const { contentEl, modalEl, containerEl } = this;
 		contentEl.empty();
@@ -112,10 +133,37 @@ export class EditLinkModal extends Modal {
 		heading.style.marginTop = "0";
 		heading.style.marginBottom = "10px";
 
-		// Determine initial link type
-		const initialState = determineInitialLinkType(this.link.destination, this.link.isWiki);
+		// Determine initial link type. A wikilink whose destination is
+		// bare-domain-shaped (e.g. my.project.notes) but resolves to an existing
+		// note must stay a wikilink rather than being promoted to a URL.
+		const destResolvesToNote =
+			this.link.isWiki && this.destResolvesToNote(this.link.destination);
+		const initialState = determineInitialLinkType(
+			this.link.destination,
+			this.link.isWiki,
+			destResolvesToNote
+		);
 		this.isWiki = initialState.isWiki;
 		this.wasUrl = initialState.wasUrl;
+
+		// If this was a wikilink whose destination only *looks* like a URL and
+		// there is no matching note to link to, we are converting it to a web
+		// link. Surface that with a conversion notice in the same style used for
+		// bare URLs like www.nytimes.com.
+		if (
+			!this.isNewLink &&
+			this.link.isWiki &&
+			!destResolvesToNote &&
+			isUrl(this.link.destination) &&
+			!this.conversionNotice
+		) {
+			const original = this.link.destination.trim();
+			const normalized = normalizeUrl(original);
+			this.conversionNotice =
+				original !== normalized
+					? `URL converted: ${original} → ${normalized}`
+					: `Converting to web link: ${original}`;
+		}
 
 		// Link Text
 		const textSetting = new Setting(contentEl).setName("Link Text").addText((text) => {
@@ -195,6 +243,15 @@ export class EditLinkModal extends Modal {
 					const converted = markdownToWiki(dest);
 					if (converted !== null && converted !== dest) {
 						this.destInput.setValue(converted);
+					} else if (converted === null) {
+						// markdownToWiki refuses web URLs. If this is a host-only
+						// bare-domain URL that was auto-promoted from a note name
+						// (e.g. https://community.cloud.databricks.com), strip the
+						// scheme so it becomes a usable wikilink note target.
+						const noteTarget = bareDomainNoteTargetFromUrl(dest);
+						if (noteTarget !== null && noteTarget !== dest) {
+							this.destInput.setValue(noteTarget);
+						}
 					}
 				} else {
 					const converted = wikiToMarkdown(dest);
@@ -203,6 +260,12 @@ export class EditLinkModal extends Modal {
 					}
 				}
 				this.isWiki = wiki;
+				// The open-time "URL converted" notice describes the initial
+				// auto-conversion only. Once the user manually toggles the link
+				// type, that message no longer reflects the destination (e.g. it
+				// would claim an https:// conversion after we've stripped the
+				// scheme for a wikilink), so clear it.
+				this.clearConversionNotice();
 				this.updateUIState();
 				// Roving tabindex: active button is the tab stop
 				this.wikiBtnEl.setAttribute("tabindex", wiki ? "0" : "-1");
@@ -467,6 +530,15 @@ export class EditLinkModal extends Modal {
 		this.destInput.inputEl.classList.remove("link-warning-highlight");
 	}
 
+	/** Remove the open-time URL-conversion notice and forget its text. */
+	clearConversionNotice() {
+		if (this.conversionNoticeEl) {
+			this.conversionNoticeEl.remove();
+			this.conversionNoticeEl = null;
+		}
+		this.conversionNotice = null;
+	}
+
 	updateConversionNotice() {
 		if (!this.conversionNoticeEl) return;
 
@@ -535,6 +607,44 @@ export class EditLinkModal extends Modal {
 			}
 		}
 
+		// Discoverability hint: only for an *ambiguous* destination — a
+		// scheme-less bare-domain string (e.g. community.cloud.databricks.com)
+		// that could be either a web host or a note name. An explicit http(s)://
+		// scheme is proof the user intends an external link, so we never prompt
+		// in that case. We also only prompt when a note of that exact name
+		// actually exists in the vault; otherwise the suggestion would point at a
+		// non-existent note. Remove any stale instance first.
+		const existingNoteHint = this.warningsContainer.querySelector(
+			".link-note-target-hint"
+		);
+		if (existingNoteHint) existingNoteHint.remove();
+
+		const currentDest = this.destInput.getValue();
+		const destHasScheme = /^(https?:\/\/|www\.)/i.test(currentDest.trim());
+		const noteTarget = destHasScheme ? null : bareDomainNoteTargetFromUrl(currentDest);
+		if (!this.isWiki && noteTarget !== null && this.destResolvesToNote(noteTarget)) {
+			const hint = this.warningsContainer.createEl("div", {
+				cls: "link-conversion-notice link-note-target-hint",
+			});
+			hint.appendText(`⌾ Meant a note named "${noteTarget}"? `);
+			const switchLink = hint.createEl("a", {
+				text: "Switch to Wikilink",
+				href: "#",
+			});
+			switchLink.style.cursor = "pointer";
+			const switchHandler = (e: Event) => {
+				e.preventDefault();
+				this.destInput.setValue(noteTarget);
+				this.isWiki = true;
+				this.wasUrl = false;
+				this.clearValidationErrors();
+				this.updateUIState();
+				this.updateConversionNotice();
+			};
+			switchLink.addEventListener("click", switchHandler as EventListener);
+			this.eventListeners.push([switchLink, "click", switchHandler as EventListener]);
+		}
+
 		const dest = this.destInput.getValue();
 		const linkText = this.textInput.getValue();
 		const isEmbed = this.embedToggle.getValue();
@@ -543,13 +653,19 @@ export class EditLinkModal extends Modal {
 		const activeFile = this.app.workspace.getActiveFile();
 		const currentFilePath = activeFile?.path;
 
+		// A bare-domain-shaped wikilink destination that resolves to an existing
+		// note is a legitimate note link, not a URL — don't warn about it.
+		const destResolvesToNote =
+			this.isWiki && this.destResolvesToNote(dest);
+
 		// Use the refactored validation function
 		const validationResult = validateLinkDestination(
 			dest,
 			linkText,
 			this.isWiki,
 			isEmbed,
-			currentFilePath
+			currentFilePath,
+			destResolvesToNote
 		);
 
 		// Display warnings

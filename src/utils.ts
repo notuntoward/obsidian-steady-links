@@ -220,12 +220,137 @@ export function parseMarkdownLink(text: string): { text: string; destination: st
 }
 
 /**
+ * Common file extensions that should NOT be treated as a domain TLD.
+ * These guard the bare-domain heuristic so dotted note/file names like
+ * `my.notes.md` or `report.final.docx` are not misclassified as URLs.
+ */
+const FILE_EXTENSION_LABELS = new Set([
+	"md", "txt", "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
+	"csv", "json", "yaml", "yml", "xml", "html", "htm", "css", "js", "ts",
+	"png", "jpg", "jpeg", "gif", "svg", "webp", "bmp", "ico", "tiff",
+	"mp3", "mp4", "wav", "mov", "avi", "mkv", "webm", "flac", "ogg",
+	"zip", "gz", "tar", "rar", "7z", "exe", "dmg", "app",
+	"canvas", "base", "excalidraw",
+]);
+
+/**
+ * Bare-domain heuristic (no scheme, no www.).
+ *
+ * Conservatively recognises multi-dot hostnames like
+ * `community.cloud.databricks.com` while leaving single-dot names
+ * (`example.com`) and dotted file/note names (`my.notes.md`) alone.
+ *
+ * Rules:
+ *   - No whitespace.
+ *   - At least TWO dots (3+ labels). Single-dot names stay note names so the
+ *     `[[example.com]]` wikilink contract is preserved.
+ *   - Each label is 1–63 chars of [a-z0-9-], not starting/ending with `-`.
+ *   - The final label (TLD) is purely alphabetic, 2+ chars.
+ *   - The final label is not a known file extension.
+ */
+function isBareDomain(str: string): boolean {
+	const trimmed = str.trim();
+	if (!trimmed || /\s/.test(trimmed)) return false;
+
+	const labels = trimmed.split(".");
+	// Require 3+ labels (2+ dots).
+	if (labels.length < 3) return false;
+
+	const tld = labels[labels.length - 1].toLowerCase();
+	// TLD must be purely alphabetic and 2+ chars.
+	if (!/^[a-z]{2,}$/.test(tld)) return false;
+	// Don't treat dotted file names as domains.
+	if (FILE_EXTENSION_LABELS.has(tld)) return false;
+
+	// Every label (including the TLD) must be a valid DNS label.
+	const labelRe = /^(?!-)[a-z0-9-]{1,63}(?<!-)$/i;
+	return labels.every((label) => labelRe.test(label));
+}
+
+/**
+ * File extensions that Obsidian can link to with wikilink syntax
+ * (`[[name.ext]]`). This is the native "Accepted file formats" list from the
+ * Obsidian docs plus HTML, which Obsidian also opens directly.
+ *
+ *   - Markdown:  md
+ *   - Bases:     base
+ *   - Canvas:    canvas
+ *   - PDF:       pdf
+ *   - HTML:      html, htm
+ *   - Images:    avif, bmp, gif, jpeg, jpg, png, svg, webp
+ *   - Audio:     flac, m4a, mp3, ogg, wav, webm, 3gp
+ *   - Video:     mkv, mov, mp4, ogv, webm
+ */
+const LINKABLE_FILE_EXTENSIONS = new Set([
+	"md", "base", "canvas", "pdf", "html", "htm",
+	"avif", "bmp", "gif", "jpeg", "jpg", "png", "svg", "webp",
+	"flac", "m4a", "mp3", "ogg", "wav", "webm", "3gp",
+	"mkv", "mov", "mp4", "ogv",
+]);
+
+/**
+ * Return the file extension (lowercased, without the dot) of a path-like
+ * string, or null if it has none. Strips any trailing `#heading`/`^block`.
+ */
+function fileExtensionOf(token: string): string | null {
+	const base = token.split("#")[0];
+	const lastDot = base.lastIndexOf(".");
+	if (lastDot <= 0 || lastDot === base.length - 1) return null;
+	return base.slice(lastDot + 1).toLowerCase();
+}
+
+/**
+ * Return true if `token` looks like a vault file reference whose extension is
+ * one Obsidian can link to (see LINKABLE_FILE_EXTENSIONS). The token may
+ * include a vault-relative folder path (e.g. `assets/diagram.canvas`).
+ *
+ * This does NOT check whether the file exists — callers with vault access do
+ * that separately.
+ */
+export function hasLinkableFileExtension(token: string): boolean {
+	if (!token) return false;
+	const trimmed = token.trim();
+	if (!trimmed) return false;
+	const ext = fileExtensionOf(trimmed);
+	return ext !== null && LINKABLE_FILE_EXTENSIONS.has(ext);
+}
+
+/**
+ * Find a bare, whitespace-delimited file-reference token at the cursor whose
+ * extension Obsidian can link to. Returns the token (which may include a
+ * vault-relative folder path, e.g. `assets/diagram.canvas`) or null.
+ *
+ * The token is bounded by whitespace and link punctuation, so it never bleeds
+ * across surrounding prose or into existing markdown/wikilink syntax. Filenames
+ * containing spaces are handled via the selection path, not here — a single
+ * cursor position on prose cannot be disambiguated from a space-containing
+ * filename without selecting it.
+ *
+ * The caller only uses this when no link was already detected at the cursor.
+ */
+export function fileExtTokenAtCursor(text: string, pos: number): string | null {
+	// A whitespace/punctuation-delimited run that can form a file reference.
+	// Allows letters, digits, dots, dashes, underscores, slashes, #, ^.
+	const tokenRe = /[A-Za-z0-9._\-\/\\#^]+/g;
+	let m: RegExpExecArray | null;
+	while ((m = tokenRe.exec(text)) !== null) {
+		const start = m.index;
+		const end = start + m[0].length;
+		if (pos < start || pos > end) continue;
+		if (hasLinkableFileExtension(m[0])) return m[0];
+	}
+	return null;
+}
+
+/**
  * Check if a string is a URL
  */
 export function isUrl(str: string): boolean {
 	if (!str) return false;
 	const trimmed = str.trim();
-	return /^https?:\/\/\S+$|^www\.\S+$/i.test(trimmed);
+	if (/^https?:\/\/\S+$|^www\.\S+$/i.test(trimmed)) return true;
+	// Bare multi-dot domains (e.g. community.cloud.databricks.com).
+	return isBareDomain(trimmed);
 }
 
 /**
@@ -236,7 +361,39 @@ export function normalizeUrl(str: string): string {
 	const trimmed = str.trim();
 	if (/^https?:\/\//i.test(trimmed)) return trimmed;
 	if (/^www\./i.test(trimmed)) return "https://" + trimmed;
+	// Bare multi-dot domains get an https:// scheme so they open in the browser
+	// rather than resolving to an internal note.
+	if (isBareDomain(trimmed)) return "https://" + trimmed;
 	return trimmed;
+}
+
+/**
+ * Inverse of the bare-domain promotion in normalizeUrl().
+ *
+ * Given a host-only web URL whose host is a bare multi-dot domain
+ * (e.g. `https://community.cloud.databricks.com`), return the bare host
+ * (`community.cloud.databricks.com`) so it can be used as a wikilink note
+ * target. Returns null for anything else — including URLs that carry a path,
+ * query, port, or fragment, since those cannot be a note name.
+ *
+ * This lets the editor offer a one-click "I meant a note" correction when a
+ * bare domain was auto-promoted to a web link.
+ */
+export function bareDomainNoteTargetFromUrl(dest: string): string | null {
+	if (!dest) return null;
+	const trimmed = dest.trim();
+
+	// Strip an optional http(s):// scheme; the www. form is handled below.
+	const schemeMatch = /^https?:\/\/(.*)$/i.exec(trimmed);
+	const afterScheme = schemeMatch ? schemeMatch[1] : trimmed;
+
+	// Host-only: no path, query, fragment, port, credentials, or whitespace.
+	if (/[\/?#@:\s]/.test(afterScheme)) return null;
+
+	// Drop a leading www. so https://www.a.b.com → a.b.com.
+	const host = afterScheme.replace(/^www\./i, "");
+
+	return isBareDomain(host) ? host : null;
 }
 
 /**
@@ -254,11 +411,19 @@ export function isAlmostUrl(str: string): boolean {
  * Find URL at a specific cursor position in text
  */
 export function urlAtCursor(text: string, pos: number): string | null {
-	const urlRegex = /https?:\/\/[^\s]+|www\.[^\s]+/gi;
+	// First alternative: scheme/www URLs. Last alternative: a bare token that
+	// could be a multi-dot domain — validated below via isBareDomain so dotted
+	// note/file names are not matched.
+	const urlRegex = /https?:\/\/[^\s]+|www\.[^\s]+|[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9]/gi;
 	let match;
 	while ((match = urlRegex.exec(text)) !== null) {
 		if (pos >= match.index && pos <= match.index + match[0].length) {
-			return match[0];
+			const token = match[0];
+			// Scheme/www matches are returned directly.
+			if (/^(https?:\/\/|www\.)/i.test(token)) return token;
+			// Otherwise only accept genuine bare multi-dot domains.
+			if (isBareDomain(token)) return token;
+			// Token at cursor is not a URL; keep scanning for a later match.
 		}
 	}
 	return null;
@@ -648,6 +813,19 @@ export interface LinkContext {
 	cursorUrl: string | null;
 	line: string;
 	cursorCh: number;
+	/**
+	 * Whether `cursorUrl` (when it is a scheme-less bare-domain string) resolves
+	 * to an existing note in the vault. Computed by the caller, which has vault
+	 * access. When true, a bare domain like `community.cloud.databricks.com` is
+	 * treated as a wikilink to that note rather than promoted to a web URL.
+	 */
+	cursorUrlResolvesToNote?: boolean;
+	/**
+	 * A bare file-reference token at the cursor (e.g. `assets/diagram.canvas`)
+	 * that the caller has confirmed resolves to an existing vault file. When
+	 * set, it takes precedence and becomes a wikilink to that file.
+	 */
+	cursorFileLink?: string | null;
 }
 
 /**
@@ -669,6 +847,8 @@ export interface LinkFromContext {
  */
 export function determineLinkFromContext(context: LinkContext): LinkFromContext {
 	const { selection, clipboardText, cursorUrl, line, cursorCh } = context;
+	const cursorUrlResolvesToNote = context.cursorUrlResolvesToNote ?? false;
+	const cursorFileLink = context.cursorFileLink ?? null;
 
 	const isSelectionUrl = isUrl(selection);
 	const isClipboardUrl = isUrl(clipboardText);
@@ -681,21 +861,60 @@ export function determineLinkFromContext(context: LinkContext): LinkFromContext 
 	let start = cursorCh;
 	let end = cursorCh;
 
+	// Highest precedence: cursor is on a bare file reference (e.g.
+	// diagram.canvas, assets/photo.png) that the caller confirmed exists in the
+	// vault. Make a wikilink to that file.
+	if (cursorFileLink && !selection) {
+		const token = cursorFileLink.trim();
+		linkText = token;
+		linkDest = token;
+		shouldBeMarkdown = false; // wikilink to the file
+		shouldSelectText = true;
+
+		const tokenStart = line.indexOf(token);
+		if (tokenStart !== -1) {
+			start = tokenStart;
+			end = tokenStart + token.length;
+		}
+
+		return {
+			text: linkText,
+			destination: linkDest,
+			isWiki: true,
+			shouldSelectText,
+			conversionNotice: null,
+			start,
+			end,
+		};
+	}
+
 	// If cursor is on a URL but not within a link, use that URL
 	if (cursorUrl && !isSelectionUrl) {
 		const original = cursorUrl.trim();
-		const normalized = normalizeUrl(original);
 
-		// When cursor is on a bare URL, the link text should be the URL itself,
-		// ignoring any non-link text in the clipboard.
-		linkText = original;
+		// A scheme-less bare-domain string (e.g. community.cloud.databricks.com)
+		// that matches an existing note is treated as a note link, not a web
+		// URL — the existing note is strong evidence of intent.
+		const isExplicitUrl = /^(https?:\/\/|www\.)/i.test(original);
+		if (!isExplicitUrl && cursorUrlResolvesToNote) {
+			linkText = original;
+			linkDest = original;
+			shouldBeMarkdown = false; // wikilink to the note
+			shouldSelectText = true;
+		} else {
+			const normalized = normalizeUrl(original);
 
-		linkDest = normalized;
-		shouldBeMarkdown = true;
-		shouldSelectText = true;
+			// When cursor is on a bare URL, the link text should be the URL
+			// itself, ignoring any non-link text in the clipboard.
+			linkText = original;
 
-		if (original !== normalized) {
-			conversionNotice = `URL converted: ${original} → ${normalized}`;
+			linkDest = normalized;
+			shouldBeMarkdown = true;
+			shouldSelectText = true;
+
+			if (original !== normalized) {
+				conversionNotice = `URL converted: ${original} → ${normalized}`;
+			}
 		}
 
 		// Find the URL boundaries to set start/end
@@ -845,7 +1064,8 @@ export function validateLinkDestination(
 	linkText: string,
 	isWiki: boolean,
 	isEmbed: boolean = false,
-	currentFilePath?: string
+	currentFilePath?: string,
+	destResolvesToNote: boolean = false
 ): ValidationResult {
 	const warnings: ValidationWarning[] = [];
 	let shouldHighlightDest = false;
@@ -865,8 +1085,15 @@ export function validateLinkDestination(
 		}
 	}
 
-	// WikiLinks cannot link to URLs
-	if (isWiki && isUrl(dest)) {
+	// WikiLinks cannot link to *explicit* URLs (those with an http(s):// scheme
+	// or a www. prefix). A scheme-less, bare-domain-shaped string like
+	// `community.cloud.databricks.com` is a legitimate wikilink note target —
+	// Obsidian happily links to notes that don't exist yet — so it is NOT an
+	// error here even though isUrl() treats it as URL-shaped. The
+	// destResolvesToNote guard additionally covers any explicit-form edge cases
+	// that resolve to a real note.
+	const destIsExplicitUrl = !!dest && /^(https?:\/\/|www\.)/i.test(dest.trim());
+	if (isWiki && destIsExplicitUrl && !destResolvesToNote) {
 		warnings.push({
 			text: "Warning: Wikilinks cannot link to external URLs.",
 			severity: 'error'
