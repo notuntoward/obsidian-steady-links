@@ -37,15 +37,19 @@ describe('isValidWikiLink', () => {
 		expect(isValidWikiLink('http://example.com')).toBe(false);
 	});
 
-	it('should reject destinations with angle brackets', () => {
+	it('should reject angle brackets in filename only', () => {
 		expect(isValidWikiLink('file<name>')).toBe(false);
 		expect(isValidWikiLink('file>name')).toBe(false);
 		expect(isValidWikiLink('<file>')).toBe(false);
+		expect(isValidWikiLink('file#heading <with angle brackets>')).toBe(true);
+		expect(isValidWikiLink('file#heading<with>angle')).toBe(true);
 	});
 
-	it('should reject destinations with parentheses', () => {
+	it('should reject parentheses in filename only', () => {
 		expect(isValidWikiLink('file(name)')).toBe(false);
 		expect(isValidWikiLink('(file)')).toBe(false);
+		expect(isValidWikiLink('file#heading (with parens)')).toBe(true);
+		expect(isValidWikiLink('file#heading(with)parens')).toBe(true);
 	});
 
 	it('should reject Obsidian forbidden characters in filename', () => {
@@ -84,6 +88,10 @@ describe('isValidWikiLink', () => {
 		// Test case from user issue: path with .md extension AND heading with space
 		// [[test-notes/Note-08.md#Note Eight |Note Eight]]
 		expect(isValidWikiLink('test-notes/Note-08.md#Note Eight')).toBe(true);
+		// Regression: path with spaces AND heading with parens (Obsidian accepts this)
+		expect(isValidWikiLink(
+			'Health/Weight Loss/ai-searches/Resistant Starch Why and How.md#A simple daily pattern (example at 3 tbsp/day)'
+		)).toBe(true);
 	});
 
 	it('should handle heading references', () => {
@@ -195,6 +203,22 @@ describe('wikiToMarkdown', () => {
 		expect(wikiToMarkdown('my file^name')).toBe('my%20file%5Ename');
 	});
 
+	it('should encode parentheses as %28 and %29', () => {
+		expect(wikiToMarkdown('file(notes)')).toBe('file%28notes%29');
+		expect(wikiToMarkdown('Note#Heading (example)')).toBe(
+			'Note#Heading%20%28example%29'
+		);
+	});
+
+	it('should round-trip wikilinks with parens in headings to markdown and back', () => {
+		const wiki = 'Note#Heading (with parens)';
+		expect(markdownToWiki(wikiToMarkdown(wiki))).toBe(wiki);
+		// Regression: the exact destination from the user bug report
+		const userDest =
+			'Health/Weight Loss/ai-searches/Resistant Starch Why and How.md#A simple daily pattern (example at 3 tbsp/day)';
+		expect(markdownToWiki(wikiToMarkdown(userDest))).toBe(userDest);
+	});
+
 	it('should handle simple filenames without encoding', () => {
 		expect(wikiToMarkdown('simple.md')).toBe('simple.md');
 		expect(wikiToMarkdown('file-name_v1')).toBe('file-name_v1');
@@ -242,6 +266,13 @@ describe('markdownToWiki', () => {
 	it('should handle filenames with heading references', () => {
 		expect(markdownToWiki('file#heading')).toBe('file#heading');
 		expect(markdownToWiki('file#^blockid')).toBe('file#^blockid');
+	});
+
+	it('should decode %28 and %29 as parentheses', () => {
+		expect(markdownToWiki('file%28notes%29')).toBe('file(notes)');
+		expect(markdownToWiki('Note#Heading%20%28example%29')).toBe(
+			'Note#Heading (example)'
+		);
 	});
 });
 

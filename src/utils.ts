@@ -5,11 +5,11 @@ import { TFile, Pos } from "obsidian";
  * 
  * WikiLink validation rules:
  * 1. Cannot be a URL (starts with http:// or https://)
- * 2. Cannot contain angle brackets or parentheses
- * 3. Filename portion (before #) cannot contain:
+ * 2. Filename portion (before #) cannot contain:
+ *    - Angle brackets or parentheses: < > ( )
  *    - Obsidian forbidden characters: | ^ : %% [[ ]]
  *    - OS forbidden characters: * " ? \ /
- * 4. Heading/block reference (after #) validation:
+ * 3. Heading/block reference (after #) validation:
  *    - Block references (starting with ^) can only contain alphanumeric and hyphens
  *    - Heading references cannot contain [[ ]] | %%
  */
@@ -19,17 +19,15 @@ export function isValidWikiLink(dest: string): boolean {
 	// WikiLinks don't support URLs
 	if (/^https?:\/\//.test(dest)) return false;
 
-	// WikiLinks don't support angle brackets or parens
-	if (dest.includes("<") || dest.includes(">") || dest.includes("(") || dest.includes(")")) 
-		return false;
-
 	// Check for invalid characters in the filename portion
 	// Split by # to separate filename from heading/block reference
 	const parts = dest.split("#");
 	const filename = parts[0];
 
-	// Filename portion cannot contain: | ^ : %% [[ ]]
-	// These are Obsidian's forbidden filename characters
+	// Filename portion cannot contain: < > ( ) | ^ : %% [[ ]]
+	// These are Obsidian's forbidden filename characters (plus angle brackets and parens)
+	if (filename.includes("<") || filename.includes(">")) return false;
+	if (filename.includes("(") || filename.includes(")")) return false;
 	if (filename.includes("|")) return false;
 	if (filename.includes("^")) return false;
 	if (filename.includes(":")) return false;
@@ -121,7 +119,17 @@ export function wikiToMarkdown(dest: string): string {
 	if (dest.startsWith("<") && dest.endsWith(">")) return dest;
 
 	// Encode special characters for markdown
-	const encoded = dest.replace(/ /g, "%20").replace(/\^/g, "%5E");
+	// - Spaces must be encoded so the markdown link regex doesn't truncate
+	// - Caret (^) must be encoded because it is a markdown link syntax character
+	// - Parentheses ( ) must be encoded because the markdown link regex uses
+	//   [^)]+ to delimit the destination and would stop at the first ).
+	//   Headings in Obsidian commonly contain parens, e.g.
+	//   [[Note#Heading (with parens)]] which must round-trip through markdown.
+	const encoded = dest
+		.replace(/ /g, "%20")
+		.replace(/\^/g, "%5E")
+		.replace(/\(/g, "%28")
+		.replace(/\)/g, "%29");
 	return encoded;
 }
 
@@ -152,7 +160,11 @@ export function markdownToWiki(dest: string): string | null {
 		cleaned = decodeURIComponent(cleaned);
 	} catch (e) {
 		// If decode fails, manually decode common cases
-		cleaned = cleaned.replace(/%20/g, " ").replace(/%5E/gi, "^");
+		cleaned = cleaned
+			.replace(/%20/g, " ")
+			.replace(/%5E/gi, "^")
+			.replace(/%28/g, "(")
+			.replace(/%29/g, ")");
 	}
 
 	return cleaned;
