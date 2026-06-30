@@ -1,4 +1,5 @@
-import { Plugin, Editor, MarkdownView } from "obsidian";
+import { Plugin, Editor, MarkdownView, Notice, FileSystemAdapter, TFile } from "obsidian";
+import { shell } from "electron";
 import { Extension, EditorSelection } from "@codemirror/state";
 import { EditLinkModal } from "./EditLinkModal";
 import { SteadyLinksSettingTab } from "./SettingTab";
@@ -8,6 +9,8 @@ import {
 	detectLinkAtCursor,
 	determineLinkFromContext,
 	urlAtCursor,
+	isUrl,
+	normalizeUrl,
 	computeDisplayedTextRange,
 	bareDomainNoteTargetFromUrl,
 	fileExtTokenAtCursor,
@@ -253,7 +256,118 @@ export default class SteadyLinksPlugin extends Plugin {
 			},
 		});
 
+		this.addCommand({
+			id: "open-link-in-default-app",
+			name: "Open link in default app",
+			editorCallback: (editor: Editor, view: MarkdownView) => {
+				this.handleOpenLinkInDefaultApp(editor);
+			},
+		});
+
+		this.addCommand({
+			id: "reveal-link-in-explorer",
+			name: "Reveal link in file explorer",
+			editorCallback: (editor: Editor, view: MarkdownView) => {
+				this.handleRevealLinkInExplorer(editor);
+			},
+		});
+
 		this.addSettingTab(new SteadyLinksSettingTab(this.app, this));
+	}
+
+	private handleOpenLinkInDefaultApp(editor: Editor): void {
+		const target = this.getOpenableFromCursor(editor);
+		if (!target) {
+			new Notice("No link found at cursor");
+			return;
+		}
+		if (target.kind === "url") {
+			shell.openExternal(target.url).catch(() => new Notice("Failed to open URL"));
+			return;
+		}
+		shell.openPath(target.path).then((errMsg) => {
+			if (errMsg) new Notice("Failed to open: " + errMsg);
+		});
+	}
+
+	private handleRevealLinkInExplorer(editor: Editor): void {
+		const target = this.getOpenableFromCursor(editor);
+		if (!target) {
+			new Notice("No link found at cursor");
+			return;
+		}
+		if (target.kind === "url") {
+			new Notice("Cannot reveal a URL in the file explorer");
+			return;
+		}
+		shell.showItemInFolder(target.path);
+	}
+
+	private getOpenableFromCursor(
+		editor: Editor
+	): { kind: "url"; url: string } | { kind: "file"; path: string } | null {
+		const cursor = editor.getCursor();
+		const line = editor.getLine(cursor.line);
+		const link = detectLinkAtCursor(line, cursor.ch);
+		if (!link) return null;
+		return this.resolveOpenableTarget(link.link.destination);
+	}
+
+	private resolveOpenableTarget(
+		destination: string
+	): { kind: "url"; url: string } | { kind: "file"; path: string } | null {
+		let d = destination.trim();
+		if (d.startsWith("<") && d.endsWith(">")) {
+			d = d.slice(1, -1).trim();
+		}
+		if (!d) return null;
+
+		const isExplicitUrl = /^https?:\/\//i.test(d) || /^www\./i.test(d);
+
+		if (isExplicitUrl) {
+			return { kind: "url", url: normalizeUrl(d) };
+		}
+
+		const fileTarget = this.resolveVaultFile(d);
+		if (fileTarget) return fileTarget;
+
+		if (isUrl(d)) {
+			return { kind: "url", url: normalizeUrl(d) };
+		}
+
+		if (this.looksLikeAbsolutePath(d)) {
+			return { kind: "file", path: d };
+		}
+
+		return null;
+	}
+
+	private resolveVaultFile(
+		destination: string
+	): { kind: "file"; path: string } | null {
+		const filePart = destination.split("#")[0].trim();
+		if (!filePart) return null;
+
+		const sourcePath = this.app.workspace.getActiveFile()?.path ?? "";
+		let tfile: TFile | null = null;
+		try {
+			tfile = this.app.metadataCache.getFirstLinkpathDest(filePart, sourcePath);
+		} catch {
+			tfile = null;
+		}
+		if (!tfile) return null;
+
+		const adapter = this.app.vault.adapter;
+		if (!(adapter instanceof FileSystemAdapter)) return null;
+		return { kind: "file", path: adapter.getFullPath(tfile.path) };
+	}
+
+	private looksLikeAbsolutePath(p: string): boolean {
+		return (
+			/^[A-Za-z]:[\\/]/.test(p) ||
+			p.startsWith("/") ||
+			p.startsWith("\\\\")
+		);
 	}
 
 	/**

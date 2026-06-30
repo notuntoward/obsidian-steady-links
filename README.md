@@ -72,13 +72,15 @@ The _Link Text_ field will autocomplete to selected text when you have a URL in 
 
 These are commands for opening the link editor, and for easier link manipulation, if you prefer Obsidian's default link expanding behavior (what you get when the `Keep links steady` setting is `false`)
 
-| Command                | Description                                                             | Suggested Hotkey (Win / macOS)    | ID                                |
-| ---------------------- | ----------------------------------------------------------------------- | --------------------------------- | --------------------------------- |
-| **Edit Link**          | Modal to create a new link or to edit the one at the cursor             | Ctrl+K / ⌘K                       | `steady-links:edit-link`          |
-| **Skip Link**          | Moves the cursor past the current link, avoiding link expansion| Alt+S / ⌥S                        | `steady-links:skip-link`          |
-| **Toggle Link Expand** | Toggle between expanded and collapsed link       | Alt+T / ⌥T | `steady-links:toggle-link-expand` |
-| **Expand Link**        | Temporarily expands the link at cursor                   | Alt+E / ⌥E                        | `steady-links:expand-link`        |
-| **Collapse Link**      | Collapses the link at cursor                             | Alt+C / ⌥C                        | `steady-links:collapse-link`      |
+| Command                        | Description                                                             | Suggested Hotkey (Win / macOS)    | ID                                   |
+| ------------------------------ | ----------------------------------------------------------------------- | --------------------------------- | ------------------------------------ |
+| **Edit Link**                  | Modal to create a new link or to edit the one at the cursor             | Ctrl+K / ⌘K                       | `steady-links:edit-link`             |
+| **Open link in default app**   | Opens the link at the cursor in the default application                 | —                                 | `steady-links:open-link-in-default-app` |
+| **Reveal link in file explorer**| Reveals the link target in the OS file explorer                         | —                                 | `steady-links:reveal-link-in-explorer` |
+| **Skip Link**                  | Moves the cursor past the current link, avoiding link expansion| Alt+S / ⌥S                        | `steady-links:skip-link`             |
+| **Toggle Link Expand**         | Toggle between expanded and collapsed link       | Alt+T / ⌥T | `steady-links:toggle-link-expand`    |
+| **Expand Link**                | Temporarily expands the link at cursor                   | Alt+E / ⌥E                        | `steady-links:expand-link`           |
+| **Collapse Link**              | Collapses the link at cursor                             | Alt+C / ⌥C                        | `steady-links:collapse-link`         |
 
 ## Editing Policy for Hidden Links
 
@@ -152,14 +154,16 @@ Tab accepts the current suggestion. `Ctrl+N`/`Ctrl+P` (macOS: `⌘N`/`⌘P`) nav
 
 ![Heading Suggestions](https://via.placeholder.com/600x300?text=Heading+Suggestions)
 
-| Command                | What It Does                                                                                    |
-| ---------------------- | ----------------------------------------------------------------------------------------------- |
-| **Skip Link**          | Jumps the cursor past the current link. Handy when a link expands and you just want to move on. |
-| **Collapse Link**      | Collapses the link at your cursor back to its display text.                                     |
-| **Expand Link**        | Reveals the full syntax of the link at your cursor.                                             |
-| **Toggle Link Expand** | Flips between shown and hidden. One hotkey for both directions.                                 |
+| Command                        | What It Does                                                                                    |
+| ------------------------------ | ----------------------------------------------------------------------------------------------- |
+| **Skip Link**                  | Jumps the cursor past the current link. Handy when a link expands and you just want to move on. |
+| **Open link in default app**   | Opens the link at the cursor in its default application (e.g. a PDF reader or browser).         |
+| **Reveal link in file explorer**| Shows the link target in the OS file explorer.                                                  |
+| **Collapse Link**              | Collapses the link at your cursor back to its display text.                                     |
+| **Expand Link**                | Reveals the full syntax of the link at your cursor.                                             |
+| **Toggle Link Expand**         | Flips between shown and hidden. One hotkey for both directions.                                 |
 
-These commands work in Live Preview mode. In Source mode, syntax is always visible, so they're not needed; **Edit Link** is the only tool you need.
+Most of these commands work in Live Preview mode. In Source mode, syntax is always visible, so expand/collapse/toggle are not needed; **Edit Link**, **Open link in default app**, and **Reveal link in file explorer** still work there.
 
 > **Tip:** Bind _Toggle Link Expand_ to a hotkey for quick peeking at link destinations without opening the modal. Bind _Skip Link_ if you keep "Keep links steady" off but want a fast escape hatch when a link expands.
 
@@ -173,6 +177,9 @@ Use _Edit Link_. The modal handles formatting, suggests files and headings, and 
 
 **"I like the default link-expanding behavior, but sometimes I want to collapse a link quickly."**
 Leave the setting off. Use _Collapse Link_ or _Toggle Link Expand_ when you need a link to settle down.
+
+**"I want to open a linked file in its default app, or find it in the file explorer."**
+Use **Open link in default app** to open the target with the OS default application, or **Reveal link in file explorer** to show it in Finder / Explorer.
 
 **"I have a URL on my clipboard and want to turn selected text into a link."**
 Select the text, run _Edit Link_. The URL is pre-filled from your clipboard.
