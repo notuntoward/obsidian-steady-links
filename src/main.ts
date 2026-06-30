@@ -1,4 +1,4 @@
-import { Plugin, Editor, MarkdownView, Notice, FileSystemAdapter, TFile } from "obsidian";
+import { Plugin, Editor, MarkdownView, Notice, FileSystemAdapter, TFile, Menu } from "obsidian";
 import { shell } from "electron";
 import { Extension, EditorSelection } from "@codemirror/state";
 import { EditLinkModal } from "./EditLinkModal";
@@ -32,6 +32,7 @@ import { EditorView } from "@codemirror/view";
 
 const DEFAULT_SETTINGS: PluginSettings = {
 	keepLinksSteady: false,
+	copyLinkToCurrentNoteInTabMenu: false,
 };
 
 export default class SteadyLinksPlugin extends Plugin {
@@ -272,6 +273,33 @@ export default class SteadyLinksPlugin extends Plugin {
 			},
 		});
 
+		this.addCommand({
+			id: "copy-link-to-current-note",
+			name: "Copy link to current note",
+			callback: () => {
+				const file = this.app.workspace.getActiveFile();
+				if (!file) {
+					new Notice("No active note");
+					return;
+				}
+				this.copyLinkToFile(file);
+			},
+		});
+
+		this.registerEvent(
+			this.app.workspace.on("file-menu", (menu: Menu, file: unknown, source: string) => {
+				if (!this.settings.copyLinkToCurrentNoteInTabMenu) return;
+				if (source !== "tab-header") return;
+				if (!(file instanceof TFile)) return;
+				menu.addItem((item) => {
+					item
+						.setTitle("Copy link to current note")
+						.setIcon("link")
+						.onClick(() => this.copyLinkToFile(file));
+				});
+			})
+		);
+
 		this.addSettingTab(new SteadyLinksSettingTab(this.app, this));
 	}
 
@@ -396,6 +424,15 @@ export default class SteadyLinksPlugin extends Plugin {
 		});
 
 		return cursorPos;
+	}
+
+	private copyLinkToFile(file: TFile): void {
+		const linkBody = file.extension === "md" ? file.path.replace(/\.md$/i, "") : file.path;
+		const wikilink = `[[${linkBody}]]`;
+		navigator.clipboard
+			.writeText(wikilink)
+			.then(() => new Notice("Copied wikilink to clipboard"))
+			.catch(() => new Notice("Failed to copy wikilink"));
 	}
 
 	/**

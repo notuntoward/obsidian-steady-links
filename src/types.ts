@@ -43,4 +43,9 @@ export interface PluginSettings {
 	 * showing only display text. Disabled by default for compatibility.
 	 */
 	keepLinksSteady: boolean;
+	/**
+	 * When enabled, adds a "Copy link to current note" item to the tab
+	 * right-click menu.
+	 */
+	copyLinkToCurrentNoteInTabMenu: boolean;
 }

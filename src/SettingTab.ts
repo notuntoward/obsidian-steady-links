@@ -31,5 +31,19 @@ export class SteadyLinksSettingTab extends PluginSettingTab {
 						this.plugin.applySyntaxHiderSetting();
 					})
 			);
+		new Setting(containerEl)
+			.setName("Show Copy link to current note in tab menu")
+			.setDesc(
+				"When enabled, right-clicking a tab shows a 'Copy link to current note' " +
+				"item that copies a wikilink to that note."
+			)
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.copyLinkToCurrentNoteInTabMenu)
+					.onChange(async (value) => {
+						this.plugin.settings.copyLinkToCurrentNoteInTabMenu = value;
+						await this.plugin.saveSettings();
+					})
+			);
 	}
 }

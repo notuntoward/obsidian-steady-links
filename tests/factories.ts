@@ -140,6 +140,7 @@ export function createAliasSuggestion(overrides: Partial<SuggestionItem> = {}): 
 export function createSettings(overrides: Partial<PluginSettings> = {}): PluginSettings {
   return {
     keepLinksSteady: false,
+    copyLinkToCurrentNoteInTabMenu: false,
     ...overrides,
   };
 }

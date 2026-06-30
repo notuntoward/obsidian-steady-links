@@ -77,6 +77,7 @@ These are commands for opening the link editor, and for easier link manipulation
 | **Edit Link**                  | Modal to create a new link or to edit the one at the cursor             | Ctrl+K / ⌘K                       | `steady-links:edit-link`             |
 | **Open link in default app**   | Opens the link at the cursor in the default application                 | —                                 | `steady-links:open-link-in-default-app` |
 | **Reveal link in file explorer**| Reveals the link target in the OS file explorer                         | —                                 | `steady-links:reveal-link-in-explorer` |
+| **Copy link to current note**  | Copies a wikilink to the current note to the clipboard                  | —                                 | `steady-links:copy-link-to-current-note` |
 | **Skip Link**                  | Moves the cursor past the current link, avoiding link expansion| Alt+S / ⌥S                        | `steady-links:skip-link`             |
 | **Toggle Link Expand**         | Toggle between expanded and collapsed link       | Alt+T / ⌥T | `steady-links:toggle-link-expand`    |
 | **Expand Link**                | Temporarily expands the link at cursor                   | Alt+E / ⌥E                        | `steady-links:expand-link`           |
@@ -159,6 +160,7 @@ Tab accepts the current suggestion. `Ctrl+N`/`Ctrl+P` (macOS: `⌘N`/`⌘P`) nav
 | **Skip Link**                  | Jumps the cursor past the current link. Handy when a link expands and you just want to move on. |
 | **Open link in default app**   | Opens the link at the cursor in its default application (e.g. a PDF reader or browser).         |
 | **Reveal link in file explorer**| Shows the link target in the OS file explorer.                                                  |
+| **Copy link to current note**  | Copies a wikilink to the current note. Use it from the command palette, a hotkey, or a menu.    |
 | **Collapse Link**              | Collapses the link at your cursor back to its display text.                                     |
 | **Expand Link**                | Reveals the full syntax of the link at your cursor.                                             |
 | **Toggle Link Expand**         | Flips between shown and hidden. One hotkey for both directions.                                 |
@@ -186,9 +188,10 @@ Select the text, run _Edit Link_. The URL is pre-filled from your clipboard.
 
 ## Settings
 
-| Setting           | Default | Description                                                                                                                                   |
-| ----------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| Keep links steady | Off     | Prevent links from expanding when the cursor enters them in Live Preview. Link text remains editable; use _Edit Link_ to change destinations. |
+| Setting                                   | Default | Description                                                                                                                                   |
+| ----------------------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Keep links steady                         | Off     | Prevent links from expanding when the cursor enters them in Live Preview. Link text remains editable; use _Edit Link_ to change destinations. |
+| Show Copy link to current note in tab menu| Off     | Adds a "Copy link to current note" item to the tab right-click menu.                                                                          |
 
 ## Compatibility
 

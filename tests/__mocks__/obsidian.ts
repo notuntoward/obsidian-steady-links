@@ -127,6 +127,40 @@ export class Vault {
 	}
 }
 
+export class Menu {
+	private items: Array<{ title: string; icon: string; callback: () => void }> = [];
+
+	addItem(cb: (item: MenuItem) => MenuItem): this {
+		const item = new MenuItem();
+		cb(item);
+		this.items.push({ title: item.title, icon: item.icon, callback: item.callback });
+		return this;
+	}
+
+	getItems(): Array<{ title: string; icon: string; callback: () => void }> {
+		return [...this.items];
+	}
+}
+
+export class MenuItem {
+	title = "";
+	icon = "";
+	callback: () => void = () => {};
+
+	setTitle(title: string): this {
+		this.title = title;
+		return this;
+	}
+	setIcon(icon: string): this {
+		this.icon = icon;
+		return this;
+	}
+	onClick(callback: () => void): this {
+		this.callback = callback;
+		return this;
+	}
+}
+
 // ============================================================================
 // Workspace - Editor and view management
 // ============================================================================
@@ -134,6 +168,7 @@ export class Vault {
 export class Workspace {
 	private activeFile: TFile | null = null;
 	private activeEditor: Editor | null = null;
+	private eventHandlers: Map<string, Array<(...args: any[]) => any>> = new Map();
 
 	leftSplit: any;
 	rightSplit: any;
@@ -206,6 +241,27 @@ export class Workspace {
 
 	getLeavesOfType(_type: string): any[] {
 		return [];
+	}
+
+	on(event: string, handler: (...args: any[]) => any): () => void {
+		if (!this.eventHandlers.has(event)) {
+			this.eventHandlers.set(event, []);
+		}
+		this.eventHandlers.get(event)!.push(handler);
+		return () => {
+			const handlers = this.eventHandlers.get(event);
+			if (!handlers) return;
+			const idx = handlers.indexOf(handler);
+			if (idx !== -1) handlers.splice(idx, 1);
+		};
+	}
+
+	trigger(event: string, ...args: any[]): void {
+		const handlers = this.eventHandlers.get(event);
+		if (!handlers) return;
+		for (const handler of handlers) {
+			handler(...args);
+		}
 	}
 
 	// Test helper methods
