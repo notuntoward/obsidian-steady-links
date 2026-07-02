@@ -102,6 +102,36 @@ const harness: SteadyLinksHarness = {
 	destroy() {
 		view.destroy();
 	},
+	emacsMoveLine(markPos: number, forward: boolean) {
+		// Step 1: collapse selection to the current head (mirrors the
+		// emacs plugin's editor.setSelection(editor.getCursor())).
+		view.dispatch({ selection: EditorSelection.cursor(view.state.selection.main.head) });
+
+		// Step 2: move one visual line using CM6's real vertical-motion
+		// logic (pixel-based goal column via coordsAtPos), mirroring what
+		// editor.exec("goDown"/"goUp") does under the hood.
+		const range = view.moveVertically(view.state.selection.main, forward);
+		view.dispatch({
+			selection: EditorSelection.create([range]),
+			scrollIntoView: true,
+		});
+
+		// Step 3: re-expand the selection back to the mark (mirrors
+		// editor.setSelection(currentSelectionStart, editor.getCursor())).
+		view.dispatch({
+			selection: EditorSelection.range(markPos, view.state.selection.main.head),
+			scrollIntoView: true,
+		});
+
+		const head = view.state.selection.main.head;
+		const line = view.state.doc.lineAt(head);
+		return {
+			anchor: view.state.selection.main.anchor,
+			head,
+			lineNumber: line.number,
+			lineText: line.text,
+		};
+	},
 };
 
 window.__steadyLinksHarness = harness;

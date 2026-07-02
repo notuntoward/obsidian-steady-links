@@ -152,3 +152,64 @@ test("up-arrow from below markdown link: two presses reach line 1", async ({ pag
 	expect(afterFirstUp.cursor).toBeGreaterThanOrEqual(afterFirstUp.line2Start);
 	expect(afterFirstUp.cursor).toBeLessThanOrEqual(afterFirstUp.line2End);
 });
+
+// ────────────────────────────────────────────────────────────────────────
+// BUG GUARD: Emacs-style next-line with an active mark (selection) must
+// not get stuck on a blank line before a line-start wikilink.
+//
+// This mirrors the obsidian-emacs-text-editor plugin's next-line command:
+// with a mark set, it collapses the selection, moves down one visual line
+// (real CM6 vertical motion via view.moveVertically, which is pixel-based
+// and uses coordsAtPos — this cannot be faithfully simulated in jsdom),
+// then re-expands the selection back to the mark.
+// ────────────────────────────────────────────────────────────────────────
+test("emacs next-line with active mark moves through blank line before a line-start wikilink", async ({
+	page,
+}) => {
+	const doc = [
+		"---",
+		"title: Note Six",
+		"is_active: true",
+		"version: 2",
+		"tags:",
+		"  - project-c",
+		"  - needs-review",
+		"---",
+		"# heading 1",
+		"",
+		"This note has boolean and number properties.",
+		"[[Note-05]]",
+		"",
+		"## heading 1.1",
+		"",
+		"[[Western Climate Initiative]]",
+	].join("\n");
+
+	await page.evaluate((d) => {
+		const harness = window.__steadyLinksHarness;
+		if (!harness) throw new Error("Steady Links Playwright harness did not initialize");
+		const markPos = d.indexOf("# heading 1");
+		harness.setDoc(d, markPos);
+	}, doc);
+
+	const results = await page.evaluate(() => {
+		const harness = window.__steadyLinksHarness;
+		if (!harness) throw new Error("Steady Links Playwright harness did not initialize");
+		const d = harness.getDoc();
+		const markPos = d.indexOf("# heading 1");
+		const out: { lineNumber: number; lineText: string }[] = [];
+		const totalLines = d.split("\n").length;
+		for (let i = 0; i < totalLines + 2; i += 1) {
+			const r = harness.emacsMoveLine(markPos, true);
+			out.push({ lineNumber: r.lineNumber, lineText: r.lineText });
+		}
+		return out;
+	});
+
+	// Line numbers must never decrease (no backward bounce), and the
+	// cursor must end up on the final line (the line-start wikilink).
+	for (let i = 1; i < results.length; i += 1) {
+		expect(results[i].lineNumber).toBeGreaterThanOrEqual(results[i - 1].lineNumber);
+	}
+	expect(results[results.length - 1].lineText).toBe("[[Western Climate Initiative]]");
+});

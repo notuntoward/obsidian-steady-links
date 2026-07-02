@@ -933,6 +933,31 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 	const newSel = state.selection;
 	const oldSel = update.startState.selection;
 	const hidden = computeHiddenRangesForPositions(state.doc, newSel);
+
+	// Unconditional top-level trace of every selectionSet event while the
+	// syntax hider is enabled. Enable STEADY_LINKS_DEBUG and reproduce in
+	// real Obsidian with DevTools console open to diagnose cursor-stuck
+	// bugs that standalone CM6 test harnesses cannot reproduce (Obsidian's
+	// own live-preview extension issues additional no-userEvent selection
+	// normalization dispatches that this trace will surface).
+	debugLog("cursorCorrector ENTRY", {
+		oldHead: oldSel.main.head,
+		oldAnchor: oldSel.main.anchor,
+		oldEmpty: oldSel.main.empty,
+		oldGoalColumn: oldSel.main.goalColumn ?? null,
+		oldLine: state.doc.lineAt(Math.min(oldSel.main.head, state.doc.length)).number,
+		newHead: newSel.main.head,
+		newAnchor: newSel.main.anchor,
+		newEmpty: newSel.main.empty,
+		newGoalColumn: newSel.main.goalColumn ?? null,
+		newLine: state.doc.lineAt(Math.min(newSel.main.head, state.doc.length)).number,
+		userEvents: update.transactions
+			.map((tr) => tr.annotation(Transaction.userEvent))
+			.filter((e) => e !== undefined),
+		docChanged: update.docChanged,
+		hiddenRanges: hidden.map((h) => ({ from: h.from, to: h.to, side: h.side })),
+	});
+
 	const pendingExpansion = state.field(pendingExternalSelectionExpansionField, false);
 	if (pendingExpansion) {
 		debugLog("pending external selection expansion", {
@@ -1572,6 +1597,10 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 	});
 
 	if (!needsAdjust) {
+		debugLog("cursorCorrector NO-OP (no adjustment)", {
+			oldHead: oldSel.main.head,
+			newHead: newSel.main.head,
+		});
 		return;
 	}
 

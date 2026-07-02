@@ -1846,4 +1846,131 @@ describe("Integration: empty-text link deletion", () => {
 	});
 });
 
+// ──────────────────────────────────────────────────────────────────────────
+// BUG GUARD: Emacs next-line with active mark must not get stuck on blank line
+// before a line-start wikilink.
+//
+// The emacs-text-editor plugin moves down with editor.exec("goDown"), which
+// the user sees as next-line. When a mark is active it collapses, moves,
+// then re-expands the selection. The cursor corrector must not snap the head
+// back to the previous line during the re-expansion.
+// ──────────────────────────────────────────────────────────────────────────
+describe("Emacs next-line with active mark", () => {
+	let view: EditorView;
+
+	afterEach(() => {
+		view?.destroy();
+		document.body.innerHTML = "";
+	});
+
+	it("moves through blank line before a line-start wikilink", () => {
+		// Mirrors Note-06.md: a blank line followed by a line-start wikilink.
+		const doc = "# heading 1\n\nparagraph\n\n## heading 1.1\n\n[[Western Climate Initiative]]";
+		view = createTestView(doc, doc.indexOf("# heading 1"));
+
+		const markLine = view.state.doc.lineAt(view.state.selection.main.head);
+		const markPos = markLine.from;
+
+		// Simulate Emacs set-mark at "# heading 1" then repeated next-line.
+		// The plugin collapses, moves down, then re-expands to the mark.
+		// Real CM6 cursorLineDown is a no-op when already on the last line
+		// (it does NOT jump back to the current line's start), so mirror
+		// that here instead of clamping to lastLine.from. Goal column 0
+		// mirrors a mark set at the start of the heading line.
+		function emacsNextLine() {
+			const cursorPos = view.state.selection.main.head;
+			// Collapse to cursor (as the emacs plugin does before goDown).
+			view.dispatch({ selection: EditorSelection.cursor(cursorPos) });
+
+			// Move down one visual line, carrying a goal column of 0.
+			const currentLine = view.state.doc.lineAt(view.state.selection.main.head);
+			if (currentLine.number < view.state.doc.lines) {
+				const nextLine = view.state.doc.line(currentLine.number + 1);
+				view.dispatch({
+					selection: EditorSelection.cursor(nextLine.from, undefined, undefined, 0),
+					annotations: [Transaction.userEvent.of("select")],
+				});
+			}
+			// else: already on the last line — goDown is a no-op, cursor stays put.
+
+			// Re-expand selection back to the mark.
+			view.dispatch({
+				selection: EditorSelection.range(markPos, view.state.selection.main.head),
+			});
+		}
+
+		// Move down through every line, then invoke next-line twice more
+		// while already on the last line to check for backward oscillation.
+		const lineNumbers: number[] = [];
+		for (let i = 0; i < 8; i += 1) {
+			emacsNextLine();
+			lineNumbers.push(view.state.doc.lineAt(view.state.selection.main.head).number);
+		}
+
+		// Should reach the final line and stay there — never bounce backward.
+		expect(lineNumbers).toEqual([2, 3, 4, 5, 6, 7, 7, 7]);
+		expect(view.state.doc.lineAt(view.state.selection.main.head).text).toBe("[[Western Climate Initiative]]");
+	});
+
+	it("moves through the full Note-06.md structure with two line-start wikilinks", () => {
+		const doc = [
+			"---",
+			"title: Note Six",
+			"is_active: true",
+			"version: 2",
+			"tags:",
+			"  - project-c",
+			"  - needs-review",
+			"---",
+			"# heading 1",
+			"",
+			"This note has boolean and number properties.",
+			"[[Note-05]]",
+			"",
+			"## heading 1.1",
+			"",
+			"[[Western Climate Initiative]]",
+		].join("\n");
+		view = createTestView(doc, doc.indexOf("# heading 1"));
+
+		const markLine = view.state.doc.lineAt(view.state.selection.main.head);
+		const markPos = markLine.from;
+
+		function emacsNextLine() {
+			const cursorPos = view.state.selection.main.head;
+			view.dispatch({ selection: EditorSelection.cursor(cursorPos) });
+
+			const currentLine = view.state.doc.lineAt(view.state.selection.main.head);
+			if (currentLine.number < view.state.doc.lines) {
+				const nextLine = view.state.doc.line(currentLine.number + 1);
+				view.dispatch({
+					selection: EditorSelection.cursor(nextLine.from, undefined, undefined, 0),
+					annotations: [Transaction.userEvent.of("select")],
+				});
+			}
+
+			view.dispatch({
+				selection: EditorSelection.range(markPos, view.state.selection.main.head),
+			});
+		}
+
+		const lineNumbers: number[] = [];
+		const lineTexts: string[] = [];
+		for (let i = 0; i < view.state.doc.lines + 2; i += 1) {
+			emacsNextLine();
+			const line = view.state.doc.lineAt(view.state.selection.main.head);
+			lineNumbers.push(line.number);
+			lineTexts.push(line.text);
+		}
+
+		// The line number sequence must be strictly non-decreasing (no
+		// backward bounces) and must eventually reach and stay on the
+		// document's last line.
+		for (let i = 1; i < lineNumbers.length; i += 1) {
+			expect(lineNumbers[i]).toBeGreaterThanOrEqual(lineNumbers[i - 1]);
+		}
+		expect(lineTexts[lineTexts.length - 1]).toBe("[[Western Climate Initiative]]");
+	});
+});
+
 
