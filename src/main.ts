@@ -431,8 +431,8 @@ export default class SteadyLinksPlugin extends Plugin {
 		const wikilink = `[[${linkBody}]]`;
 		navigator.clipboard
 			.writeText(wikilink)
-			.then(() => new Notice("Copied wikilink to clipboard"))
-			.catch(() => new Notice("Failed to copy wikilink"));
+			.then(() => new Notice("Copied link to current note"))
+			.catch(() => new Notice("Failed to copy link to current note"));
 	}
 
 	/**
