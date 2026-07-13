@@ -3154,14 +3154,51 @@ const deleteSelectionKeymap = keymap.of([
 ]);
 
 const clampSelectionDeleteFilter = EditorState.transactionFilter.of((tr) => {
-	if (!isPureDeleteTransaction(tr)) return tr;
+	traceFilter("clampSelectionDeleteFilter", tr, "ENTRY");
+	if (!tr.docChanged) return tr;
 	if (!tr.startState.field(syntaxHiderEnabledField, false)) return tr;
 	if (tr.effects.some((e) => e.is(rewrittenSelectionDelete))) return tr;
 	// Whole-link deletes for empty-text links must not be clamped — the entire
 	// link is hidden syntax, so clampDeleteChangeAgainstHidden would eat the change.
 	if (tr.effects.some((e) => e.is(rewrittenEmptyLinkDelete))) return tr;
 
+	const hasSelectionDelete = tr.startState.selection.ranges.some((r) => !r.empty);
+	if (!isPureDeleteTransaction(tr) && !hasSelectionDelete) return tr;
+
 	const userEvent = tr.annotation(Transaction.userEvent) ?? null;
+
+	// Separate deletion-only changes from insertions/replacements.  Obsidian's
+	// list-renumbering extension (userEvent "input.renumber") merges insertions
+	// (the new numbers) into a transaction that also contains the actual
+	// deletion.  Without this split, isPureDeleteTransaction returns false and we
+	// never add the rewrittenSelectionDelete marker that protectSyntaxFilter needs.
+	const deleteChanges: ChangeSpec[] = [];
+	const otherChanges: ChangeSpec[] = [];
+	let sawMultiCharDeletion = false;
+
+	tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+		const text = inserted.toString();
+		if (toA > fromA && text.length === 0) {
+			deleteChanges.push({ from: fromA, to: toA, insert: "" });
+			if (toA - fromA > 1) sawMultiCharDeletion = true;
+		} else {
+			otherChanges.push({ from: fromA, to: toA, insert: text });
+		}
+	});
+
+	// If there are no deletions, this isn't a delete we need to vet.
+	if (deleteChanges.length === 0) return tr;
+
+	const hidden = tr.startState.field(hiddenRangesField, false);
+	if (!hidden || hidden.length === 0) return tr;
+	const links = buildLinkSpans(hidden);
+	if (links.length === 0) return tr;
+
+	// If every deletion is ≤1 char and this is not a selection delete,
+	// let the single-char boundary filters handle it.
+	if (!sawMultiCharDeletion && !hasSelectionDelete) return tr;
+
+	if (!changesInteractWithLinks(deleteChanges, links)) return tr;
 
 	debugLog("delete transaction seen", {
 		userEvent,
@@ -3171,44 +3208,12 @@ const clampSelectionDeleteFilter = EditorState.transactionFilter.of((tr) => {
 		empty: tr.startState.selection.main.empty,
 	});
 
-	const hidden = tr.startState.field(hiddenRangesField, false);
-	if (!hidden || hidden.length === 0) return tr;
-	const links = buildLinkSpans(hidden);
-	if (links.length === 0) return tr;
-	const hasSelectionDelete = tr.startState.selection.ranges.some((r) => !r.empty);
-
-	// Collect all changes in the transaction
-	const changes: ChangeSpec[] = [];
-	let allSingleChar = true;
-
-	tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
-		const changeLen = toA - fromA;
-		if (changeLen > 1) allSingleChar = false;
-		changes.push({ from: fromA, to: toA, insert: inserted.toString() });
-	});
-
-	// If every change is ≤1 char and this is not a selection delete,
-	// let the single-char boundary filters handle it.
-	if (allSingleChar && !hasSelectionDelete) return tr;
-
 	if (userEvent === null && hasSelectionDelete) {
 		// Programmatic (no userEvent) selection deletes from Obsidian's
 		// own extensions should generally pass through unchanged.
 		// However, external plugins (e.g. Emacs kill-region via
 		// editor.replaceSelection("")) also dispatch with no userEvent.
 		// These need rewriting when they overlap hidden syntax.
-		//
-		// Heuristic: if the delete range matches the selection exactly
-		// AND the changes interact with links, it's likely an external
-		// plugin's replaceSelection(""). Rewrite it.
-		if (!changesInteractWithLinks(changes, links)) {
-			traceFilter(
-				"clampSelectionDeleteFilter",
-				tr,
-				"PASS (null userEvent, no link interaction)"
-			);
-			return tr;
-		}
 		traceFilter(
 			"clampSelectionDeleteFilter",
 			tr,
@@ -3217,17 +3222,20 @@ const clampSelectionDeleteFilter = EditorState.transactionFilter.of((tr) => {
 		// Fall through to rewrite for external plugin compatibility.
 	}
 
-	if (!changesInteractWithLinks(changes, links)) return tr;
-
-	// Rebuild the changes. For selection deletes, preserve Gmail-style visible
-	// semantics. For non-selection multi-char deletes, keep the old clamping
-	// behavior used by kill-word / kill-line style commands.
-	const clampedChanges = rewriteDeleteChanges(changes, hidden, links, hasSelectionDelete);
+	// Rebuild the deletion changes. For selection deletes, preserve Gmail-style
+	// visible semantics. For non-selection multi-char deletes, keep the old
+	// clamping behavior used by kill-word / kill-line style commands.
+	const rewrittenDeletes = rewriteDeleteChanges(
+		deleteChanges,
+		hidden,
+		links,
+		hasSelectionDelete
+	);
 
 	debugLog("delete transaction rewrite", {
 		hasSelectionDelete,
-		originalChanges: changes,
-		rewrittenChanges: clampedChanges,
+		originalDeleteChanges: deleteChanges,
+		rewrittenDeleteChanges: rewrittenDeletes,
 		startSelection: {
 			from: tr.startState.selection.main.from,
 			to: tr.startState.selection.main.to,
@@ -3235,73 +3243,71 @@ const clampSelectionDeleteFilter = EditorState.transactionFilter.of((tr) => {
 		},
 	});
 
-	// If all changes were dropped, return a no-op
-	if (clampedChanges.length === 0) return [];
+	// If all deletions were dropped, return a no-op
+	if (rewrittenDeletes.length === 0) return [];
 
-	// If nothing changed after clamping, pass through — but for selection
-	// deletes that overlap hidden syntax, we must still tag the transaction
-	// with rewrittenSelectionDelete so protectSyntaxFilter knows we vetted
-	// it and does not block it.
-	if (clampedChanges.length === changes.length) {
-		let identical = true;
-		for (let i = 0; i < changes.length; i++) {
+	// If the deletions didn't change after clamping, pass through — but for
+	// selection deletes we must still tag the transaction so protectSyntaxFilter
+	// knows we vetted it.
+	let deletesChanged = false;
+	if (rewrittenDeletes.length !== deleteChanges.length) {
+		deletesChanged = true;
+	} else {
+		for (let i = 0; i < deleteChanges.length; i++) {
 			if (
-				clampedChanges[i].from !== changes[i].from ||
-				clampedChanges[i].to !== changes[i].to ||
-				clampedChanges[i].insert !== changes[i].insert
+				rewrittenDeletes[i].from !== deleteChanges[i].from ||
+				rewrittenDeletes[i].to !== deleteChanges[i].to
 			) {
-				identical = false;
+				deletesChanged = true;
 				break;
 			}
 		}
-		if (identical) {
-			if (hasSelectionDelete) {
-				// Re-emit with the rewrittenSelectionDelete marker so
-				// protectSyntaxFilter passes it through.
-				const dispatchUserEvent = tr.annotation(Transaction.userEvent) ?? undefined;
-				const identicalEffects: StateEffect<any>[] = [rewrittenSelectionDelete.of(null)];
-
-				// Also suppress follow-up setCursor when deleting a
-				// line-start link (same logic as the non-identical path).
-				const deleteLine = tr.startState.doc.lineAt(changes[0].from);
-				if (changes[0].from === deleteLine.from) {
-					const deleteStartIsLeading = hidden.some(
-						(h) => h.side === "leading" && h.from === changes[0].from
-					);
-					if (deleteStartIsLeading) {
-						identicalEffects.push(
-							suppressSameLineCursorResetEffect.of(changes[0].from)
-						);
-					}
-				}
-
-				return tr.startState.update({
-					changes: tr.changes,
-					selection: tr.newSelection,
-					scrollIntoView: tr.scrollIntoView,
-					userEvent: dispatchUserEvent,
-					effects: identicalEffects,
-				});
-			}
-			return tr;
-		}
 	}
 
-	// Place cursor at the start of the first clamped change
-	const cursorPos = clampedChanges[0].from;
+	if (!deletesChanged) {
+		if (hasSelectionDelete) {
+			// Re-emit with the rewrittenSelectionDelete marker so
+			// protectSyntaxFilter passes it through.
+			const dispatchUserEvent = tr.annotation(Transaction.userEvent) ?? undefined;
+			const identicalEffects: StateEffect<any>[] = [rewrittenSelectionDelete.of(null)];
+
+			// Also suppress follow-up setCursor when deleting a
+			// line-start link (same logic as the non-identical path).
+			const deleteLine = tr.startState.doc.lineAt(deleteChanges[0].from);
+			if (deleteChanges[0].from === deleteLine.from) {
+				const deleteStartIsLeading = hidden.some(
+					(h) => h.side === "leading" && h.from === deleteChanges[0].from
+				);
+				if (deleteStartIsLeading) {
+					identicalEffects.push(
+						suppressSameLineCursorResetEffect.of(deleteChanges[0].from)
+					);
+				}
+			}
+
+			return tr.startState.update({
+				changes: tr.changes,
+				selection: tr.newSelection,
+				scrollIntoView: tr.scrollIntoView,
+				userEvent: dispatchUserEvent,
+				effects: identicalEffects,
+			});
+		}
+		return tr;
+	}
+
+	// Combine rewritten deletions with the non-deletion changes (e.g. list
+	// renumbering insertions).  All positions are in tr.startState coordinates.
+	const allChanges = [...otherChanges, ...rewrittenDeletes];
+	allChanges.sort((a, b) => a.from - b.from || a.to - b.to);
+
+	// Place cursor at the start of the first deletion
+	const cursorPos = rewrittenDeletes[0].from;
 	const dispatchUserEvent = tr.annotation(Transaction.userEvent) ?? undefined;
 
-	// When the rewrite expanded a selection leftward to include leading
-	// syntax of a line-start link, the Emacs kill-line plugin follows up
-	// with editor.setCursor(original_cursor) which maps to a position
-	// past the now-empty line (because the original ch was 1-2 for the
-	// textFrom offset).  Use suppressSameLineCursorReset to clamp the
-	// follow-up setCursor to the line start.
 	const effects: StateEffect<any>[] = [];
 	if (hasSelectionDelete) {
 		effects.push(rewrittenSelectionDelete.of(null));
-	}
-	if (hasSelectionDelete) {
 		effects.push(
 			suppressSameLineCursorResetAnchorEffect.of(tr.startState.selection.main.anchor)
 		);
@@ -3312,10 +3318,6 @@ const clampSelectionDeleteFilter = EditorState.transactionFilter.of((tr) => {
 		// Arm the same-line reset suppression so the follow-up selection-only
 		// dispatch is redirected back to the post-delete cursor position
 		// (which is on the preserved line).
-		//
-		// Conditions:
-		//   - selection started at a link boundary (textFrom or from)
-		//   - selection extended to the end of the starting line
 		const startSelFrom = tr.startState.selection.main.from;
 		const startSelTo = tr.startState.selection.main.to;
 		const startSelLine = tr.startState.doc.lineAt(startSelFrom);
@@ -3329,10 +3331,10 @@ const clampSelectionDeleteFilter = EditorState.transactionFilter.of((tr) => {
 			effects.push(suppressSameLineCursorResetEffect.of(cursorPos));
 		} else {
 			// Legacy: also suppress for line-start link deletes.
-			const deleteLine = tr.startState.doc.lineAt(clampedChanges[0].from);
-			if (clampedChanges[0].from === deleteLine.from) {
+			const deleteLine = tr.startState.doc.lineAt(rewrittenDeletes[0].from);
+			if (rewrittenDeletes[0].from === deleteLine.from) {
 				const deleteStartIsLeading = hidden.some(
-					(h) => h.side === "leading" && h.from === clampedChanges[0].from
+					(h) => h.side === "leading" && h.from === rewrittenDeletes[0].from
 				);
 				if (deleteStartIsLeading) {
 					effects.push(suppressSameLineCursorResetEffect.of(cursorPos));
@@ -3347,14 +3349,13 @@ const clampSelectionDeleteFilter = EditorState.transactionFilter.of((tr) => {
 	});
 
 	const result = tr.startState.update({
-		changes: clampedChanges,
+		changes: allChanges,
 		selection: EditorSelection.cursor(cursorPos),
 		scrollIntoView: true,
 		userEvent: dispatchUserEvent,
 		effects: effects.length > 0 ? effects : undefined,
 	});
 
-	// Log the actual cursor position after the changes are applied
 	debugLog("delete transaction result", {
 		cursorPosRequested: cursorPos,
 		resultHead: result.state.selection.main.head,
@@ -3495,6 +3496,40 @@ const protectSyntaxFilter = EditorState.transactionFilter.of((tr) => {
 	});
 
 	if (!dominated) return tr;
+
+	// Allow whole-link deletes through without the rewrittenSelectionDelete
+	// marker.  External plugins (e.g. Emacs kill-line dispatched as
+	// `editor.replaceSelection("")` with no userEvent, or via a code path
+	// that bypassed clampSelectionDeleteFilter's rewrite) may reach
+	// protectSyntaxFilter with a pure-delete change whose range exactly
+	// covers one or more full links.  Blocking these would make kill-line
+	// silently do nothing for a cursor sitting at the edge of a list-marker
+	// + link line.  Let them through — the link is being removed entirely,
+	// which is the safe, intended outcome.
+	if (isPureDelete) {
+		const links = buildLinkSpans(hidden);
+		const allChangesAreFullLinkDeletes = (() => {
+			let allFull = true;
+			let anyLink = false;
+			tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+				if (inserted.length !== 0) {
+					allFull = false;
+					return;
+				}
+				if (toA <= fromA) return; // not a deletion
+				const coversFullLink = links.some(
+					(link) => fromA <= link.from && toA >= link.to
+				);
+				if (coversFullLink) anyLink = true;
+				else allFull = false;
+			});
+			return allFull && anyLink;
+		})();
+		if (allChangesAreFullLinkDeletes) {
+			traceFilter("protectSyntaxFilter", tr, "PASS (whole-link delete)");
+			return tr;
+		}
+	}
 
 	// Allow link-level replacements through (e.g. Obsidian's native [[
 	// completion replacing the entire link content).  A "link-level

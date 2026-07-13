@@ -2218,4 +2218,78 @@ describe("Emacs next-line with active mark", () => {
 	});
 });
 
+describe("BUG: kill-line on a numbered-list item whose content is a wikilink", () => {
+	let view: EditorView;
+
+	afterEach(() => {
+		view?.destroy();
+		document.body.innerHTML = "";
+	});
+
+	it("kill-line with cursor at ch:3 (right after the period, before the space) removes the link and the space", () => {
+		const line = "11. [[lit/lit_notes/Burton15libsNeuroticConsrvsHappy.md|Burton15libsNeuroticConsrvsHappy]]";
+		const doc = "before\n" + line + "\nafter";
+		const cursor = doc.indexOf("11.") + 3; // immediately after the period
+		view = createTestView(doc, cursor);
+
+		const startLine = view.state.doc.lineAt(cursor);
+		const result = emulateEmacsKillLine(view);
+
+		expect(view.state.doc.lineAt(result.cursor).text).toBe("11.");
+		expect(view.state.doc.lineAt(result.cursor).number).toBe(startLine.number);
+	});
+
+	it("kill-line with cursor at ch:4 (right after the space, at start of leading hidden range) removes the link", () => {
+		const line = "11. [[lit/lit_notes/Burton15libsNeuroticConsrvsHappy.md|Burton15libsNeuroticConsrvsHappy]]";
+		const doc = "before\n" + line + "\nafter";
+		const cursor = doc.indexOf("11.") + 4; // after the space, at leading.from
+		view = createTestView(doc, cursor);
+
+		const startLine = view.state.doc.lineAt(cursor);
+		const result = emulateEmacsKillLine(view);
+
+		// The list-marker space before the cursor is preserved (kill-line
+		// deletes from cursor to end of line, not before).
+		expect(view.state.doc.lineAt(result.cursor).text).toBe("11. ");
+		expect(view.state.doc.lineAt(result.cursor).number).toBe(startLine.number);
+	});
+
+	it("kill-line with cursor at ch:2 (between the digits and the period) removes everything after", () => {
+		const line = "11. [[lit/lit_notes/Burton15libsNeuroticConsrvsHappy.md|Burton15libsNeuroticConsrvsHappy]]";
+		const doc = "before\n" + line + "\nafter";
+		const cursor = doc.indexOf("11.") + 2; // after "11", before "."
+		view = createTestView(doc, cursor);
+
+		const startLine = view.state.doc.lineAt(cursor);
+		const result = emulateEmacsKillLine(view);
+
+		expect(view.state.doc.lineAt(result.cursor).text).toBe("11");
+		expect(view.state.doc.lineAt(result.cursor).number).toBe(startLine.number);
+	});
+
+	it("whole-link delete dispatched directly (no clamp rewrite) is not blocked by protectSyntaxFilter", () => {
+		// Simulates a real Obsidian Emacs-plugin kill-line path that bypasses
+		// clampSelectionDeleteFilter's rewriting (e.g. dispatched via
+		// editor.replaceSelection("") with no userEvent, or a code path
+		// that skipped the rewrite).  protectSyntaxFilter must NOT block
+		// a pure delete whose range exactly covers a full link.
+		const line = "11. [[Note-08]]";
+		const doc = "before\n" + line + "\nafter";
+		view = createTestView(doc, 0);
+
+		const linkStart = doc.indexOf("[[Note-08]]");
+		const linkEnd = linkStart + "[[Note-08]]".length;
+		const before = view.state.doc.toString();
+
+		view.dispatch({
+			changes: { from: linkStart, to: linkEnd, insert: "" },
+			selection: EditorSelection.cursor(linkStart),
+		});
+
+		expect(view.state.doc.toString()).not.toBe(before);
+		expect(view.state.doc.toString().includes("[[Note-08]]")).toBe(false);
+		expect(view.state.doc.lineAt(view.state.selection.main.head).text).toBe("11. ");
+	});
+});
+
 
