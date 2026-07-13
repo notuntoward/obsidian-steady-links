@@ -38,7 +38,7 @@ import {
 function createTestView(
 	doc: string,
 	cursorPos: number,
-	wikiLinkOptions: { shortenHeadingLinks?: boolean } = {}
+	wikiLinkOptions: { shortenHeadingLinks?: boolean; shortenFileLinks?: boolean } = {}
 ): EditorView {
 	const host = document.createElement("div");
 	host.className = "markdown-source-view is-live-preview";
@@ -242,6 +242,61 @@ describe("Integration: cursor correction with real CM6 state", () => {
 				effects: [setWikiLinkHidingOptions.of({ shortenHeadingLinks: false })],
 			});
 			expect(view.dom.textContent ?? "").toContain("2023-08-19#Outliner plugin");
+		});
+
+		it("with shortenFileLinks enabled, hides the parent folder path even with the cursor on the link", () => {
+			view = createTestView("[[folder/Note]]", 0, { shortenFileLinks: true });
+
+			// Move cursor into the link to force a decoration rebuild
+			dispatchSelection(view, 5);
+
+			const textContent = view.dom.textContent ?? "";
+			expect(textContent).not.toContain("[[");
+			expect(textContent).not.toContain("]]");
+			expect(textContent).not.toContain("folder/");
+			expect(textContent).toContain("Note");
+		});
+
+		it("with shortenFileLinks enabled, hides the folder path on a line the cursor is NOT on", () => {
+			const doc = "[[folder/Note]]\nsecond line";
+			const cursorPos = doc.indexOf("second") + 3; // cursor on the second line, not the link's line
+			view = createTestView(doc, cursorPos, { shortenFileLinks: true });
+
+			const textContent = view.dom.textContent ?? "";
+			expect(textContent).not.toContain("folder/");
+			expect(textContent).toContain("Note");
+		});
+
+		it("with shortenFileLinks enabled, does not shorten heading/block links (independent setting)", () => {
+			const doc = "[[folder/Note]]\n[[2023-08-19#Outliner plugin]]\ncursor line";
+			const cursorPos = doc.indexOf("cursor line") + 3; // cursor on the last line, none of the links
+			view = createTestView(doc, cursorPos, { shortenFileLinks: true });
+
+			const textContent = view.dom.textContent ?? "";
+			expect(textContent).not.toContain("folder/");
+			expect(textContent).toContain("Note");
+			// Heading link is unaffected by shortenFileLinks alone.
+			expect(textContent).toContain("2023-08-19#Outliner plugin");
+		});
+
+		it("updates an already-open editor's rendering when shortenFileLinks is toggled via effect, without reconfiguring", () => {
+			view = createTestView("[[folder/Note]]", 0, { shortenFileLinks: false });
+			dispatchSelection(view, 5);
+
+			expect(view.dom.textContent ?? "").toContain("folder/Note");
+
+			view.dispatch({
+				effects: [setWikiLinkHidingOptions.of({ shortenFileLinks: true })],
+			});
+
+			const textContent = view.dom.textContent ?? "";
+			expect(textContent).not.toContain("folder/");
+			expect(textContent).toContain("Note");
+
+			view.dispatch({
+				effects: [setWikiLinkHidingOptions.of({ shortenFileLinks: false })],
+			});
+			expect(view.dom.textContent ?? "").toContain("folder/Note");
 		});
 	});
 

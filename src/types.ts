@@ -60,4 +60,17 @@ export interface PluginSettings {
 	 * cursor enters it.
 	 */
 	shortenHeadingLinks: boolean;
+	/**
+	 * When enabled (and keepLinksSteady is also enabled), plain file links
+	 * without an alias and without a heading/block reference (e.g.
+	 * [[folder/Note]]) hide the parent folder path, showing only the
+	 * filename — and keep showing only that, even with the cursor on the
+	 * link. Off by default because stock Obsidian does not shorten these
+	 * links itself. Independent of shortenHeadingLinks: this only affects
+	 * plain file links, not heading/block references. Useful for parity
+	 * with third-party plugins (e.g. "Short Links") that shorten link
+	 * display text only while the cursor is off the link, which otherwise
+	 * makes the link visually change when the cursor enters it.
+	 */
+	shortenFileLinks: boolean;
 }

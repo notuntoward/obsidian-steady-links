@@ -302,6 +302,67 @@ describe("findWikiLinkSyntaxRanges", () => {
 			expect(ranges[1]).toEqual({ from: 20, to: 22, side: "trailing" }); // "]]"
 		});
 	});
+
+	// ── Opt-in shortenFileLinks option: for parity with third-party plugins
+	// (e.g. "Short Links") that shorten plain file-link display text but only
+	// while the cursor is off the link. Independent of shortenHeadingLinks —
+	// only affects plain file links, not heading/block references.
+	describe("with shortenFileLinks enabled", () => {
+		it("hides the parent folder path for [[folder/Note]]", () => {
+			const ranges = findWikiLinkSyntaxRanges("[[folder/Note]]", 0, {
+				shortenFileLinks: true,
+			});
+			expect(ranges).toHaveLength(2);
+			expect(ranges[0]).toEqual({ from: 0, to: 9, side: "leading" }); // "[[folder/"
+			expect(ranges[1]).toEqual({ from: 13, to: 15, side: "trailing" }); // "]]"
+		});
+
+		it("hides everything up to the LAST slash for nested folders", () => {
+			const ranges = findWikiLinkSyntaxRanges("[[a/b/c/Note]]", 0, {
+				shortenFileLinks: true,
+			});
+			expect(ranges).toHaveLength(2);
+			expect(ranges[0]).toEqual({ from: 0, to: 8, side: "leading" }); // "[[a/b/c/"
+			expect(ranges[1]).toEqual({ from: 12, to: 14, side: "trailing" }); // "]]"
+		});
+
+		it("does not affect a top-level file link with no slash", () => {
+			const ranges = findWikiLinkSyntaxRanges("[[Note]]", 0, {
+				shortenFileLinks: true,
+			});
+			expect(ranges).toHaveLength(2);
+			expect(ranges[0]).toEqual({ from: 0, to: 2, side: "leading" }); // "[["
+			expect(ranges[1]).toEqual({ from: 6, to: 8, side: "trailing" }); // "]]"
+		});
+
+		it("does not affect heading/block references (governed independently by shortenHeadingLinks)", () => {
+			const ranges = findWikiLinkSyntaxRanges("[[folder/Note#Heading]]", 0, {
+				shortenFileLinks: true,
+			});
+			expect(ranges).toHaveLength(2);
+			expect(ranges[0]).toEqual({ from: 0, to: 2, side: "leading" }); // "[["
+			expect(ranges[1]).toEqual({ from: 21, to: 23, side: "trailing" }); // "]]"
+		});
+
+		it("still hides up to the alias pipe when one is present (alias takes precedence)", () => {
+			const ranges = findWikiLinkSyntaxRanges("[[folder/Note|Alias]]", 0, {
+				shortenFileLinks: true,
+			});
+			expect(ranges).toHaveLength(2);
+			expect(ranges[0]).toEqual({ from: 0, to: 14, side: "leading" }); // "[[folder/Note|"
+			expect(ranges[1]).toEqual({ from: 19, to: 21, side: "trailing" }); // "]]"
+		});
+
+		it("combines with shortenHeadingLinks: heading offset wins when both are enabled", () => {
+			const ranges = findWikiLinkSyntaxRanges("[[folder/Note#Heading]]", 0, {
+				shortenFileLinks: true,
+				shortenHeadingLinks: true,
+			});
+			expect(ranges).toHaveLength(2);
+			expect(ranges[0]).toEqual({ from: 0, to: 14, side: "leading" }); // "[[folder/Note#"
+			expect(ranges[1]).toEqual({ from: 21, to: 23, side: "trailing" }); // "]]"
+		});
+	});
 });
 
 // ============================================================================

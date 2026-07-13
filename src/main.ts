@@ -35,6 +35,7 @@ const DEFAULT_SETTINGS: PluginSettings = {
 	keepLinksSteady: false,
 	copyLinkToCurrentNoteInTabMenu: false,
 	shortenHeadingLinks: false,
+	shortenFileLinks: false,
 };
 
 export default class SteadyLinksPlugin extends Plugin {
@@ -233,6 +234,7 @@ export default class SteadyLinksPlugin extends Plugin {
 				// Compute the displayed text range for the link at cursor
 				const displayedRange = computeDisplayedTextRange(line, cursor.ch, {
 					shortenHeadingLinks: this.settings.shortenHeadingLinks,
+					shortenFileLinks: this.settings.shortenFileLinks,
 				});
 
 				if (!displayedRange) {
@@ -550,7 +552,10 @@ export default class SteadyLinksPlugin extends Plugin {
 	 */
 	applySyntaxHiderSetting() {
 		this.syntaxHiderExtensions.length = 0;
-		const wikiLinkOptions = { shortenHeadingLinks: this.settings.shortenHeadingLinks };
+		const wikiLinkOptions = {
+			shortenHeadingLinks: this.settings.shortenHeadingLinks,
+			shortenFileLinks: this.settings.shortenFileLinks,
+		};
 		if (this.settings.keepLinksSteady) {
 			this.syntaxHiderExtensions.push(...createLinkSyntaxHiderExtension(wikiLinkOptions));
 		}

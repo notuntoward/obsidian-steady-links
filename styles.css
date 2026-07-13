@@ -34,6 +34,40 @@ body.le-keep-links-steady .cm-cursor {
 	min-height: 1em !important;
 }
 
+/* ── Settings tab: grouped layout for "Keep links steady" settings ───
+ *
+ * The master "Keep links steady" toggle and its dependent sub-settings are
+ * wrapped in a rounded group. The sub-settings live in a smaller, nested box
+ * so the dependency is obvious: they are indented, dimmed, and disabled when
+ * the master toggle is off. */
+.steady-links-steady-group {
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m, 8px);
+	padding: 0.75em;
+	margin-bottom: 1em;
+	background-color: var(--background-primary);
+}
+
+.steady-links-subsettings {
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m, 6px);
+	padding: 0.5em;
+	margin-top: 0.5em;
+	background-color: var(--background-secondary, var(--background-primary));
+}
+
+.steady-links-subsettings.is-disabled {
+	opacity: 0.5;
+}
+
+.steady-links-subsetting {
+	padding-left: 0.5em;
+}
+
+.steady-links-subsetting.is-disabled {
+	opacity: 0.5;
+}
+
 /* ── Edit Link Modal ──────────────────────────────────────────────── */
 
 /* ── Link Type segmented control ─────────────────────────────────── */

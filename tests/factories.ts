@@ -142,6 +142,7 @@ export function createSettings(overrides: Partial<PluginSettings> = {}): PluginS
     keepLinksSteady: false,
     copyLinkToCurrentNoteInTabMenu: false,
     shortenHeadingLinks: false,
+    shortenFileLinks: false,
     ...overrides,
   };
 }

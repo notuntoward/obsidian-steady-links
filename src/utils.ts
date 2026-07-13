@@ -744,26 +744,48 @@ export interface WikiLinkHidingOptions {
 	 * `[[Note#^block-id]]` -> "block-id".
 	 */
 	shortenHeadingLinks?: boolean;
+	/**
+	 * Hide the parent folder path for plain file links without an alias and
+	 * without a heading/block reference, e.g. `[[folder/Note]]` -> "Note".
+	 * Has no effect on heading/block references — that's controlled
+	 * independently by shortenHeadingLinks — matching how third-party
+	 * plugins (e.g. "Short Links") treat file-path shortening and
+	 * heading/block shortening as separate settings.
+	 */
+	shortenFileLinks?: boolean;
 }
 
 /**
  * Given the inner content of a wikilink with no alias pipe (e.g. `dest` in
  * `[[dest]]`), compute the offset (relative to the start of that content)
- * where the shortened display text begins: past the note path and the
- * "#" (or "#^") marker for heading/block references. Returns 0 when there
- * is no "#" (a plain file link, or already just a heading with no note
- * path prefix).
+ * where the shortened display text begins, according to the given options:
+ *
+ * - If there's a "#" (heading/block reference) and shortenHeadingLinks is
+ *   enabled: past the note path and the "#" (or "#^") marker.
+ * - If there's no "#" (a plain file link) and shortenFileLinks is enabled:
+ *   past the parent folder path, i.e. after the last "/".
+ * - Otherwise: 0 (no shortening — matches stock Obsidian's unshortened
+ *   display).
  *
  * Shared by findWikiLinkSyntaxRanges() (linkSyntaxHider.ts) and
  * computeDisplayedTextRange() below so the editor's visual hiding and the
- * skip-link command's boundary never drift out of sync when
- * shortenHeadingLinks is enabled.
+ * skip-link command's boundary never drift out of sync.
  */
-export function wikiLinkVisibleTextOffset(innerContent: string): number {
+export function wikiLinkVisibleTextOffset(
+	innerContent: string,
+	options: WikiLinkHidingOptions = {}
+): number {
 	const hashIdx = innerContent.indexOf('#');
-	if (hashIdx === -1) return 0;
-	const afterHash = innerContent.substring(hashIdx + 1);
-	return hashIdx + 1 + (afterHash.startsWith('^') ? 1 : 0);
+	if (hashIdx !== -1) {
+		if (!options.shortenHeadingLinks) return 0;
+		const afterHash = innerContent.substring(hashIdx + 1);
+		return hashIdx + 1 + (afterHash.startsWith('^') ? 1 : 0);
+	}
+	if (options.shortenFileLinks) {
+		const slashIdx = innerContent.lastIndexOf('/');
+		if (slashIdx !== -1) return slashIdx + 1;
+	}
+	return 0;
 }
 
 /**
@@ -847,13 +869,11 @@ export function computeDisplayedTextRange(
 		
 		if (lastPipeIndex === -1) {
 			// No pipe: [[dest]] - displayed text is the destination by
-			// default, matching stock Obsidian. When shortenHeadingLinks is
-			// enabled, skip past the note path and "#"/"#^" marker so this
-			// matches the shortened text findWikiLinkSyntaxRanges keeps
-			// visible in the editor.
-			displayedTextStart = options.shortenHeadingLinks
-				? innerStart + wikiLinkVisibleTextOffset(innerContent)
-				: innerStart;
+			// default, matching stock Obsidian. wikiLinkVisibleTextOffset()
+			// applies shortenHeadingLinks/shortenFileLinks shortening (if
+			// enabled) so this matches the shortened text
+			// findWikiLinkSyntaxRanges keeps visible in the editor.
+			displayedTextStart = innerStart + wikiLinkVisibleTextOffset(innerContent, options);
 			displayedTextEnd = wikiLink.end - 2;
 		} else {
 			// Has pipe: [[dest|text]] - displayed text is after the pipe

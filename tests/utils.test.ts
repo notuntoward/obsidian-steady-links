@@ -1816,6 +1816,80 @@ describe('computeDisplayedTextRange', () => {
 		});
 	});
 
+	// ── Opt-in shortenFileLinks option: mirrors findWikiLinkSyntaxRanges()
+	// in linkSyntaxHider.ts. Independent of shortenHeadingLinks — only
+	// affects plain file links without a heading/block reference.
+	describe('shortenFileLinks option', () => {
+		it('shortens to just the filename when enabled', () => {
+			const line = '[[folder/Note]]';
+			const result = computeDisplayedTextRange(line, 5, { shortenFileLinks: true });
+			expect(result).toEqual({
+				linkStart: 0,
+				linkEnd: 15,
+				displayedTextStart: 9, // start of "Note"
+				displayedTextEnd: 13
+			});
+		});
+
+		it('hides everything up to the LAST slash for nested folders', () => {
+			const line = '[[a/b/c/Note]]';
+			const result = computeDisplayedTextRange(line, 5, { shortenFileLinks: true });
+			expect(result).toEqual({
+				linkStart: 0,
+				linkEnd: 14,
+				displayedTextStart: 8, // start of "Note"
+				displayedTextEnd: 12
+			});
+		});
+
+		it('does not affect a top-level file link with no slash', () => {
+			const line = '[[Note]]';
+			const result = computeDisplayedTextRange(line, 5, { shortenFileLinks: true });
+			expect(result).toEqual({
+				linkStart: 0,
+				linkEnd: 8,
+				displayedTextStart: 2,
+				displayedTextEnd: 6
+			});
+		});
+
+		it('does not affect heading/block references (governed independently by shortenHeadingLinks)', () => {
+			const line = '[[folder/Note#Heading]]';
+			const result = computeDisplayedTextRange(line, 5, { shortenFileLinks: true });
+			expect(result).toEqual({
+				linkStart: 0,
+				linkEnd: 23,
+				displayedTextStart: 2, // full destination, unshortened
+				displayedTextEnd: 21
+			});
+		});
+
+		it('still uses the alias text when one is present (alias takes precedence)', () => {
+			const line = '[[folder/Note|Alias]]';
+			const result = computeDisplayedTextRange(line, 16, { shortenFileLinks: true });
+			expect(result).toEqual({
+				linkStart: 0,
+				linkEnd: 21,
+				displayedTextStart: 14, // start of "Alias"
+				displayedTextEnd: 19
+			});
+		});
+
+		it('combines with shortenHeadingLinks: heading offset wins when both are enabled', () => {
+			const line = '[[folder/Note#Heading]]';
+			const result = computeDisplayedTextRange(line, 5, {
+				shortenFileLinks: true,
+				shortenHeadingLinks: true
+			});
+			expect(result).toEqual({
+				linkStart: 0,
+				linkEnd: 23,
+				displayedTextStart: 14, // start of "Heading"
+				displayedTextEnd: 21
+			});
+		});
+	});
+
 	describe('no link at cursor', () => {
 		it('should return null when cursor is not in a link', () => {
 			const line = 'No links here';

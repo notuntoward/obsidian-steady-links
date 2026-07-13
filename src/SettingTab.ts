@@ -9,18 +9,19 @@ export class SteadyLinksSettingTab extends PluginSettingTab {
 		this.plugin = plugin;
 	}
 
-	display(): void {
+		display(): void {
 		const { containerEl } = this;
 		containerEl.empty();
-		containerEl.createEl("h2", { text: "Link Editor Settings" });
+		containerEl.createEl("h2", { text: "Steady Links Settings" });
 
-		new Setting(containerEl)
+		const steadyGroup = containerEl.createDiv("steady-links-steady-group");
+
+		new Setting(steadyGroup)
 			.setName("Keep links steady")
 			.setDesc(
-				"When enabled, moving the cursor into a link will not expand it, " +
-				"and show its raw syntax. The link text stays editable as normal " +
-				"text; use the Edit Link command to change the destination and " +
-				"other properties."
+				"Keeps a link's display text visible instead of expanding to raw " +
+				"syntax when the cursor enters it. Use the Edit Link command to " +
+				"edit the destination or other properties."
 			)
 			.addToggle((toggle) =>
 				toggle
@@ -29,37 +30,63 @@ export class SteadyLinksSettingTab extends PluginSettingTab {
 						this.plugin.settings.keepLinksSteady = value;
 						await this.plugin.saveSettings();
 						this.plugin.applySyntaxHiderSetting();
+						// Sub-settings below are only meaningful when this is
+						// on — refresh so their disabled/dimmed state updates
+						// immediately.
+						this.display();
 					})
 			);
-		new Setting(containerEl)
+
+		// Sub-settings that only take effect when "Keep links steady" is on.
+		// They are grouped under the master toggle in a nested box, indented
+		// and dimmed/disabled when the master toggle is off.
+		const subSettingsDisabled = !this.plugin.settings.keepLinksSteady;
+		const subSettingsContainer = steadyGroup.createDiv("steady-links-subsettings");
+		subSettingsContainer.toggleClass("is-disabled", subSettingsDisabled);
+
+		const shortenHeadingSetting = new Setting(subSettingsContainer)
 			.setName("Shorten heading and block links")
 			.setDesc(
-				"Requires 'Keep links steady' to be enabled. When enabled, links " +
-				"to headings or blocks without an alias (e.g. [[Note#Heading]], " +
-				"[[Note#^block-id]]) hide the note path and \"#\"/\"#^\" marker, " +
-				"showing only the heading text or block ID — and keep showing " +
-				"only that even with the cursor on the link. Off by default, " +
-				"since stock Obsidian does not shorten these links itself. Turn " +
-				"this on for compatibility with plugins (such as Short Links) " +
-				"that shorten link text only while the cursor is off the link, " +
-				"which otherwise makes the link visually change when the cursor " +
-				"enters it."
+				"Hide the note path in heading/block links without an alias " +
+				"(e.g. [[Note#Heading]] → \"Heading\"), even with the cursor on " +
+				"the link. Useful for parity with plugins like Short Links."
 			)
 			.addToggle((toggle) =>
 				toggle
 					.setValue(this.plugin.settings.shortenHeadingLinks)
+					.setDisabled(subSettingsDisabled)
 					.onChange(async (value) => {
 						this.plugin.settings.shortenHeadingLinks = value;
 						await this.plugin.saveSettings();
 						this.plugin.applySyntaxHiderSetting();
 					})
 			);
+		shortenHeadingSetting.settingEl.addClass("steady-links-subsetting");
+		shortenHeadingSetting.settingEl.toggleClass("is-disabled", subSettingsDisabled);
+
+		const shortenFileSetting = new Setting(subSettingsContainer)
+			.setName("Shorten file links")
+			.setDesc(
+				"Hide the parent folder path in plain file links without an " +
+				"alias (e.g. [[folder/Note]] → \"Note\"), even with the cursor " +
+				"on the link. Independent of the heading/block setting above."
+			)
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.shortenFileLinks)
+					.setDisabled(subSettingsDisabled)
+					.onChange(async (value) => {
+						this.plugin.settings.shortenFileLinks = value;
+						await this.plugin.saveSettings();
+						this.plugin.applySyntaxHiderSetting();
+					})
+			);
+		shortenFileSetting.settingEl.addClass("steady-links-subsetting");
+		shortenFileSetting.settingEl.toggleClass("is-disabled", subSettingsDisabled);
+
 		new Setting(containerEl)
 			.setName("Show Copy link to current note in tab menu")
-			.setDesc(
-				"When enabled, right-clicking a tab shows a 'Copy link to current note' " +
-				"item that copies a wikilink to that note."
-			)
+			.setDesc("Adds a 'Copy link to current note' item to the tab right-click menu.")
 			.addToggle((toggle) =>
 				toggle
 					.setValue(this.plugin.settings.copyLinkToCurrentNoteInTabMenu)

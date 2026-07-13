@@ -562,16 +562,14 @@ function findWikiLinkSyntaxRanges(
 			// the note path/heading marker unless an alias is present — only
 			// "[[" and "]]" are hidden.
 			//
-			// When options.shortenHeadingLinks is enabled (opt-in setting),
-			// also hide the note path and "#"/"#^" marker so only the heading
-			// text or block ID stays visible — and stays that way even with
-			// the cursor on the link, unlike third-party plugins (e.g. "Short
-			// Links") whose own shortening decoration reveals the note path
-			// as soon as the cursor enters the link.
-			let textStart = lineFrom + innerStart;
-			if (options.shortenHeadingLinks) {
-				textStart = lineFrom + innerStart + wikiLinkVisibleTextOffset(innerContent);
-			}
+			// When shortenHeadingLinks or shortenFileLinks is enabled (opt-in
+			// settings), wikiLinkVisibleTextOffset() also hides the note path
+			// (and "#"/"#^" marker, or parent folder path) so only the
+			// heading text, block ID, or filename stays visible — and stays
+			// that way even with the cursor on the link, unlike third-party
+			// plugins (e.g. "Short Links") whose own shortening decoration
+			// reveals the note path as soon as the cursor enters the link.
+			const textStart = lineFrom + innerStart + wikiLinkVisibleTextOffset(innerContent, options);
 			const textEnd = lineFrom + closeIdx;
 			ranges.push({ from: rangeStart, to: textStart, side: "leading" });
 			ranges.push({ from: textEnd, to: fullEnd, side: "trailing" });
@@ -659,25 +657,27 @@ function findEmptyLinkMarkerPositions(
 }
 
 /**
- * Find the "note path + #"/"#^" marker sub-range for heading/block wikilinks
- * WITHOUT an alias, across the given lines — used only when
- * options.shortenHeadingLinks is enabled.
+ * Find the note-path sub-range for wikilinks WITHOUT an alias, across the
+ * given lines — used when options.shortenHeadingLinks and/or
+ * options.shortenFileLinks is enabled (see wikiLinkVisibleTextOffset() in
+ * utils.ts for exactly what gets hidden for each case).
  *
  * Unlike computeHiddenRanges (which only applies to cursor-touched lines,
  * where Obsidian would otherwise reveal raw link syntax), this scans
- * arbitrary lines because Obsidian NEVER hides the note path/heading marker
- * on its own — off-cursor lines need this decoration applied independently,
- * or the shortened look would only ever appear on whichever line the cursor
+ * arbitrary lines because Obsidian NEVER hides the note path on its own —
+ * off-cursor lines need this decoration applied independently, or the
+ * shortened look would only ever appear on whichever line the cursor
  * happens to occupy.
  *
  * Returns only the note-path sub-range (from just after "[[" to just before
- * the heading/block text), NOT the "[[" / "]]" hiding itself — those are
- * already handled natively by Obsidian off-cursor, and by
+ * the heading/block/filename text), NOT the "[[" / "]]" hiding itself —
+ * those are already handled natively by Obsidian off-cursor, and by
  * computeHiddenRanges() on the cursor's own line.
  */
 function findShortenedWikiLinkRanges(
 	state: EditorState,
-	lineNumbers: Iterable<number>
+	lineNumbers: Iterable<number>,
+	options: WikiLinkHidingOptions
 ): HiddenRange[] {
 	const ranges: HiddenRange[] = [];
 
@@ -698,7 +698,7 @@ function findShortenedWikiLinkRanges(
 			const pipeIdx = innerContent.lastIndexOf("|");
 
 			if (pipeIdx === -1 && innerContent.trim() !== "") {
-				const offset = wikiLinkVisibleTextOffset(innerContent);
+				const offset = wikiLinkVisibleTextOffset(innerContent, options);
 				if (offset > 0) {
 					ranges.push({
 						from: lineFrom + innerStart,
@@ -838,16 +838,17 @@ class HiddenSyntaxReplacePlugin implements PluginValue {
 		}
 		const markerPositions = findEmptyLinkMarkerPositions(state, markerLineNumbers);
 
-		// When shortenHeadingLinks is enabled, the note-path hiding for
-		// heading/block wikilinks without an alias must also apply on lines
-		// the cursor isn't touching — Obsidian never performs that hiding on
-		// its own (unlike "[[" / "]]", which it already hides off-cursor by
-		// default), so without this the shortened look would only ever
-		// appear on whichever line the cursor happens to occupy.
+		// When shortenHeadingLinks or shortenFileLinks is enabled, the
+		// note-path hiding for wikilinks without an alias must also apply on
+		// lines the cursor isn't touching — Obsidian never performs that
+		// hiding on its own (unlike "[[" / "]]", which it already hides
+		// off-cursor by default), so without this the shortened look would
+		// only ever appear on whichever line the cursor happens to occupy.
 		const wikiLinkOptions = state.field(wikiLinkHidingOptionsField, false) ?? {};
-		const shortenedRanges = wikiLinkOptions.shortenHeadingLinks
-			? findShortenedWikiLinkRanges(state, markerLineNumbers)
-			: [];
+		const shortenedRanges =
+			wikiLinkOptions.shortenHeadingLinks || wikiLinkOptions.shortenFileLinks
+				? findShortenedWikiLinkRanges(state, markerLineNumbers, wikiLinkOptions)
+				: [];
 
 		if (ranges.length === 0 && markerPositions.length === 0 && shortenedRanges.length === 0) {
 			return Decoration.none;
