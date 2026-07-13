@@ -245,6 +245,63 @@ describe("findWikiLinkSyntaxRanges", () => {
 		expect(ranges[0]).toEqual({ from: 0, to: 15, side: "leading" }); // "[[Note#Heading|"
 		expect(ranges[1]).toEqual({ from: 20, to: 22, side: "trailing" }); // "]]"
 	});
+
+	// ── Opt-in shortenHeadingLinks option: for parity with third-party
+	// plugins (e.g. "Short Links") that shorten heading/block wikilink
+	// display text but only while the cursor is off the link, causing the
+	// link to visually change when the cursor enters it. Enabling this
+	// option makes Steady Links itself perform (and keep steady) that same
+	// shortening. Default (option omitted/false) behavior is covered above
+	// and must be unaffected.
+
+	describe("with shortenHeadingLinks enabled", () => {
+		it("hides note path and # for [[2023-08-19#Outliner plugin]]", () => {
+			const ranges = findWikiLinkSyntaxRanges(
+				"[[2023-08-19#Outliner plugin]]",
+				0,
+				{ shortenHeadingLinks: true }
+			);
+			expect(ranges).toHaveLength(2);
+			expect(ranges[0]).toEqual({ from: 0, to: 13, side: "leading" }); // "[[2023-08-19#"
+			expect(ranges[1]).toEqual({ from: 28, to: 30, side: "trailing" }); // "]]"
+		});
+
+		it("hides note path and # for a current-note heading reference [[#Heading]]", () => {
+			const ranges = findWikiLinkSyntaxRanges("[[#Heading]]", 0, {
+				shortenHeadingLinks: true,
+			});
+			expect(ranges).toHaveLength(2);
+			expect(ranges[0]).toEqual({ from: 0, to: 3, side: "leading" }); // "[[#"
+			expect(ranges[1]).toEqual({ from: 10, to: 12, side: "trailing" }); // "]]"
+		});
+
+		it("hides note path and #^ for a block reference [[Note#^block-id]]", () => {
+			const ranges = findWikiLinkSyntaxRanges("[[Note#^block-id]]", 0, {
+				shortenHeadingLinks: true,
+			});
+			expect(ranges).toHaveLength(2);
+			expect(ranges[0]).toEqual({ from: 0, to: 8, side: "leading" }); // "[[Note#^"
+			expect(ranges[1]).toEqual({ from: 16, to: 18, side: "trailing" }); // "]]"
+		});
+
+		it("does not affect plain file links with no heading/block reference", () => {
+			const ranges = findWikiLinkSyntaxRanges("[[folder/Note]]", 0, {
+				shortenHeadingLinks: true,
+			});
+			expect(ranges).toHaveLength(2);
+			expect(ranges[0]).toEqual({ from: 0, to: 2, side: "leading" }); // "[["
+			expect(ranges[1]).toEqual({ from: 13, to: 15, side: "trailing" }); // "]]"
+		});
+
+		it("still hides up to the alias pipe when one is present (alias takes precedence)", () => {
+			const ranges = findWikiLinkSyntaxRanges("[[Note#Heading|Alias]]", 0, {
+				shortenHeadingLinks: true,
+			});
+			expect(ranges).toHaveLength(2);
+			expect(ranges[0]).toEqual({ from: 0, to: 15, side: "leading" }); // "[[Note#Heading|"
+			expect(ranges[1]).toEqual({ from: 20, to: 22, side: "trailing" }); // "]]"
+		});
+	});
 });
 
 // ============================================================================

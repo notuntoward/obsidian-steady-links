@@ -22,6 +22,7 @@ import {
 	handleHomeKey,
 	suppressSameLineCursorResetEffect,
 	stripTrailingLinkSyntaxForClipboard,
+	setWikiLinkHidingOptions,
 } from "../src/linkSyntaxHider";
 
 // ============================================================================
@@ -34,7 +35,11 @@ import {
  * The host element is marked as live preview so the mode plugin and the
  * cursor-correction listener run in the same shape they do in production.
  */
-function createTestView(doc: string, cursorPos: number): EditorView {
+function createTestView(
+	doc: string,
+	cursorPos: number,
+	wikiLinkOptions: { shortenHeadingLinks?: boolean } = {}
+): EditorView {
 	const host = document.createElement("div");
 	host.className = "markdown-source-view is-live-preview";
 	document.body.appendChild(host);
@@ -42,7 +47,7 @@ function createTestView(doc: string, cursorPos: number): EditorView {
 	const state = EditorState.create({
 		doc,
 		selection: EditorSelection.cursor(cursorPos),
-		extensions: createLinkSyntaxHiderExtension(),
+		extensions: createLinkSyntaxHiderExtension(wikiLinkOptions),
 	});
 
 	const view = new EditorView({
@@ -145,6 +150,98 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			// off-cursor rendering — so the link looks identical whether the
 			// cursor is on it or not.
 			expect(textContent).toContain("2023-08-19#Outliner plugin");
+		});
+
+		it("with shortenHeadingLinks enabled, hides the note path even with the cursor on the link", () => {
+			view = createTestView("[[2023-08-19#Outliner plugin]]", 0, {
+				shortenHeadingLinks: true,
+			});
+
+			// Move cursor into the link to force a decoration rebuild
+			dispatchSelection(view, 5);
+
+			const textContent = view.dom.textContent ?? "";
+			expect(textContent).not.toContain("[[");
+			expect(textContent).not.toContain("]]");
+			// Opt-in shortening: the note path and "#" stay hidden even with
+			// the cursor on the link, so the link stays visually steady at
+			// its shortened form.
+			expect(textContent).not.toContain("2023-08-19#");
+			expect(textContent).toContain("Outliner plugin");
+		});
+
+		// ── Regression guard: computeHiddenRanges() only computes hidden
+		// ranges for the cursor's own line (Obsidian already hides "[[" and
+		// "]]" natively everywhere else, so no override is needed there).
+		// But shortenHeadingLinks' note-path hiding is something Obsidian
+		// NEVER does on its own, on any line — so it must be applied
+		// viewport-wide (like the empty-link "[]" marker already is),
+		// or the shortened look would only ever appear on whichever line
+		// the cursor happens to occupy, contradicting the setting's whole
+		// purpose of keeping links visually steady everywhere.
+		it("with shortenHeadingLinks enabled, hides the note path on a line the cursor is NOT on", () => {
+			// Note: this synthetic test harness has no simulated Obsidian
+			// native "[[" / "]]" hiding for off-cursor lines (that's real
+			// Obsidian's own built-in live-preview behavior, not something
+			// this bare CM6 EditorView reproduces). So this test only checks
+			// what OUR extension actually controls: the note-path hiding.
+			const doc = "[[2023-08-19#Outliner plugin]]\nsecond line";
+			const cursorPos = doc.indexOf("second") + 3; // cursor on the second line, not the link's line
+			view = createTestView(doc, cursorPos, { shortenHeadingLinks: true });
+
+			const textContent = view.dom.textContent ?? "";
+			expect(textContent).not.toContain("2023-08-19#");
+			expect(textContent).toContain("Outliner plugin");
+		});
+
+		it("with shortenHeadingLinks enabled, shortens every off-cursor link in the viewport, not just one", () => {
+			const doc =
+				"[[2023-08-19#Outliner plugin]]\n[[Note#^block-id]]\n[[folder/File]]\ncursor line";
+			const cursorPos = doc.indexOf("cursor line") + 3; // cursor on the last line, none of the links
+			view = createTestView(doc, cursorPos, { shortenHeadingLinks: true });
+
+			const textContent = view.dom.textContent ?? "";
+			expect(textContent).not.toContain("2023-08-19#");
+			expect(textContent).toContain("Outliner plugin");
+			expect(textContent).not.toContain("Note#^");
+			expect(textContent).toContain("block-id");
+			// Plain file links (no "#") are unaffected by this setting.
+			expect(textContent).toContain("folder/File");
+		});
+
+		// ── Regression guard: dispatching setWikiLinkHidingOptions directly
+		// (what applySyntaxHiderSetting() in main.ts does on every open
+		// editor whenever a wikilink-shortening setting changes) must update
+		// the rendered decorations immediately on an ALREADY-open editor —
+		// without requiring the editor to be torn down and recreated (e.g.
+		// via an Obsidian restart). This is the fix for CodeMirror's
+		// Compartment.reconfigure() preserving a StateField's existing value
+		// across a reconfigure instead of re-running its .init() initializer.
+		it("updates an already-open editor's rendering when shortenHeadingLinks is toggled via effect, without reconfiguring", () => {
+			// Start with the option OFF, exactly like createLinkSyntaxHiderExtension({}) would.
+			view = createTestView("[[2023-08-19#Outliner plugin]]", 0, {
+				shortenHeadingLinks: false,
+			});
+			dispatchSelection(view, 5);
+
+			expect(view.dom.textContent ?? "").toContain("2023-08-19#Outliner plugin");
+
+			// Simulate applySyntaxHiderSetting() dispatching the effect directly
+			// to this already-open editor, WITHOUT recreating the view/state
+			// config (no reconfigure, no new EditorState.create()).
+			view.dispatch({
+				effects: [setWikiLinkHidingOptions.of({ shortenHeadingLinks: true })],
+			});
+
+			const textContent = view.dom.textContent ?? "";
+			expect(textContent).not.toContain("2023-08-19#");
+			expect(textContent).toContain("Outliner plugin");
+
+			// Toggling back off must also take effect immediately.
+			view.dispatch({
+				effects: [setWikiLinkHidingOptions.of({ shortenHeadingLinks: false })],
+			});
+			expect(view.dom.textContent ?? "").toContain("2023-08-19#Outliner plugin");
 		});
 	});
 
@@ -1433,6 +1530,28 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			// wikilinks without an alias (the note path/heading marker stay
 			// visible so the link looks the same on/off cursor).
 			const textStart = doc.indexOf("2023-08-19#Outliner plugin");
+			expect(textStart).toBeGreaterThan(0);
+
+			// Step 1: vertical motion to textFrom
+			const range = EditorSelection.cursor(textStart, 1, undefined, 0);
+			view.dispatch({ selection: EditorSelection.create([range]) });
+
+			// Step 2: Obsidian normalises to leading.from=1
+			view.dispatch({ selection: EditorSelection.cursor(1) });
+
+			// MUST be at textFrom, NOT at leading.from=1
+			expect(view.state.selection.main.head).toBe(textStart);
+		});
+
+		it("with shortenHeadingLinks enabled: suppression redirects to the heading-text textFrom, not leading.from", () => {
+			view = createTestView("\n[[2023-08-19#Outliner plugin]]\nAfter", 0, {
+				shortenHeadingLinks: true,
+			});
+
+			const doc = view.state.doc.toString();
+			// With shortenHeadingLinks on, textFrom is the start of just the
+			// heading text — the note path and "#" are hidden along with "[[".
+			const textStart = doc.indexOf("Outliner plugin");
 			expect(textStart).toBeGreaterThan(0);
 
 			// Step 1: vertical motion to textFrom

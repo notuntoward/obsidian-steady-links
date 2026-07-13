@@ -141,6 +141,7 @@ export function createSettings(overrides: Partial<PluginSettings> = {}): PluginS
   return {
     keepLinksSteady: false,
     copyLinkToCurrentNoteInTabMenu: false,
+    shortenHeadingLinks: false,
     ...overrides,
   };
 }

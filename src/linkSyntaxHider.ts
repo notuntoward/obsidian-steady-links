@@ -31,6 +31,7 @@ import {
 	StateField,
 	Transaction,
 } from "@codemirror/state";
+import { wikiLinkVisibleTextOffset, type WikiLinkHidingOptions } from "./utils";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -248,6 +249,39 @@ const syntaxHiderEnabledField = StateField.define<boolean>({
 	update(value, tr) {
 		for (const effect of tr.effects) {
 			if (effect.is(setSyntaxHiderEnabled)) {
+				value = effect.value;
+			}
+		}
+		return value;
+	},
+});
+
+/**
+ * Effect to update the opt-in wikilink shortening options (see
+ * WikiLinkHidingOptions in utils.ts) for an already-open editor, without
+ * requiring a full extension reconfigure.
+ *
+ * IMPORTANT: this field is initialized via .init() when the extension is
+ * created (createLinkSyntaxHiderExtension), but CodeMirror's
+ * Compartment.reconfigure() (what workspace.updateOptions() triggers)
+ * PRESERVES an existing field's current value across a reconfigure rather
+ * than re-running .init() — .init() only takes effect the first time this
+ * field is introduced into a given editor's state (e.g. right after
+ * "Keep links steady" is switched on, or when the file is freshly opened).
+ * So toggling a value like shortenHeadingLinks while keepLinksSteady stays
+ * on must dispatch this effect directly to every open editor (see
+ * applySyntaxHiderSetting() in main.ts) — updateOptions() alone is not
+ * enough and would otherwise require restarting Obsidian to see the change.
+ */
+const setWikiLinkHidingOptions = StateEffect.define<WikiLinkHidingOptions>();
+
+const wikiLinkHidingOptionsField = StateField.define<WikiLinkHidingOptions>({
+	create() {
+		return {};
+	},
+	update(value, tr) {
+		for (const effect of tr.effects) {
+			if (effect.is(setWikiLinkHidingOptions)) {
 				value = effect.value;
 			}
 		}
@@ -488,7 +522,11 @@ function findMarkdownLinkSyntaxRanges(lineText: string, lineFrom: number): Hidde
 	return ranges;
 }
 
-function findWikiLinkSyntaxRanges(lineText: string, lineFrom: number): HiddenRange[] {
+function findWikiLinkSyntaxRanges(
+	lineText: string,
+	lineFrom: number,
+	options: WikiLinkHidingOptions = {}
+): HiddenRange[] {
 	const ranges: HiddenRange[] = [];
 	let searchIdx = 0;
 
@@ -519,10 +557,21 @@ function findWikiLinkSyntaxRanges(lineText: string, lineFrom: number): HiddenRan
 			ranges.push({ from: textEnd, to: fullEnd, side: "trailing" });
 		} else {
 			// No pipe: the full destination (e.g. "Note#Heading") is the visible
-			// text. This matches Obsidian's own live-preview rendering when the
-			// cursor is off the link, which does NOT strip the note path/heading
-			// marker unless an alias is present — only "[[" and "]]" are hidden.
-			const textStart = lineFrom + innerStart;
+			// text by default. This matches Obsidian's own live-preview
+			// rendering when the cursor is off the link, which does NOT strip
+			// the note path/heading marker unless an alias is present — only
+			// "[[" and "]]" are hidden.
+			//
+			// When options.shortenHeadingLinks is enabled (opt-in setting),
+			// also hide the note path and "#"/"#^" marker so only the heading
+			// text or block ID stays visible — and stays that way even with
+			// the cursor on the link, unlike third-party plugins (e.g. "Short
+			// Links") whose own shortening decoration reveals the note path
+			// as soon as the cursor enters the link.
+			let textStart = lineFrom + innerStart;
+			if (options.shortenHeadingLinks) {
+				textStart = lineFrom + innerStart + wikiLinkVisibleTextOffset(innerContent);
+			}
 			const textEnd = lineFrom + closeIdx;
 			ranges.push({ from: rangeStart, to: textStart, side: "leading" });
 			ranges.push({ from: textEnd, to: fullEnd, side: "trailing" });
@@ -547,12 +596,13 @@ function computeHiddenRanges(state: EditorState): HiddenRange[] {
 	}
 
 	const temporarilyVisible = state.field(temporarilyVisibleLinkField, false);
+	const wikiLinkOptions = state.field(wikiLinkHidingOptionsField, false) ?? {};
 
 	for (const lineNo of seenLines) {
 		const line = state.doc.line(lineNo);
 		const lineRanges = [
 			...findMarkdownLinkSyntaxRanges(line.text, line.from),
-			...findWikiLinkSyntaxRanges(line.text, line.from),
+			...findWikiLinkSyntaxRanges(line.text, line.from, wikiLinkOptions),
 		];
 
 		// Filter out ranges that belong to the temporarily visible link
@@ -587,12 +637,13 @@ function findEmptyLinkMarkerPositions(
 	lineNumbers: Iterable<number>
 ): number[] {
 	const positions: number[] = [];
+	const wikiLinkOptions = state.field(wikiLinkHidingOptionsField, false) ?? {};
 
 	for (const lineNo of lineNumbers) {
 		const line = state.doc.line(lineNo);
 		const lineRanges = [
 			...findMarkdownLinkSyntaxRanges(line.text, line.from),
-			...findWikiLinkSyntaxRanges(line.text, line.from),
+			...findWikiLinkSyntaxRanges(line.text, line.from, wikiLinkOptions),
 		];
 		const spans = buildVisibleLinkSpans(lineRanges, state.doc);
 		for (const span of spans) {
@@ -607,6 +658,63 @@ function findEmptyLinkMarkerPositions(
 	return positions.filter((p, i) => i === 0 || p !== positions[i - 1]);
 }
 
+/**
+ * Find the "note path + #"/"#^" marker sub-range for heading/block wikilinks
+ * WITHOUT an alias, across the given lines — used only when
+ * options.shortenHeadingLinks is enabled.
+ *
+ * Unlike computeHiddenRanges (which only applies to cursor-touched lines,
+ * where Obsidian would otherwise reveal raw link syntax), this scans
+ * arbitrary lines because Obsidian NEVER hides the note path/heading marker
+ * on its own — off-cursor lines need this decoration applied independently,
+ * or the shortened look would only ever appear on whichever line the cursor
+ * happens to occupy.
+ *
+ * Returns only the note-path sub-range (from just after "[[" to just before
+ * the heading/block text), NOT the "[[" / "]]" hiding itself — those are
+ * already handled natively by Obsidian off-cursor, and by
+ * computeHiddenRanges() on the cursor's own line.
+ */
+function findShortenedWikiLinkRanges(
+	state: EditorState,
+	lineNumbers: Iterable<number>
+): HiddenRange[] {
+	const ranges: HiddenRange[] = [];
+
+	for (const lineNo of lineNumbers) {
+		const line = state.doc.line(lineNo);
+		const lineText = line.text;
+		const lineFrom = line.from;
+		let searchIdx = 0;
+
+		while (searchIdx < lineText.length) {
+			const openIdx = lineText.indexOf("[[", searchIdx);
+			if (openIdx === -1) break;
+			const closeIdx = lineText.indexOf("]]", openIdx + 2);
+			if (closeIdx === -1) break;
+
+			const innerStart = openIdx + 2;
+			const innerContent = lineText.substring(innerStart, closeIdx);
+			const pipeIdx = innerContent.lastIndexOf("|");
+
+			if (pipeIdx === -1 && innerContent.trim() !== "") {
+				const offset = wikiLinkVisibleTextOffset(innerContent);
+				if (offset > 0) {
+					ranges.push({
+						from: lineFrom + innerStart,
+						to: lineFrom + innerStart + offset,
+						side: "leading",
+					});
+				}
+			}
+
+			searchIdx = closeIdx + 2;
+		}
+	}
+
+	return ranges;
+}
+
 // ---------------------------------------------------------------------------
 // StateField
 // ---------------------------------------------------------------------------
@@ -616,9 +724,16 @@ const hiddenRangesField = StateField.define<HiddenRange[]>({
 		return computeHiddenRanges(state);
 	},
 	update(prev, tr) {
-		// Recompute if doc changed, selection changed, or temporarily visible link changed
+		// Recompute if doc changed, selection changed, temporarily visible
+		// link changed, or the wikilink-shortening options changed (this
+		// last one is dispatched directly to every open editor when a
+		// setting like shortenHeadingLinks changes — see
+		// applySyntaxHiderSetting() in main.ts — since CodeMirror's
+		// Compartment.reconfigure() does not reset an existing field's
+		// value on its own).
 		const tempVisibleChanged = tr.effects.some((e) => e.is(setTemporarilyVisibleLink));
-		if (tr.docChanged || tr.selection || tempVisibleChanged) {
+		const wikiLinkOptionsChanged = tr.effects.some((e) => e.is(setWikiLinkHidingOptions));
+		if (tr.docChanged || tr.selection || tempVisibleChanged || wikiLinkOptionsChanged) {
 			return computeHiddenRanges(tr.state);
 		}
 		return prev;
@@ -670,15 +785,33 @@ class HiddenSyntaxReplacePlugin implements PluginValue {
 		// - Selection changed
 		// - Viewport changed
 		// - Temporarily visible link field changed
+		// - The syntax hider was just enabled/disabled (SyntaxHiderModePlugin
+		//   dispatches this as a pure effect, with no accompanying doc,
+		//   selection, or viewport change — without this check, decorations
+		//   would silently stay stale (e.g. all-hidden, viewport-wide
+		//   shortening) until the next unrelated selection/doc/viewport
+		//   event happened to fire)
 		const tempVisibleChanged = update.transactions.some((tr) =>
 			tr.effects.some((e) => e.is(setTemporarilyVisibleLink))
+		);
+		const syntaxHiderToggled = update.transactions.some((tr) =>
+			tr.effects.some((e) => e.is(setSyntaxHiderEnabled))
+		);
+		// wikiLinkHidingOptionsField is updated via this effect (dispatched
+		// directly to every open editor when a wikilink-shortening setting
+		// changes — see applySyntaxHiderSetting() in main.ts), so decorations
+		// must also rebuild here.
+		const wikiLinkOptionsChanged = update.transactions.some((tr) =>
+			tr.effects.some((e) => e.is(setWikiLinkHidingOptions))
 		);
 
 		if (
 			update.docChanged ||
 			update.selectionSet ||
 			update.viewportChanged ||
-			tempVisibleChanged
+			tempVisibleChanged ||
+			syntaxHiderToggled ||
+			wikiLinkOptionsChanged
 		) {
 			this.decorations = this.build(update.view);
 		}
@@ -705,7 +838,18 @@ class HiddenSyntaxReplacePlugin implements PluginValue {
 		}
 		const markerPositions = findEmptyLinkMarkerPositions(state, markerLineNumbers);
 
-		if (ranges.length === 0 && markerPositions.length === 0) {
+		// When shortenHeadingLinks is enabled, the note-path hiding for
+		// heading/block wikilinks without an alias must also apply on lines
+		// the cursor isn't touching — Obsidian never performs that hiding on
+		// its own (unlike "[[" / "]]", which it already hides off-cursor by
+		// default), so without this the shortened look would only ever
+		// appear on whichever line the cursor happens to occupy.
+		const wikiLinkOptions = state.field(wikiLinkHidingOptionsField, false) ?? {};
+		const shortenedRanges = wikiLinkOptions.shortenHeadingLinks
+			? findShortenedWikiLinkRanges(state, markerLineNumbers)
+			: [];
+
+		if (ranges.length === 0 && markerPositions.length === 0 && shortenedRanges.length === 0) {
 			return Decoration.none;
 		}
 
@@ -722,6 +866,30 @@ class HiddenSyntaxReplacePlugin implements PluginValue {
 
 		for (const r of ranges) {
 			if (r.from < r.to) {
+				pending.push({ from: r.from, to: r.to, deco: hiddenSyntaxReplace, point: false });
+			}
+		}
+
+		// Merge in the viewport-wide shortened-heading ranges, skipping any
+		// that are already covered by a cursor-line range above (the cursor
+		// line's own range already extends past "#" when shortenHeadingLinks
+		// is on — see findWikiLinkSyntaxRanges — so adding this one too would
+		// create an overlapping duplicate decoration, which CodeMirror's
+		// RangeSetBuilder rejects) and any that belong to a link the user
+		// intentionally expanded via the Expand Link command.
+		const temporarilyVisible = state.field(temporarilyVisibleLinkField, false);
+		for (const r of shortenedRanges) {
+			if (
+				temporarilyVisible &&
+				r.from >= temporarilyVisible.from &&
+				r.to <= temporarilyVisible.to
+			) {
+				continue;
+			}
+			const alreadyCovered = ranges.some(
+				(existing) => existing.from <= r.from && existing.to >= r.to
+			);
+			if (!alreadyCovered) {
 				pending.push({ from: r.from, to: r.to, deco: hiddenSyntaxReplace, point: false });
 			}
 		}
@@ -908,7 +1076,8 @@ function computeHiddenRangesForPositions(
 		lineAt(pos: number): { number: number; from: number; text: string };
 		line(n: number): { from: number; text: string };
 	},
-	sel: EditorSelection
+	sel: EditorSelection,
+	wikiLinkOptions: WikiLinkHidingOptions = {}
 ): HiddenRange[] {
 	const ranges: HiddenRange[] = [];
 	const seenLines = new Set<number>();
@@ -920,7 +1089,7 @@ function computeHiddenRangesForPositions(
 		const line = doc.line(lineNo);
 		ranges.push(
 			...findMarkdownLinkSyntaxRanges(line.text, line.from),
-			...findWikiLinkSyntaxRanges(line.text, line.from)
+			...findWikiLinkSyntaxRanges(line.text, line.from, wikiLinkOptions)
 		);
 	}
 	ranges.sort((a, b) => a.from - b.from || a.to - b.to);
@@ -936,7 +1105,11 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 	const state = update.state;
 	const newSel = state.selection;
 	const oldSel = update.startState.selection;
-	const hidden = computeHiddenRangesForPositions(state.doc, newSel);
+	const hidden = computeHiddenRangesForPositions(
+		state.doc,
+		newSel,
+		state.field(wikiLinkHidingOptionsField, false) ?? {}
+	);
 
 	// Unconditional top-level trace of every selectionSet event while the
 	// syntax hider is enabled. Enable STEADY_LINKS_DEBUG and reproduce in
@@ -3536,7 +3709,7 @@ export function stripTrailingLinkSyntaxForClipboard(text: string, state: EditorS
 	return text;
 }
 
-export function createLinkSyntaxHiderExtension() {
+export function createLinkSyntaxHiderExtension(wikiLinkOptions: WikiLinkHidingOptions = {}) {
 	// CM6 applies transactionFilters in REVERSE registration order
 	// (last registered runs first). Desired execution order:
 	//   1. deleteAtLinkEndFix   — single-char backspace/del at right edge
@@ -3547,6 +3720,7 @@ export function createLinkSyntaxHiderExtension() {
 	// To achieve this, list them in REVERSE order in the array:
 	return [
 		syntaxHiderEnabledField,
+		wikiLinkHidingOptionsField.init(() => wikiLinkOptions),
 		suppressNextBoundaryInputField,
 		arrivedAtTextFromFromOutsideField,
 		syntaxHiderModePlugin,
@@ -3600,7 +3774,9 @@ export {
 	buildVisibleLinkSpans,
 	isEmptyLinkText,
 	findEmptyLinkMarkerPositions,
+	findShortenedWikiLinkRanges,
 	suppressSameLineCursorResetEffect,
 	setPendingExternalSelectionExpansion,
+	setWikiLinkHidingOptions,
 };
 export type { HiddenRange, LinkRange, VisibleLinkSpan };

@@ -1,6 +1,7 @@
 {
   "keepLinksSteady": true,
   "copyLinkToCurrentNoteInTabMenu": true,
+  "shortenHeadingLinks": false,
   "alwaysMoveToEnd": false,
   "preventLinkExpansion": true
 }

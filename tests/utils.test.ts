@@ -1756,6 +1756,66 @@ describe('computeDisplayedTextRange', () => {
 		});
 	});
 
+	// ── Opt-in shortenHeadingLinks option: mirrors findWikiLinkSyntaxRanges()
+	// in linkSyntaxHider.ts so the "Skip Link" command lands on the same
+	// visible-text boundary the editor keeps steady when the option is on.
+	describe('shortenHeadingLinks option', () => {
+		it('defaults to the full destination when the option is omitted', () => {
+			const line = '[[2023-08-19#Outliner plugin]]';
+			const result = computeDisplayedTextRange(line, 5);
+			expect(result).toEqual({
+				linkStart: 0,
+				linkEnd: 30,
+				displayedTextStart: 2,
+				displayedTextEnd: 28
+			});
+		});
+
+		it('shortens to just the heading text when enabled', () => {
+			const line = '[[2023-08-19#Outliner plugin]]';
+			const result = computeDisplayedTextRange(line, 5, { shortenHeadingLinks: true });
+			expect(result).toEqual({
+				linkStart: 0,
+				linkEnd: 30,
+				displayedTextStart: 13, // start of "Outliner plugin"
+				displayedTextEnd: 28
+			});
+		});
+
+		it('shortens to just the block ID when enabled', () => {
+			const line = '[[Note#^block-id]]';
+			const result = computeDisplayedTextRange(line, 5, { shortenHeadingLinks: true });
+			expect(result).toEqual({
+				linkStart: 0,
+				linkEnd: 18,
+				displayedTextStart: 8, // start of "block-id"
+				displayedTextEnd: 16
+			});
+		});
+
+		it('does not affect plain file links with no heading/block reference', () => {
+			const line = '[[folder/Note]]';
+			const result = computeDisplayedTextRange(line, 5, { shortenHeadingLinks: true });
+			expect(result).toEqual({
+				linkStart: 0,
+				linkEnd: 15,
+				displayedTextStart: 2,
+				displayedTextEnd: 13
+			});
+		});
+
+		it('still uses the alias text when one is present (alias takes precedence)', () => {
+			const line = '[[Note#Heading|Alias]]';
+			const result = computeDisplayedTextRange(line, 17, { shortenHeadingLinks: true });
+			expect(result).toEqual({
+				linkStart: 0,
+				linkEnd: 22,
+				displayedTextStart: 15, // start of "Alias"
+				displayedTextEnd: 20
+			});
+		});
+	});
+
 	describe('no link at cursor', () => {
 		it('should return null when cursor is not in a link', () => {
 			const line = 'No links here';

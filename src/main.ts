@@ -27,12 +27,14 @@ import {
 	setTemporarilyVisibleLink,
 	temporarilyVisibleLinkField,
 	stripTrailingLinkSyntaxForClipboard,
+	setWikiLinkHidingOptions,
 } from "./linkSyntaxHider";
 import { EditorView } from "@codemirror/view";
 
 const DEFAULT_SETTINGS: PluginSettings = {
 	keepLinksSteady: false,
 	copyLinkToCurrentNoteInTabMenu: false,
+	shortenHeadingLinks: false,
 };
 
 export default class SteadyLinksPlugin extends Plugin {
@@ -229,7 +231,9 @@ export default class SteadyLinksPlugin extends Plugin {
 				const line = editor.getLine(cursor.line);
 
 				// Compute the displayed text range for the link at cursor
-				const displayedRange = computeDisplayedTextRange(line, cursor.ch);
+				const displayedRange = computeDisplayedTextRange(line, cursor.ch, {
+					shortenHeadingLinks: this.settings.shortenHeadingLinks,
+				});
 
 				if (!displayedRange) {
 					// Cursor is not in or on the edge of a link - do nothing
@@ -546,10 +550,29 @@ export default class SteadyLinksPlugin extends Plugin {
 	 */
 	applySyntaxHiderSetting() {
 		this.syntaxHiderExtensions.length = 0;
+		const wikiLinkOptions = { shortenHeadingLinks: this.settings.shortenHeadingLinks };
 		if (this.settings.keepLinksSteady) {
-			this.syntaxHiderExtensions.push(...createLinkSyntaxHiderExtension());
+			this.syntaxHiderExtensions.push(...createLinkSyntaxHiderExtension(wikiLinkOptions));
 		}
 		this.app.workspace.updateOptions();
+
+		// Broadcast the current wikilink-shortening options directly to every
+		// already-open editor. workspace.updateOptions() alone is not enough
+		// here: CodeMirror's Compartment.reconfigure() (what updateOptions()
+		// triggers) preserves an existing StateField's current value across a
+		// reconfigure rather than re-running its .init() initializer with the
+		// new value — .init() only takes effect the first time the field is
+		// introduced into a given editor's state. So toggling a setting like
+		// "Shorten heading and block links" while "Keep links steady" stays
+		// enabled throughout would otherwise have no visible effect until
+		// Obsidian is restarted.
+		if (this.settings.keepLinksSteady) {
+			this.app.workspace.iterateAllLeaves((leaf) => {
+				if (!(leaf.view instanceof MarkdownView)) return;
+				const cm6View = (leaf.view.editor as any).cm as EditorView | undefined;
+				cm6View?.dispatch({ effects: [setWikiLinkHidingOptions.of(wikiLinkOptions)] });
+			});
+		}
 	}
 
 	/**

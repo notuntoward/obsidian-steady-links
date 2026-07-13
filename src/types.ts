@@ -48,4 +48,16 @@ export interface PluginSettings {
 	 * right-click menu.
 	 */
 	copyLinkToCurrentNoteInTabMenu: boolean;
+	/**
+	 * When enabled (and keepLinksSteady is also enabled), heading and block
+	 * references without an alias (e.g. [[Note#Heading]], [[Note#^block-id]])
+	 * hide the note path and "#"/"#^" marker, showing only the heading text
+	 * or block ID — and keep showing only that, even with the cursor on the
+	 * link. Off by default because stock Obsidian does not shorten these
+	 * links itself. Useful for parity with third-party plugins (e.g. "Short
+	 * Links") that shorten link display text only while the cursor is off
+	 * the link, which otherwise makes the link visually change when the
+	 * cursor enters it.
+	 */
+	shortenHeadingLinks: boolean;
 }

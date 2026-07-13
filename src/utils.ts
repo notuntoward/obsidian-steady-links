@@ -723,6 +723,50 @@ export function detectLinkAtCursor(line: string, cursorCh: number): LinkAtCursor
 }
 
 /**
+ * Opt-in options controlling how much of a wikilink's inner content is
+ * treated as "syntax" (hidden) vs. "displayed text" (visible) when there is
+ * no alias pipe.
+ *
+ * These are OFF by default because stock Obsidian does NOT shorten a
+ * no-alias wikilink's displayed text — `[[Note#Heading]]` renders as
+ * "Note#Heading", not "Heading", when the cursor is off it. Enabling an
+ * option here makes Steady Links itself perform that shortening (and keep
+ * it steady across cursor movement), which is primarily useful for parity
+ * with third-party plugins (e.g. "Short Links") that shorten link display
+ * text but only do so while the cursor is *off* the link — causing the link
+ * to visually change when the cursor enters it, exactly the inconsistency
+ * Steady Links exists to prevent.
+ */
+export interface WikiLinkHidingOptions {
+	/**
+	 * Hide the note path and "#"/"#^" marker for heading and block
+	 * references without an alias, e.g. `[[Note#Heading]]` -> "Heading" and
+	 * `[[Note#^block-id]]` -> "block-id".
+	 */
+	shortenHeadingLinks?: boolean;
+}
+
+/**
+ * Given the inner content of a wikilink with no alias pipe (e.g. `dest` in
+ * `[[dest]]`), compute the offset (relative to the start of that content)
+ * where the shortened display text begins: past the note path and the
+ * "#" (or "#^") marker for heading/block references. Returns 0 when there
+ * is no "#" (a plain file link, or already just a heading with no note
+ * path prefix).
+ *
+ * Shared by findWikiLinkSyntaxRanges() (linkSyntaxHider.ts) and
+ * computeDisplayedTextRange() below so the editor's visual hiding and the
+ * skip-link command's boundary never drift out of sync when
+ * shortenHeadingLinks is enabled.
+ */
+export function wikiLinkVisibleTextOffset(innerContent: string): number {
+	const hashIdx = innerContent.indexOf('#');
+	if (hashIdx === -1) return 0;
+	const afterHash = innerContent.substring(hashIdx + 1);
+	return hashIdx + 1 + (afterHash.startsWith('^') ? 1 : 0);
+}
+
+/**
  * Result of computing displayed text range for a link.
  * The displayed text is what the user sees in live preview (without syntax).
  */
@@ -751,9 +795,15 @@ export interface DisplayedTextRange {
  *
  * @param line The line text
  * @param cursorCh The cursor position
+ * @param options Opt-in wikilink shortening options (see WikiLinkHidingOptions).
+ *   Defaults to stock-Obsidian-matching behavior (no shortening).
  * @returns The displayed text range, or null if no link at cursor
  */
-export function computeDisplayedTextRange(line: string, cursorCh: number): DisplayedTextRange | null {
+export function computeDisplayedTextRange(
+	line: string,
+	cursorCh: number,
+	options: WikiLinkHidingOptions = {}
+): DisplayedTextRange | null {
 	// Try Markdown link first
 	const mdLink = detectMarkdownLinkAtCursor(line, cursorCh);
 	if (mdLink) {
@@ -796,8 +846,14 @@ export function computeDisplayedTextRange(line: string, cursorCh: number): Displ
 		let displayedTextEnd: number;
 		
 		if (lastPipeIndex === -1) {
-			// No pipe: [[dest]] - displayed text is the destination
-			displayedTextStart = innerStart;
+			// No pipe: [[dest]] - displayed text is the destination by
+			// default, matching stock Obsidian. When shortenHeadingLinks is
+			// enabled, skip past the note path and "#"/"#^" marker so this
+			// matches the shortened text findWikiLinkSyntaxRanges keeps
+			// visible in the editor.
+			displayedTextStart = options.shortenHeadingLinks
+				? innerStart + wikiLinkVisibleTextOffset(innerContent)
+				: innerStart;
 			displayedTextEnd = wikiLink.end - 2;
 		} else {
 			// Has pipe: [[dest|text]] - displayed text is after the pipe
