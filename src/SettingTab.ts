@@ -49,7 +49,7 @@ export class SteadyLinksSettingTab extends PluginSettingTab {
 			.setDesc(
 				"Hide the note path in heading/block links without an alias " +
 				"(e.g. [[Note#Heading]] → \"Heading\"), even with the cursor on " +
-				"the link. Useful for parity with plugins like Short Links."
+				"the link."
 			)
 			.addToggle((toggle) =>
 				toggle

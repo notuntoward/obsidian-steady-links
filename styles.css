@@ -34,38 +34,46 @@ body.le-keep-links-steady .cm-cursor {
 	min-height: 1em !important;
 }
 
-/* ── Settings tab: grouped layout for "Keep links steady" settings ───
- *
- * The master "Keep links steady" toggle and its dependent sub-settings are
- * wrapped in a rounded group. The sub-settings live in a smaller, nested box
- * so the dependency is obvious: they are indented, dimmed, and disabled when
- * the master toggle is off. */
+/* ── Settings tab: grouped layout for "Keep links steady" settings ─── */
+
+/* The outer framing group for the entire feature block */
 .steady-links-steady-group {
 	border: 1px solid var(--background-modifier-border);
 	border-radius: var(--radius-m, 8px);
-	padding: 0.75em;
+	padding: 0.75em 1em;
 	margin-bottom: 1em;
 	background-color: var(--background-primary);
 }
 
+/* Sub-settings container: converted from a box to an indented tree branch */
 .steady-links-subsettings {
-	border: 1px solid var(--background-modifier-border);
-	border-radius: var(--radius-m, 6px);
-	padding: 0.5em;
-	margin-top: 0.5em;
-	background-color: var(--background-secondary, var(--background-primary));
+	border: none;
+	background-color: transparent;
+	margin-top: 0.25em;
+	margin-left: 1.5em;
+	border-left: 2px solid var(--background-modifier-border);
+	padding-left: 1.25em;
+	transition: opacity 0.15s ease, border-color 0.15s ease;
 }
 
+/* Dimmed, inactive state when master toggle is OFF */
 .steady-links-subsettings.is-disabled {
-	opacity: 0.5;
+	opacity: 0.4;
+	border-left-color: color-mix(in srgb, var(--background-modifier-border) 40%, transparent);
+	pointer-events: none;
 }
 
-.steady-links-subsetting {
-	padding-left: 0.5em;
+/* Clean up individual setting rows inside the sub-container.
+ * Specificity naturally overrides Obsidian's native top-borders without !important. */
+.steady-links-subsettings .steady-links-subsetting.setting-item {
+	border-top: none;
+	padding: 0.5em 0;
 }
 
-.steady-links-subsetting.is-disabled {
-	opacity: 0.5;
+/* Mute descriptions slightly more in sub-settings to push hierarchy further */
+.steady-links-subsetting .setting-item-description {
+	font-size: calc(var(--font-ui-small) * 0.95);
+	opacity: 0.85;
 }
 
 /* ── Edit Link Modal ──────────────────────────────────────────────── */
