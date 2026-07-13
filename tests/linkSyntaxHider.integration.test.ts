@@ -131,6 +131,21 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			expect(anchor.style.pointerEvents).toBe("auto");
 			expect(anchor.style.verticalAlign).toBe("-0.2em");
 		});
+
+		it("replaces raw [[ and ]] syntax with hidden anchors when cursor is on a spaced-heading wikilink", () => {
+			view = createTestView("[[2023-08-19#Outliner plugin]]", 0);
+
+			// Move cursor into the link to force a decoration rebuild
+			dispatchSelection(view, 5);
+
+			const textContent = view.dom.textContent ?? "";
+			expect(textContent).not.toContain("[[");
+			expect(textContent).not.toContain("]]");
+			// The full destination stays visible — matching stock Obsidian's
+			// off-cursor rendering — so the link looks identical whether the
+			// cursor is on it or not.
+			expect(textContent).toContain("2023-08-19#Outliner plugin");
+		});
 	});
 
 	describe("wikilink at end of line: see [[target]]", () => {
@@ -1407,6 +1422,28 @@ describe("Integration: cursor correction with real CM6 state", () => {
 
 			// MUST be at textFrom=2, NOT leading.from=1
 			expect(view.state.selection.main.head).toBe(2);
+		});
+
+		it("wikilink with spaced heading and no alias: suppression redirects to textFrom, not leading.from", () => {
+			view = createTestView("\n[[2023-08-19#Outliner plugin]]\nAfter", 0);
+
+			const doc = view.state.doc.toString();
+			// textFrom is the start of the full visible destination — only "[["
+			// is hidden, matching Obsidian's normal display for headed
+			// wikilinks without an alias (the note path/heading marker stay
+			// visible so the link looks the same on/off cursor).
+			const textStart = doc.indexOf("2023-08-19#Outliner plugin");
+			expect(textStart).toBeGreaterThan(0);
+
+			// Step 1: vertical motion to textFrom
+			const range = EditorSelection.cursor(textStart, 1, undefined, 0);
+			view.dispatch({ selection: EditorSelection.create([range]) });
+
+			// Step 2: Obsidian normalises to leading.from=1
+			view.dispatch({ selection: EditorSelection.cursor(1) });
+
+			// MUST be at textFrom, NOT at leading.from=1
+			expect(view.state.selection.main.head).toBe(textStart);
 		});
 	});
 

@@ -211,6 +211,40 @@ describe("findWikiLinkSyntaxRanges", () => {
 		const ranges = findWikiLinkSyntaxRanges("[[folder/file#Heading]]", 0);
 		expect(ranges).toHaveLength(2);
 	});
+
+	// ── Regression guard: a heading reference with a space and no alias must
+	// display the SAME text regardless of cursor position — matching stock
+	// Obsidian's off-cursor rendering, which shows the full inner content
+	// ("2023-08-19#Outliner plugin"), NOT just the heading. Only "[[" and
+	// "]]" are hidden; the note path and "#" marker must remain visible so
+	// the link never looks different with the cursor on vs. off it.
+	it("hides only [[ and ]] for [[2023-08-19#Outliner plugin]] (heading with spaces, no alias)", () => {
+		const ranges = findWikiLinkSyntaxRanges("[[2023-08-19#Outliner plugin]]", 0);
+		expect(ranges).toHaveLength(2);
+		expect(ranges[0]).toEqual({ from: 0, to: 2, side: "leading" }); // "[["
+		expect(ranges[1]).toEqual({ from: 28, to: 30, side: "trailing" }); // "]]"
+	});
+
+	it("hides only [[ and ]] for a current-note heading reference [[#Heading]]", () => {
+		const ranges = findWikiLinkSyntaxRanges("[[#Heading]]", 0);
+		expect(ranges).toHaveLength(2);
+		expect(ranges[0]).toEqual({ from: 0, to: 2, side: "leading" }); // "[["
+		expect(ranges[1]).toEqual({ from: 10, to: 12, side: "trailing" }); // "]]"
+	});
+
+	it("hides only [[ and ]] for a block reference [[Note#^block-id]]", () => {
+		const ranges = findWikiLinkSyntaxRanges("[[Note#^block-id]]", 0);
+		expect(ranges).toHaveLength(2);
+		expect(ranges[0]).toEqual({ from: 0, to: 2, side: "leading" }); // "[["
+		expect(ranges[1]).toEqual({ from: 16, to: 18, side: "trailing" }); // "]]"
+	});
+
+	it("still hides up to the alias pipe when one is present", () => {
+		const ranges = findWikiLinkSyntaxRanges("[[Note#Heading|Alias]]", 0);
+		expect(ranges).toHaveLength(2);
+		expect(ranges[0]).toEqual({ from: 0, to: 15, side: "leading" }); // "[[Note#Heading|"
+		expect(ranges[1]).toEqual({ from: 20, to: 22, side: "trailing" }); // "]]"
+	});
 });
 
 // ============================================================================

@@ -518,6 +518,10 @@ function findWikiLinkSyntaxRanges(lineText: string, lineFrom: number): HiddenRan
 			ranges.push({ from: rangeStart, to: textStart, side: "leading" });
 			ranges.push({ from: textEnd, to: fullEnd, side: "trailing" });
 		} else {
+			// No pipe: the full destination (e.g. "Note#Heading") is the visible
+			// text. This matches Obsidian's own live-preview rendering when the
+			// cursor is off the link, which does NOT strip the note path/heading
+			// marker unless an alias is present — only "[[" and "]]" are hidden.
 			const textStart = lineFrom + innerStart;
 			const textEnd = lineFrom + closeIdx;
 			ranges.push({ from: rangeStart, to: textStart, side: "leading" });
