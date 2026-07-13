@@ -2996,6 +2996,14 @@ function rewriteDeleteChangeForLinks(change: ChangeSpec, links: LinkSpan[]): Cha
 				to: selectedDisplayTo,
 				insert: "",
 			});
+		} else if (change.from < link.to && change.to > link.from) {
+			// Selection overlaps the link but not its visible text — it must be
+			// entirely inside the hidden leading or trailing syntax. Deleting
+			// just the hidden syntax would corrupt the link, so delete the
+			// whole link instead. This prevents the Delete key from appearing
+			// to do nothing when the user's selection lands inside a hidden
+			// range (e.g. selecting the leading "[[...|" of a wikilink).
+			rewritten.push({ from: link.from, to: link.to, insert: "" });
 		}
 
 		cursor = Math.max(cursor, link.to);
@@ -3098,6 +3106,7 @@ const deleteSelectionKeymap = keymap.of([
 				changes: rewritten,
 				selection: EditorSelection.cursor(rewritten[0].from),
 				scrollIntoView: true,
+				effects: [rewrittenSelectionDelete.of(null)],
 			});
 			return true;
 		},
@@ -3137,6 +3146,7 @@ const deleteSelectionKeymap = keymap.of([
 				changes: rewritten,
 				selection: EditorSelection.cursor(rewritten[0].from),
 				scrollIntoView: true,
+				effects: [rewrittenSelectionDelete.of(null)],
 			});
 			return true;
 		},

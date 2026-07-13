@@ -1886,6 +1886,40 @@ describe("Integration: cursor correction with real CM6 state", () => {
 
 			expect(view.state.doc.toString()).toBe("");
 		});
+
+		it("delete key on a numbered list selection spanning a wikilink deletes the link", () => {
+			view = createTestView("11. [[target|alias]]", 3);
+
+			// Select from after "11. " to the end of the line
+			view.dispatch({
+				selection: EditorSelection.range(3, 20),
+			});
+			expect(view.state.selection.main.from).toBe(3);
+			expect(view.state.selection.main.to).toBe(20);
+
+			// Simulate the actual Delete keypress.
+			view.contentDOM.dispatchEvent(
+				new KeyboardEvent("keydown", { key: "Delete", bubbles: true })
+			);
+
+			expect(view.state.doc.toString()).toBe("11.");
+		});
+
+		it("delete key on a selection inside hidden link syntax deletes the whole link", () => {
+			view = createTestView("11. [[target|alias]]", 4);
+
+			// Select the hidden leading syntax only ([[target|)
+			// link.from=4, textFrom=13, textTo=18, link.to=20
+			view.dispatch({
+				selection: EditorSelection.range(4, 13),
+			});
+
+			view.contentDOM.dispatchEvent(
+				new KeyboardEvent("keydown", { key: "Delete", bubbles: true })
+			);
+
+			expect(view.state.doc.toString()).toBe("11. ");
+		});
 	});
 });
 
