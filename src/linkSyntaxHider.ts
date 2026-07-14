@@ -1560,39 +1560,77 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 			// For Emacs Ctrl+A, the cursor often starts at span.to (the
 			// position right after the trailing ]] on a wikilink-only line).
 			// That IS outside the link, so we need >= for that case.
+			// We also need to allow the cursor to come from column 0 or from
+			// the leading.from position (after list markers), which are both
+			// before the link's visible text.
 			// For all other navigation (arrow keys, etc.) we keep strict >
 			// to avoid interfering with vertical motion that already has
 			// its own correction logic (goalColumn, arrivedFromOutside).
 			const lineStartSpanOutsideCheck = isEmacsMoveToBeginning
-				? (oldH: number, spanTo: number) => oldH >= spanTo
-				: (oldH: number, spanTo: number) => oldH > spanTo;
+				? (oldH: number, spanTo: number, spanTextFrom: number) => oldH >= spanTo || oldH < spanTextFrom
+				: (oldH: number, spanTo: number, spanTextFrom: number) => oldH > spanTo;
+
+			// Helper: check if a position is the "home" position of a line
+			// (first non-space character after any structural markers like
+			// list bullets, numbers, checkboxes, headings, blockquotes).
+			const isHomePosition = (pos: number): boolean => {
+				const line = state.doc.lineAt(pos);
+				const lineText = line.text;
+				const match = lineText.match(/^(\s*(?:(?:(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?)|(?:#+|>+)\s+)*)/);
+				const homeCol = match ? match[0].length : 0;
+				return pos === line.from + homeCol;
+			};
+
 			const lineStartSpan = linkSpans.find(
-				(span) =>
-					span.leading.from === state.doc.lineAt(span.leading.from).from &&
-					lineStartSpanOutsideCheck(oldHead, span.to) &&
-					(head === span.leading.from || head === span.textFrom)
+				(span) => {
+					// Original check: link starts at column 0
+					const isLineStart = span.leading.from === state.doc.lineAt(span.leading.from).from;
+					// New check: link starts at the "home" position (after list markers, etc.)
+					const isHomePos = isHomePosition(span.leading.from);
+					const matchesPosition = isLineStart || isHomePos;
+					
+					return matchesPosition &&
+						lineStartSpanOutsideCheck(oldHead, span.to, span.textFrom) &&
+						(head === span.leading.from || head === span.textFrom);
+				}
 			);
+
 			if (lineStartSpan) {
+				const isLineStart = lineStartSpan.leading.from === state.doc.lineAt(lineStartSpan.leading.from).from;
+				const isHomePos = isHomePosition(lineStartSpan.leading.from);
+				
 				if (
 					head === lineStartSpan.leading.from &&
 					(intentionalLeadingFromNow === head || isEmacsMoveToBeginning)
 				) {
-					// Intentional Home / Emacs Ctrl+A placement at leading.from —
-					// do not snap.  Keep cursor at ch:0 so editor.getCursor()
-					// returns ch:0 for kill-line / kill-region.
-					// Mark arrivedFromOutside so Obsidian normalisation is suppressed.
-					(update.view as any).__leArrivedFromOutside = lineStartSpan.leading.from;
-					// For Emacs Ctrl+A, we also need to set the
-					// intentionalLeadingFrom effect so subsequent operations
-					// (kill-line, Enter) know the cursor is intentionally here.
-					if (isEmacsMoveToBeginning) {
-						needsAdjust = true; // trigger dispatch to attach effects
-						(update.view as any).__leEmacsIntentionalLeadingFrom =
-							lineStartSpan.leading.from;
-						(update.view as any).__leEmacsPendingExpansion = {
-							from: lineStartSpan.from,
-							to: lineStartSpan.to,
-						};
+					// For links at column 0 (isLineStart), keep cursor at leading.from
+					// so editor.getCursor() returns ch:0 for kill-line / kill-region.
+					// For links after list markers (isHomePos but not isLineStart),
+					// leading.from is NOT column 0, so we should NOT keep the cursor there.
+					// Instead, let it stay at leading.from but don't set intentionalLeadingFrom.
+					if (isLineStart) {
+						// Intentional Home / Emacs Ctrl+A placement at leading.from —
+						// do not snap.  Keep cursor at ch:0 so editor.getCursor()
+						// returns ch:0 for kill-line / kill-region.
+						// Mark arrivedFromOutside so Obsidian normalisation is suppressed.
+						(update.view as any).__leArrivedFromOutside = lineStartSpan.leading.from;
+						// For Emacs Ctrl+A, we also need to set the
+						// intentionalLeadingFrom effect so subsequent operations
+						// (kill-line, Enter) know the cursor is intentionally here.
+						if (isEmacsMoveToBeginning) {
+							needsAdjust = true; // trigger dispatch to attach effects
+							(update.view as any).__leEmacsIntentionalLeadingFrom =
+								lineStartSpan.leading.from;
+							(update.view as any).__leEmacsPendingExpansion = {
+								from: lineStartSpan.from,
+								to: lineStartSpan.to,
+							};
+						}
+					} else if (isHomePos && isEmacsMoveToBeginning) {
+						// Link after list marker: leading.from is NOT column 0.
+						// Don't keep cursor at leading.from. Let it go to column 0.
+						// Just mark arrivedFromOutside to suppress Obsidian normalization.
+						(update.view as any).__leArrivedFromOutside = lineStartSpan.leading.from;
 					}
 				} else if (head === lineStartSpan.leading.from) {
 					// Case A: snap to visible text start
