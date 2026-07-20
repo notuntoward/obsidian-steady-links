@@ -2442,6 +2442,46 @@ describe("Integration: DOM copy event focus handling", () => {
 		// The cursor corrector should redirect the cursor to column 0
 		expect(view.state.selection.main.head).toBe(0);
 	});
+
+	it("selection delete starting outside a link and ending at textFrom deletes only the outside text", () => {
+		const doc = "- [ ]  [[Note-01]]";
+		// Link starts at index 7. textFrom is at index 9.
+		// Select from index 6 (the second space) to index 9 (textFrom).
+		view = createTestView(doc, 6);
+
+		view.dispatch({
+			changes: { from: 6, to: 9, insert: "" },
+			selection: EditorSelection.cursor(6),
+		});
+
+		// Only the character at index 6 (the space) should be deleted.
+		// The link itself should be untouched.
+		expect(view.state.doc.toString()).toBe("- [ ] [[Note-01]]");
+		expect(view.state.selection.main.head).toBe(8);
+	});
+
+	it("selection delete of a space next to a link does not jump the cursor to the middle of the link", () => {
+		const doc = "- [ ] [[Note-01]]";
+		// Link starts at index 6. textFrom is at index 8.
+		// Start cursor at the space (index 5)
+		view = createTestView(doc, 5);
+
+		// Emulate Emacs deleteOneChar:
+		// 1. Move cursor right to index 8 (snapped from 6 to 8)
+		view.dispatch({
+			selection: EditorSelection.cursor(8),
+			userEvent: "select",
+		});
+		// 2. replaceSelection("") deletes 5 to 8 (rewritten to 5 to 6)
+		view.dispatch({
+			changes: { from: 5, to: 8, insert: "" },
+			selection: EditorSelection.cursor(5),
+		});
+
+		// The space should be deleted, and the cursor should land at index 4 (right after ']')
+		expect(view.state.doc.toString()).toBe("- [ ][[Note-01]]");
+		expect(view.state.selection.main.head).toBe(4);
+	});
 });
 
 

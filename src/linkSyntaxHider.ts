@@ -1678,7 +1678,7 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 			}
 		}
 
-		if (!isPointer) {
+		if (!isPointer && !update.docChanged) {
 			const boundarySpan = findVisibleLinkSpanAtBoundary(linkSpans, head);
 			if (boundarySpan && head === boundarySpan.leading.from) {
 				const lineStartsWithLink = boundarySpan.leading.from === boundarySpan.lineFrom;
@@ -3058,7 +3058,12 @@ function rewriteDeleteChangeForLinks(change: ChangeSpec, links: LinkSpan[]): Cha
 				to: selectedDisplayTo,
 				insert: "",
 			});
-		} else if (change.from < link.to && change.to > link.from) {
+		} else if (
+			change.from < link.to &&
+			change.to > link.from &&
+			change.from >= link.from &&
+			change.to <= link.to
+		) {
 			// Selection overlaps the link but not its visible text — it must be
 			// entirely inside the hidden leading or trailing syntax. Deleting
 			// just the hidden syntax would corrupt the link, so delete the
