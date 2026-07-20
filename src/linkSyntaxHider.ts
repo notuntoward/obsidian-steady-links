@@ -1572,7 +1572,7 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 			// to avoid interfering with vertical motion that already has
 			// its own correction logic (goalColumn, arrivedFromOutside).
 			const lineStartSpanOutsideCheck = isEmacsMoveToBeginning
-				? (oldH: number, spanTo: number, spanTextFrom: number) => oldH >= spanTo || oldH < spanTextFrom
+				? (oldH: number, spanTo: number, spanTextFrom: number) => oldH >= spanTo || oldH <= spanTextFrom
 				: (oldH: number, spanTo: number, spanTextFrom: number) => oldH > spanTo;
 
 			// Helper: check if a position is the "home" position of a line
@@ -1633,9 +1633,18 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 						}
 					} else if (isHomePos && isEmacsMoveToBeginning) {
 						// Link after list marker: leading.from is NOT column 0.
-						// Don't keep cursor at leading.from. Let it go to column 0.
-						// Just mark arrivedFromOutside to suppress Obsidian normalization.
-						(update.view as any).__leArrivedFromOutside = lineStartSpan.leading.from;
+						// If we are arriving from textFrom (meaning this is the second press),
+						// redirect to the line start (column 0).
+						// Otherwise, snap to textFrom (just like standard Home) to keep it collapsed.
+						if (oldHead === lineStartSpan.textFrom) {
+							head = state.doc.lineAt(head).from;
+							needsAdjust = true;
+							(update.view as any).__leArrivedFromOutside = lineStartSpan.leading.from;
+						} else {
+							head = lineStartSpan.textFrom;
+							needsAdjust = true;
+							(update.view as any).__leArrivedFromOutside = lineStartSpan.leading.from;
+						}
 					}
 				} else if (head === lineStartSpan.leading.from) {
 					// Case A: snap to visible text start
@@ -1643,18 +1652,24 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 					needsAdjust = true;
 					(update.view as any).__leArrivedFromOutside = lineStartSpan.leading.from;
 				} else if (isEmacsMoveToBeginning && head === lineStartSpan.textFrom) {
-					// Emacs Ctrl+A landed at textFrom (CM6 may skip the
-					// zero-width widget).  Redirect to leading.from so
-					// editor.getCursor() returns ch:0 for kill-line.
-					head = lineStartSpan.leading.from;
-					needsAdjust = true;
-					(update.view as any).__leArrivedFromOutside = lineStartSpan.leading.from;
-					(update.view as any).__leEmacsIntentionalLeadingFrom =
-						lineStartSpan.leading.from;
-					(update.view as any).__leEmacsPendingExpansion = {
-						from: lineStartSpan.from,
-						to: lineStartSpan.to,
-					};
+					// Emacs Ctrl+A landed at textFrom.
+					// If the link starts at column 0 (isLineStart), redirect to leading.from
+					// so editor.getCursor() returns ch:0 for kill-line.
+					if (isLineStart) {
+						head = lineStartSpan.leading.from;
+						needsAdjust = true;
+						(update.view as any).__leArrivedFromOutside = lineStartSpan.leading.from;
+						(update.view as any).__leEmacsIntentionalLeadingFrom =
+							lineStartSpan.leading.from;
+						(update.view as any).__leEmacsPendingExpansion = {
+							from: lineStartSpan.from,
+							to: lineStartSpan.to,
+						};
+					} else {
+						// Link after list marker: let it stay at textFrom.
+						needsAdjust = true;
+						(update.view as any).__leArrivedFromOutside = lineStartSpan.leading.from;
+					}
 				} else {
 					// Case B: already at textFrom, just mark it
 					needsAdjust = true; // trigger dispatch so the effect is attached

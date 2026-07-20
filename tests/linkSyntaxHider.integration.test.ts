@@ -2295,10 +2295,17 @@ describe("BUG: kill-line on a numbered-list item whose content is a wikilink", (
 });
 
 describe("Integration: DOM copy event focus handling", () => {
+	let view: EditorView;
+
+	afterEach(() => {
+		view?.destroy();
+		document.body.innerHTML = "";
+	});
+
 	it("intercepts and strips syntax when editor is focused", async () => {
 		const doc = "abcdefg [[Note-08|123456]] hhh";
 		const cursor = doc.indexOf("123456") + 3; // inside link
-		const view = createTestView(doc, cursor);
+		view = createTestView(doc, cursor);
 
 		// Emulate Emacs selection
 		const line = view.state.doc.lineAt(cursor);
@@ -2344,7 +2351,7 @@ describe("Integration: DOM copy event focus handling", () => {
 	it("ignores copy events when editor is blurred (no copy hijacking)", async () => {
 		const doc = "abcdefg [[Note-08|123456]] hhh";
 		const cursor = doc.indexOf("123456") + 3;
-		const view = createTestView(doc, cursor);
+		view = createTestView(doc, cursor);
 
 		const line = view.state.doc.lineAt(cursor);
 		view.dispatch({ selection: EditorSelection.range(cursor, line.to) });
@@ -2387,7 +2394,7 @@ describe("Integration: DOM copy event focus handling", () => {
 	it("typing # inside [[#]] does not redirect to start of link (global heading completion trigger)", () => {
 		const doc = "[[#]]";
 		const cursor = doc.indexOf("#") + 1; // cursor after the first #
-		const view = createTestView(doc, cursor);
+		view = createTestView(doc, cursor);
 
 		// Enable shortenHeadingLinks options
 		view.dispatch({
@@ -2404,6 +2411,36 @@ describe("Integration: DOM copy event focus handling", () => {
 		// The second '#' should be inserted after the first '#', NOT before '[['
 		expect(view.state.doc.toString()).toBe("[[##]]");
 		expect(view.state.selection.main.head).toBe(doc.indexOf("#") + 2);
+	});
+
+	it("emacs.moveToBeginning on a list item with a link snaps to textFrom on first press", () => {
+		const doc = "- [ ] [[Note-01]]";
+		// Start cursor at the end of the line (index 17)
+		view = createTestView(doc, 17);
+
+		// Emacs first press: targets homeOffset (index 6, which is span.leading.from)
+		view.dispatch({
+			selection: EditorSelection.cursor(6),
+			userEvent: "emacs.moveToBeginning",
+		});
+
+		// The cursor corrector should snap the cursor to textFrom (index 8) to keep link collapsed
+		expect(view.state.selection.main.head).toBe(8);
+	});
+
+	it("emacs.moveToBeginning on a list item with a link moves to column 0 on second press", () => {
+		const doc = "- [ ] [[Note-01]]";
+		// Start cursor at textFrom (index 8)
+		view = createTestView(doc, 8);
+
+		// Emacs second press: targets homeOffset (index 6, which is span.leading.from)
+		view.dispatch({
+			selection: EditorSelection.cursor(6),
+			userEvent: "emacs.moveToBeginning",
+		});
+
+		// The cursor corrector should redirect the cursor to column 0
+		expect(view.state.selection.main.head).toBe(0);
 	});
 });
 
