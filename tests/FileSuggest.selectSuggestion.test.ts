@@ -439,4 +439,66 @@ describe("FileSuggest focus behavior", () => {
 		const suggestions = await suggest.getSuggestions("Test Note");
 		expect(suggestions).toEqual([]); // Should be suppressed
 	});
+
+	describe("getSuggestions routing logic", () => {
+		let modal: any;
+		let app: any;
+		let suggest: FileSuggest;
+		let mockGetFiles: any;
+		let mockGetHeadingsInCurrentFile: any;
+		let mockGetAllHeadings: any;
+		let mockGetHeadingsInFile: any;
+		let mockGetAllBlocksInFile: any;
+
+		beforeEach(() => {
+			modal = makeModalStub();
+			modal.isWiki = true;
+			app = new App() as any;
+			app.workspace.setActiveFile(new TFile({ path: "dummy.md" }));
+			suggest = new FileSuggest(app, modal._destInputEl, modal as any);
+
+			mockGetFiles = vi.fn().mockResolvedValue([]);
+			mockGetHeadingsInCurrentFile = vi.fn().mockResolvedValue([]);
+			mockGetAllHeadings = vi.fn().mockResolvedValue([]);
+			mockGetHeadingsInFile = vi.fn().mockResolvedValue([]);
+			mockGetAllBlocksInFile = vi.fn().mockResolvedValue([]);
+
+			(suggest as any).getFiles = mockGetFiles;
+			(suggest as any).getHeadingsInCurrentFile = mockGetHeadingsInCurrentFile;
+			(suggest as any).getAllHeadings = mockGetAllHeadings;
+			(suggest as any).getHeadingsInFile = mockGetHeadingsInFile;
+			(suggest as any).getAllBlocksInFile = mockGetAllBlocksInFile;
+			(suggest as any).findFile = vi.fn().mockReturnValue(new TFile({ path: "dummy.md" }));
+		});
+
+		it("routes ##heading query to getAllHeadings", async () => {
+			await suggest.getSuggestions("##HeadingText");
+			expect(mockGetAllHeadings).toHaveBeenCalled();
+		});
+
+		it("routes #heading query to getHeadingsInCurrentFile", async () => {
+			await suggest.getSuggestions("#HeadingText");
+			expect(mockGetHeadingsInCurrentFile).toHaveBeenCalled();
+		});
+
+		it("routes #^block query to getAllBlocksInFile", async () => {
+			await suggest.getSuggestions("#^block123");
+			expect(mockGetAllBlocksInFile).toHaveBeenCalled();
+		});
+
+		it("routes ^block query to getAllBlocksInFile", async () => {
+			await suggest.getSuggestions("^block123");
+			expect(mockGetAllBlocksInFile).toHaveBeenCalled();
+		});
+
+		it("routes file#heading query to getHeadingsInFile", async () => {
+			await suggest.getSuggestions("note#HeadingText");
+			expect(mockGetHeadingsInFile).toHaveBeenCalledWith("note", "HeadingText");
+		});
+
+		it("routes file#^block query to getAllBlocksInFile", async () => {
+			await suggest.getSuggestions("note#^block123");
+			expect(mockGetAllBlocksInFile).toHaveBeenCalled();
+		});
+	});
 });

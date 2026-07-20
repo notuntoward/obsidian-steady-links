@@ -12,7 +12,9 @@
  * @vitest-environment jsdom
  */
 
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
+import { MarkdownView, App } from "obsidian";
+import SteadyLinksPlugin from "../src/main";
 import { EditorView } from "@codemirror/view";
 import { EditorState, EditorSelection, Transaction } from "@codemirror/state";
 import {
@@ -2289,6 +2291,97 @@ describe("BUG: kill-line on a numbered-list item whose content is a wikilink", (
 		expect(view.state.doc.toString()).not.toBe(before);
 		expect(view.state.doc.toString().includes("[[Note-08]]")).toBe(false);
 		expect(view.state.doc.lineAt(view.state.selection.main.head).text).toBe("11. ");
+	});
+});
+
+describe("Integration: DOM copy event focus handling", () => {
+	it("intercepts and strips syntax when editor is focused", async () => {
+		const doc = "abcdefg [[Note-08|123456]] hhh";
+		const cursor = doc.indexOf("123456") + 3; // inside link
+		const view = createTestView(doc, cursor);
+
+		// Emulate Emacs selection
+		const line = view.state.doc.lineAt(cursor);
+		view.dispatch({ selection: EditorSelection.range(cursor, line.to) });
+
+		// Instantiating plugin and capturing registerDomEvent callback
+		const app = new App();
+		vi.spyOn(app.workspace, "getActiveViewOfType").mockReturnValue({
+			editor: {
+				cm: view,
+			},
+		} as any);
+
+		const plugin = new SteadyLinksPlugin(app, {} as any);
+		let copyHandler: ((e: any) => void) | null = null;
+		
+		plugin.registerDomEvent = vi.fn().mockImplementation((target, eventType, handler) => {
+			if (eventType === "copy") {
+				copyHandler = handler;
+			}
+			return plugin;
+		});
+
+		await plugin.onload();
+		expect(copyHandler).not.toBeNull();
+
+		// Set editor as focused
+		vi.spyOn(view, "hasFocus", "get").mockReturnValue(true);
+
+		const mockEvent = {
+			clipboardData: {
+				setData: vi.fn(),
+			},
+			preventDefault: vi.fn(),
+		};
+
+		copyHandler!(mockEvent);
+
+		expect(mockEvent.clipboardData.setData).toHaveBeenCalledWith("text/plain", "456 hhh");
+		expect(mockEvent.preventDefault).toHaveBeenCalled();
+	});
+
+	it("ignores copy events when editor is blurred (no copy hijacking)", async () => {
+		const doc = "abcdefg [[Note-08|123456]] hhh";
+		const cursor = doc.indexOf("123456") + 3;
+		const view = createTestView(doc, cursor);
+
+		const line = view.state.doc.lineAt(cursor);
+		view.dispatch({ selection: EditorSelection.range(cursor, line.to) });
+
+		const app = new App();
+		vi.spyOn(app.workspace, "getActiveViewOfType").mockReturnValue({
+			editor: {
+				cm: view,
+			},
+		} as any);
+
+		const plugin = new SteadyLinksPlugin(app, {} as any);
+		let copyHandler: ((e: any) => void) | null = null;
+		
+		plugin.registerDomEvent = vi.fn().mockImplementation((target, eventType, handler) => {
+			if (eventType === "copy") {
+				copyHandler = handler;
+			}
+			return plugin;
+		});
+
+		await plugin.onload();
+
+		// Editor does NOT have focus
+		vi.spyOn(view, "hasFocus", "get").mockReturnValue(false);
+
+		const mockEvent = {
+			clipboardData: {
+				setData: vi.fn(),
+			},
+			preventDefault: vi.fn(),
+		};
+
+		copyHandler!(mockEvent);
+
+		expect(mockEvent.clipboardData.setData).not.toHaveBeenCalled();
+		expect(mockEvent.preventDefault).not.toHaveBeenCalled();
 	});
 });
 

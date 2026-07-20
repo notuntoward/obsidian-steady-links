@@ -44,7 +44,7 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 		switch (parsed.type) {
 			case "global-heading": {
 				const headingQuery = (parsed.searchTerm ?? "").toLowerCase();
-				const allHeadings = this.getAllHeadings();
+				const allHeadings = await this.getAllHeadings();
 				if (!headingQuery) return allHeadings;
 				return allHeadings.filter(
 					(h) => h.heading && h.heading.toLowerCase().includes(headingQuery)
@@ -59,7 +59,7 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 			}
 			case "current-heading": {
 				const headingQuery = (parsed.searchTerm ?? "").toLowerCase();
-				const allHeadings = this.getHeadingsInCurrentFile();
+				const allHeadings = await this.getHeadingsInCurrentFile();
 				if (!headingQuery) return allHeadings;
 				return allHeadings.filter(
 					(h) => h.heading && h.heading.toLowerCase().includes(headingQuery)
@@ -73,7 +73,7 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 				return await this.getAllBlocksInFile(file, blockQuery);
 			}
 			case "file-heading": {
-				return this.getHeadingsInFile(parsed.fileName ?? "", parsed.searchTerm ?? "");
+				return await this.getHeadingsInFile(parsed.fileName ?? "", parsed.searchTerm ?? "");
 			}
 			case "file":
 			default:

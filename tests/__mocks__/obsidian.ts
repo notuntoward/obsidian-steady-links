@@ -703,6 +703,11 @@ export class ToggleComponent {
 		this.onChangeCb = cb;
 		return this;
 	}
+
+	setDisabled(disabled: boolean): this {
+		this.toggleEl.classList.toggle("is-disabled", disabled);
+		return this;
+	}
 }
 
 export class DropdownComponent {
