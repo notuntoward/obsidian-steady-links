@@ -9,12 +9,18 @@ export class SteadyLinksSettingTab extends PluginSettingTab {
 		this.plugin = plugin;
 	}
 
-		display(): void {
+	display(): void {
 		const { containerEl } = this;
 		containerEl.empty();
 		containerEl.createEl("h2", { text: "Steady Links Settings" });
 
 		const steadyGroup = containerEl.createDiv("steady-links-steady-group");
+
+		let subSettingsContainer: HTMLDivElement;
+		let shortenHeadingSetting: Setting;
+		let shortenFileSetting: Setting;
+		let shortenHeadingToggle: any;
+		let shortenFileToggle: any;
 
 		new Setting(steadyGroup)
 			.setName("Keep links steady")
@@ -30,10 +36,19 @@ export class SteadyLinksSettingTab extends PluginSettingTab {
 						this.plugin.settings.keepLinksSteady = value;
 						await this.plugin.saveSettings();
 						this.plugin.applySyntaxHiderSetting();
-						// Sub-settings below are only meaningful when this is
-						// on — refresh so their disabled/dimmed state updates
-						// immediately.
-						this.display();
+						
+						// Dynamically update the sub-settings UI states without rebuilding the DOM
+						if (subSettingsContainer) {
+							subSettingsContainer.toggleClass("is-disabled", !value);
+						}
+						if (shortenHeadingSetting) {
+							shortenHeadingSetting.settingEl.toggleClass("is-disabled", !value);
+						}
+						if (shortenFileSetting) {
+							shortenFileSetting.settingEl.toggleClass("is-disabled", !value);
+						}
+						shortenHeadingToggle?.setDisabled(!value);
+						shortenFileToggle?.setDisabled(!value);
 					})
 			);
 
@@ -41,17 +56,18 @@ export class SteadyLinksSettingTab extends PluginSettingTab {
 		// They are grouped under the master toggle in a nested box, indented
 		// and dimmed/disabled when the master toggle is off.
 		const subSettingsDisabled = !this.plugin.settings.keepLinksSteady;
-		const subSettingsContainer = steadyGroup.createDiv("steady-links-subsettings");
+		subSettingsContainer = steadyGroup.createDiv("steady-links-subsettings");
 		subSettingsContainer.toggleClass("is-disabled", subSettingsDisabled);
 
-		const shortenHeadingSetting = new Setting(subSettingsContainer)
+		shortenHeadingSetting = new Setting(subSettingsContainer)
 			.setName("Shorten heading and block links")
 			.setDesc(
 				"Hide the note path in heading/block links without an alias " +
 				"(e.g. [[Note#Heading]] → \"Heading\"), even with the cursor on " +
 				"the link."
 			)
-			.addToggle((toggle) =>
+			.addToggle((toggle) => {
+				shortenHeadingToggle = toggle;
 				toggle
 					.setValue(this.plugin.settings.shortenHeadingLinks)
 					.setDisabled(subSettingsDisabled)
@@ -59,19 +75,20 @@ export class SteadyLinksSettingTab extends PluginSettingTab {
 						this.plugin.settings.shortenHeadingLinks = value;
 						await this.plugin.saveSettings();
 						this.plugin.applySyntaxHiderSetting();
-					})
-			);
+					});
+			});
 		shortenHeadingSetting.settingEl.addClass("steady-links-subsetting");
 		shortenHeadingSetting.settingEl.toggleClass("is-disabled", subSettingsDisabled);
 
-		const shortenFileSetting = new Setting(subSettingsContainer)
+		shortenFileSetting = new Setting(subSettingsContainer)
 			.setName("Shorten file links")
 			.setDesc(
 				"Hide the parent folder path in plain file links without an " +
 				"alias (e.g. [[folder/Note]] → \"Note\"), even with the cursor " +
 				"on the link. Independent of the heading/block setting above."
 			)
-			.addToggle((toggle) =>
+			.addToggle((toggle) => {
+				shortenFileToggle = toggle;
 				toggle
 					.setValue(this.plugin.settings.shortenFileLinks)
 					.setDisabled(subSettingsDisabled)
@@ -79,8 +96,8 @@ export class SteadyLinksSettingTab extends PluginSettingTab {
 						this.plugin.settings.shortenFileLinks = value;
 						await this.plugin.saveSettings();
 						this.plugin.applySyntaxHiderSetting();
-					})
-			);
+					});
+			});
 		shortenFileSetting.settingEl.addClass("steady-links-subsetting");
 		shortenFileSetting.settingEl.toggleClass("is-disabled", subSettingsDisabled);
 

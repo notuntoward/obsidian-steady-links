@@ -1,5 +1,4 @@
-import { Plugin, Editor, MarkdownView, Notice, FileSystemAdapter, TFile, Menu } from "obsidian";
-import { shell } from "electron";
+import { Plugin, Editor, MarkdownView, Notice, FileSystemAdapter, TFile, Menu, Platform } from "obsidian";
 import { Extension, EditorSelection } from "@codemirror/state";
 import { EditLinkModal } from "./EditLinkModal";
 import { SteadyLinksSettingTab } from "./SettingTab";
@@ -122,34 +121,27 @@ export default class SteadyLinksPlugin extends Plugin {
 		await this.loadSettings();
 
 		// -----------------------------------------------------------------------
-		// Fix: intercept navigator.clipboard.writeText to strip trailing link
-		// syntax when the Emacs plugin (or any external plugin) writes the raw
-		// CM6 selection text directly, bypassing CM6's clipboardOutputFilter.
-		//
-		// When the cursor is inside a link's visible text and kill-line selects
-		// to end of line, editor.getSelection() returns e.g. "456]] hhh" — the
-		// visible suffix plus the hidden trailing ]] syntax.  We intercept the
-		// write and strip it to "456 hhh" using the same logic as the CM6
-		// clipboardOutputFilter path.
+		// Fix: register DOM copy listener to strip trailing link syntax when copying.
+		// When the cursor is inside a link's visible text and copy/kill-line selects
+		// to end of line, the raw selection contains trailing hidden syntax like "]]"
+		// or "](url)". We intercept standard copy operations and strip it.
 		// -----------------------------------------------------------------------
-		const origWriteText = navigator.clipboard.writeText.bind(navigator.clipboard);
-		navigator.clipboard.writeText = async (data: string): Promise<void> => {
-			// Find the active CM6 editor view to check for mid-link selection.
+		this.registerDomEvent(document, "copy", (e: ClipboardEvent) => {
 			const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
 			const cm6View = activeView
 				? ((activeView.editor as any).cm as EditorView | undefined)
 				: undefined;
-			if (cm6View) {
-				const stripped = stripTrailingLinkSyntaxForClipboard(data, cm6View.state);
-				if (stripped !== data) {
-					return origWriteText(stripped);
+			if (cm6View && cm6View.hasFocus) {
+				const selection = cm6View.state.sliceDoc(
+					cm6View.state.selection.main.from,
+					cm6View.state.selection.main.to
+				);
+				const stripped = stripTrailingLinkSyntaxForClipboard(selection, cm6View.state);
+				if (stripped !== selection) {
+					e.clipboardData?.setData("text/plain", stripped);
+					e.preventDefault();
 				}
 			}
-			return origWriteText(data);
-		};
-		// Restore on unload
-		this.register(() => {
-			navigator.clipboard.writeText = origWriteText;
 		});
 		// -----------------------------------------------------------------------
 
@@ -310,21 +302,30 @@ export default class SteadyLinksPlugin extends Plugin {
 	}
 
 	private handleOpenLinkInDefaultApp(editor: Editor): void {
+		if (!Platform.isDesktop) {
+			new Notice("Opening in default app is only supported on desktop");
+			return;
+		}
 		const target = this.getOpenableFromCursor(editor);
 		if (!target) {
 			new Notice("No link found at cursor");
 			return;
 		}
+		const { shell } = require("electron");
 		if (target.kind === "url") {
 			shell.openExternal(target.url).catch(() => new Notice("Failed to open URL"));
 			return;
 		}
-		shell.openPath(target.path).then((errMsg) => {
+		shell.openPath(target.path).then((errMsg: string) => {
 			if (errMsg) new Notice("Failed to open: " + errMsg);
 		});
 	}
 
 	private handleRevealLinkInExplorer(editor: Editor): void {
+		if (!Platform.isDesktop) {
+			new Notice("Revealing in file explorer is only supported on desktop");
+			return;
+		}
 		const target = this.getOpenableFromCursor(editor);
 		if (!target) {
 			new Notice("No link found at cursor");
@@ -334,6 +335,7 @@ export default class SteadyLinksPlugin extends Plugin {
 			new Notice("Cannot reveal a URL in the file explorer");
 			return;
 		}
+		const { shell } = require("electron");
 		shell.showItemInFolder(target.path);
 	}
 

@@ -1,4 +1,4 @@
-import { App, Modal, Setting, TextComponent, ButtonComponent, ToggleComponent } from "obsidian";
+import { App, Modal, Setting, TextComponent, ButtonComponent, ToggleComponent, MarkdownView } from "obsidian";
 import { LinkInfo } from "./types";
 import { FileSuggest } from "./FileSuggest";
 import {
@@ -582,9 +582,8 @@ export class EditLinkModal extends Modal {
 		// Add notice about embed detection in preview/live mode if applicable
 		// Show this notice when editing an existing link in a mode where the link syntax might be hidden
 		if (!this.isNewLink) {
-			const activeLeaf = this.app.workspace.activeLeaf;
-			const view = activeLeaf?.view as any;
-			const mode = view?.getMode?.();
+			const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+			const mode = view ? (view as any).getMode?.() : undefined;
 
 			// Check if we're in a mode where link syntax might be hidden (live preview or reading view)
 			// In these modes, the ! prefix might not be visible/detectable

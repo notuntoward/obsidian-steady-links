@@ -2,6 +2,7 @@ import { App, TFile, AbstractInputSuggest } from "obsidian";
 import { SuggestionItem } from "./types";
 import { isUrl } from "./utils";
 import type { EditLinkModal } from "./EditLinkModal";
+import { parseSuggestionQuery } from "./suggestionQuery";
 
 export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 	modal: EditLinkModal;
@@ -38,67 +39,46 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 			return this.getFiles(trimmedQuery);
 		}
 
-		// --- WIKILINK MODE PATTERNS ---
-		// 1) "##heading" in all files
-		if (trimmedQuery.startsWith("##")) {
-			const headingQuery = trimmedQuery.slice(2).toLowerCase();
-			const allHeadings = this.getAllHeadings();
-			if (!headingQuery) return allHeadings;
-			return allHeadings.filter(
-				(h) => h.heading && h.heading.toLowerCase().includes(headingQuery)
-			);
-		}
+		const parsed = parseSuggestionQuery(query);
 
-		// 2) "#^block" in current file (must come BEFORE single # check)
-		if (trimmedQuery.startsWith("#^")) {
-			const blockQuery = trimmedQuery.slice(2).toLowerCase();
-			const activeFile = this.app.workspace.getActiveFile();
-			if (!activeFile) return [];
-			return await this.getAllBlocksInFile(activeFile, blockQuery);
+		switch (parsed.type) {
+			case "global-heading": {
+				const headingQuery = (parsed.searchTerm ?? "").toLowerCase();
+				const allHeadings = this.getAllHeadings();
+				if (!headingQuery) return allHeadings;
+				return allHeadings.filter(
+					(h) => h.heading && h.heading.toLowerCase().includes(headingQuery)
+				);
+			}
+			case "current-block":
+			case "block": {
+				const blockQuery = (parsed.searchTerm ?? "").toLowerCase();
+				const activeFile = this.app.workspace.getActiveFile();
+				if (!activeFile) return [];
+				return await this.getAllBlocksInFile(activeFile, blockQuery);
+			}
+			case "current-heading": {
+				const headingQuery = (parsed.searchTerm ?? "").toLowerCase();
+				const allHeadings = this.getHeadingsInCurrentFile();
+				if (!headingQuery) return allHeadings;
+				return allHeadings.filter(
+					(h) => h.heading && h.heading.toLowerCase().includes(headingQuery)
+				);
+			}
+			case "file-block":
+			case "file-block-no-hash": {
+				const file = this.findFile(parsed.fileName ?? "");
+				if (!file) return [];
+				const blockQuery = (parsed.searchTerm ?? "").toLowerCase();
+				return await this.getAllBlocksInFile(file, blockQuery);
+			}
+			case "file-heading": {
+				return this.getHeadingsInFile(parsed.fileName ?? "", parsed.searchTerm ?? "");
+			}
+			case "file":
+			default:
+				return this.getFiles(parsed.searchTerm ?? "");
 		}
-
-		// 3) "#heading" in current file
-		if (trimmedQuery.startsWith("#") && !trimmedQuery.startsWith("##")) {
-			const headingQuery = trimmedQuery.slice(1).toLowerCase();
-			const allHeadings = this.getHeadingsInCurrentFile();
-			if (!headingQuery) return allHeadings;
-			return allHeadings.filter(
-				(h) => h.heading && h.heading.toLowerCase().includes(headingQuery)
-			);
-		}
-
-		// 4) "^block" in current file
-		if (trimmedQuery.startsWith("^")) {
-			const blockQuery = trimmedQuery.slice(1).toLowerCase();
-			const activeFile = this.app.workspace.getActiveFile();
-			if (!activeFile) return [];
-			return await this.getAllBlocksInFile(activeFile, blockQuery);
-		}
-
-		// 5) "file#^block" in specific file (must come BEFORE file#heading check)
-		if (trimmedQuery.includes("#^")) {
-			const [fileName, blockQuery = ""] = trimmedQuery.split("#^");
-			const file = this.findFile(fileName);
-			if (!file) return [];
-			return await this.getAllBlocksInFile(file, blockQuery);
-		}
-
-		// 6) "file#heading" in specific file
-		if (trimmedQuery.includes("#") && !trimmedQuery.startsWith("#")) {
-			const [fileName, headingQuery = ""] = trimmedQuery.split("#");
-			return this.getHeadingsInFile(fileName, headingQuery);
-		}
-
-		// 7) "file^block" in specific file (without #)
-		if (trimmedQuery.includes("^") && !trimmedQuery.startsWith("^")) {
-			const [fileName, blockQuery = ""] = trimmedQuery.split("^");
-			const file = this.findFile(fileName);
-			if (!file) return [];
-			return await this.getAllBlocksInFile(file, blockQuery);
-		}
-
-		// 8) Default: [[file]]
-		return this.getFiles(trimmedQuery);
 	}
 
 	getFiles(query: string): SuggestionItem[] {
@@ -231,14 +211,7 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 	}
 
 	getHeadingsInFile(fileName: string, headingQuery = ""): SuggestionItem[] {
-		const files = this.app.vault.getFiles();
-		const lowerFileName = fileName.toLowerCase();
-		// First try exact basename match
-		let file = files.find((f) => f.basename.toLowerCase() === lowerFileName);
-		// If no exact match, try path contains (for files in subdirectories)
-		if (!file) {
-			file = files.find((f) => f.path.toLowerCase().includes(lowerFileName));
-		}
+		const file = this.findFile(fileName);
 		if (!file) return [];
 
 		const cache = this.app.metadataCache.getFileCache(file);
@@ -256,15 +229,24 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 	}
 
 	findFile(fileName: string): TFile | undefined {
+		if (!fileName) return undefined;
+		const activeFile = this.app.workspace.getActiveFile();
+		const sourcePath = activeFile ? activeFile.path : "";
+		let file: TFile | null = null;
+		try {
+			file = this.app.metadataCache.getFirstLinkpathDest(fileName, sourcePath);
+		} catch {
+			file = null;
+		}
+		if (file) return file;
+
+		// Fallback for partial/subpath matches
 		const files = this.app.vault.getFiles();
 		const lowerFileName = fileName.toLowerCase();
-		// First try exact basename match
-		let file = files.find((f) => f.basename.toLowerCase() === lowerFileName);
-		// If no exact match, try path contains (for files in subdirectories)
-		if (!file) {
-			file = files.find((f) => f.path.toLowerCase().includes(lowerFileName));
-		}
-		return file;
+		return (
+			files.find((f) => f.basename.toLowerCase() === lowerFileName) ||
+			files.find((f) => f.path.toLowerCase().includes(lowerFileName))
+		);
 	}
 
 	async getAllBlocksInFile(file: TFile, blockQuery = ""): Promise<SuggestionItem[]> {
@@ -309,7 +291,11 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 	}
 
 	generateBlockId(): string {
-		return Math.random().toString(36).substr(2, 6);
+		let result = "";
+		while (result.length < 6) {
+			result += Math.random().toString(36).substring(2);
+		}
+		return result.substring(0, 6);
 	}
 
 	async addBlockIdToFile(file: TFile, position: any, blockId: string) {
