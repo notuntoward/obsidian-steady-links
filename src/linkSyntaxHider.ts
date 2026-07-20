@@ -543,9 +543,14 @@ function findWikiLinkSyntaxRanges(
 		const pipeIdx = innerContent.lastIndexOf("|");
 		const fullEnd = lineFrom + closeIdx + 2;
 
-		// Skip empty wiki links (e.g., `[[]]`) so Obsidian's native
-		// link autocomplete can work when typing `[['
-		if (innerContent === "" || innerContent.trim() === "") {
+		// Skip empty or incomplete query wiki links (e.g. `[[]]`, `[[#]]`, `[[##]]`, `[[Note#]]`)
+		// so they render with full brackets and trigger native autocomplete triggers correctly.
+		if (
+			innerContent === "" ||
+			innerContent.trim() === "" ||
+			innerContent.endsWith("#") ||
+			innerContent.endsWith("^")
+		) {
 			searchIdx = closeIdx + 2;
 			continue;
 		}
@@ -2547,6 +2552,10 @@ const insertAtLinkStartFix = EditorState.transactionFilter.of((tr) => {
 	for (const h of hidden) {
 		if (h.side !== "leading") continue;
 		if (insertFrom !== h.to) continue;
+
+		// Do not redirect if we are typing immediately after a heading (#) or block (^) trigger
+		const charBefore = tr.startState.sliceDoc(insertFrom - 1, insertFrom);
+		if (charBefore === "#" || charBefore === "^") continue;
 
 		const userEvent = tr.annotation(Transaction.userEvent) ?? undefined;
 		return tr.startState.update({

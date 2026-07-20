@@ -1814,6 +1814,17 @@ describe('computeDisplayedTextRange', () => {
 				displayedTextEnd: 20
 			});
 		});
+
+		it('does not shorten when heading text is empty (allows visual confirmation while typing)', () => {
+			const line = '[[Note#]]';
+			const result = computeDisplayedTextRange(line, 5, { shortenHeadingLinks: true });
+			expect(result).toEqual({
+				linkStart: 0,
+				linkEnd: 9,
+				displayedTextStart: 2, // starts at "Note#"
+				displayedTextEnd: 7
+			});
+		});
 	});
 
 	// ── Opt-in shortenFileLinks option: mirrors findWikiLinkSyntaxRanges()

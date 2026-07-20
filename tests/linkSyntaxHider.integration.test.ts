@@ -2383,6 +2383,28 @@ describe("Integration: DOM copy event focus handling", () => {
 		expect(mockEvent.clipboardData.setData).not.toHaveBeenCalled();
 		expect(mockEvent.preventDefault).not.toHaveBeenCalled();
 	});
+
+	it("typing # inside [[#]] does not redirect to start of link (global heading completion trigger)", () => {
+		const doc = "[[#]]";
+		const cursor = doc.indexOf("#") + 1; // cursor after the first #
+		const view = createTestView(doc, cursor);
+
+		// Enable shortenHeadingLinks options
+		view.dispatch({
+			effects: [setWikiLinkHidingOptions.of({ shortenHeadingLinks: true })],
+		});
+
+		// Simulate typing '#'
+		view.dispatch({
+			changes: { from: cursor, to: cursor, insert: "#" },
+			selection: EditorSelection.cursor(cursor + 1),
+			userEvent: "input",
+		});
+
+		// The second '#' should be inserted after the first '#', NOT before '[['
+		expect(view.state.doc.toString()).toBe("[[##]]");
+		expect(view.state.selection.main.head).toBe(doc.indexOf("#") + 2);
+	});
 });
 
 

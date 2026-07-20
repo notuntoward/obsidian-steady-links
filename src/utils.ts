@@ -779,6 +779,9 @@ export function wikiLinkVisibleTextOffset(
 	if (hashIdx !== -1) {
 		if (!options.shortenHeadingLinks) return 0;
 		const afterHash = innerContent.substring(hashIdx + 1);
+		// If there is no text after the hash (or block marker), do not hide it
+		// so the user has visual confirmation of the trigger character while typing.
+		if (afterHash === "" || afterHash === "^") return 0;
 		return hashIdx + 1 + (afterHash.startsWith('^') ? 1 : 0);
 	}
 	if (options.shortenFileLinks) {
