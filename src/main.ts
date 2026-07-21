@@ -205,7 +205,7 @@ export default class SteadyLinksPlugin extends Plugin {
 					mappedKeyCode = 39;
 				}
 
-				window.dispatchEvent(new KeyboardEvent("keydown", {
+				document.dispatchEvent(new KeyboardEvent("keydown", {
 					key: mappedKey,
 					code: mappedCode,
 					keyCode: mappedKeyCode,
