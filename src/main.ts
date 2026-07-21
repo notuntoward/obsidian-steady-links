@@ -148,6 +148,69 @@ export default class SteadyLinksPlugin extends Plugin {
 		});
 		// -----------------------------------------------------------------------
 
+		// -----------------------------------------------------------------------
+		// Capture Ctrl+n / Ctrl+p / Ctrl+b / Ctrl+f globally when suggestions are open
+		// to bypass default global commands (like Ctrl+n = New Note) and Emacs/Vim overrides.
+		// -----------------------------------------------------------------------
+		const globalKeydownHandler = (e: KeyboardEvent) => {
+			if (!e.ctrlKey || e.shiftKey || e.altKey || e.metaKey) return;
+			const key = e.key.toLowerCase();
+			if (key !== "n" && key !== "p" && key !== "b" && key !== "f") return;
+
+			const containers = document.querySelectorAll(".suggestion-container");
+			let isAnySuggestOpen = false;
+			for (let i = 0; i < containers.length; i++) {
+				const container = containers[i];
+				if (!container.classList.contains("is-hidden") && (container as HTMLElement).style.display !== "none") {
+					isAnySuggestOpen = true;
+					break;
+				}
+			}
+
+			if (isAnySuggestOpen) {
+				e.preventDefault();
+				e.stopImmediatePropagation();
+
+				let mappedKey = "";
+				let mappedCode = "";
+				let mappedKeyCode = 0;
+
+				if (key === "n") {
+					mappedKey = "ArrowDown";
+					mappedCode = "ArrowDown";
+					mappedKeyCode = 40;
+				} else if (key === "p") {
+					mappedKey = "ArrowUp";
+					mappedCode = "ArrowUp";
+					mappedKeyCode = 38;
+				} else if (key === "b") {
+					mappedKey = "ArrowLeft";
+					mappedCode = "ArrowLeft";
+					mappedKeyCode = 37;
+				} else if (key === "f") {
+					mappedKey = "ArrowRight";
+					mappedCode = "ArrowRight";
+					mappedKeyCode = 39;
+				}
+
+				const target = document.activeElement || document;
+				const shouldBubble = !("tagName" in target) || ((target as any).tagName !== "INPUT" && (target as any).tagName !== "TEXTAREA");
+				target.dispatchEvent(new KeyboardEvent("keydown", {
+					key: mappedKey,
+					code: mappedCode,
+					keyCode: mappedKeyCode,
+					which: mappedKeyCode,
+					bubbles: shouldBubble,
+					cancelable: true
+				}));
+			}
+		};
+		window.addEventListener("keydown", globalKeydownHandler, true);
+		this.register(() => {
+			window.removeEventListener("keydown", globalKeydownHandler, true);
+		});
+		// -----------------------------------------------------------------------
+
 
 
 		// Register the (initially empty) extension array.  We populate it
