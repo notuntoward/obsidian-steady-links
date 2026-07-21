@@ -36,6 +36,60 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 		});
 
 		if (this.scope) {
+			// Register Emacs Ctrl+p / Ctrl+n to trigger ArrowUp / ArrowDown key events
+			this.scope.register(["Ctrl"], "n", () => {
+				const target = document.activeElement || document;
+				target.dispatchEvent(new KeyboardEvent("keydown", {
+					key: "ArrowDown",
+					code: "ArrowDown",
+					keyCode: 40,
+					which: 40,
+					bubbles: false,
+					cancelable: true
+				}));
+				return false; // consume event
+			});
+
+			this.scope.register(["Ctrl"], "p", () => {
+				const target = document.activeElement || document;
+				target.dispatchEvent(new KeyboardEvent("keydown", {
+					key: "ArrowUp",
+					code: "ArrowUp",
+					keyCode: 38,
+					which: 38,
+					bubbles: false,
+					cancelable: true
+				}));
+				return false; // consume event
+			});
+
+			// Register Emacs Ctrl+b / Ctrl+f to trigger ArrowLeft / ArrowRight key events
+			this.scope.register(["Ctrl"], "b", () => {
+				const target = document.activeElement || document;
+				target.dispatchEvent(new KeyboardEvent("keydown", {
+					key: "ArrowLeft",
+					code: "ArrowLeft",
+					keyCode: 37,
+					which: 37,
+					bubbles: false,
+					cancelable: true
+				}));
+				return false; // consume event
+			});
+
+			this.scope.register(["Ctrl"], "f", () => {
+				const target = document.activeElement || document;
+				target.dispatchEvent(new KeyboardEvent("keydown", {
+					key: "ArrowRight",
+					code: "ArrowRight",
+					keyCode: 39,
+					which: 39,
+					bubbles: false,
+					cancelable: true
+				}));
+				return false; // consume event
+			});
+
 			// Register TAB key to complete the prefix/basename and not close suggest
 			this.scope.register([], "Tab", () => {
 				let selectedId = (this as any).selectedId;
