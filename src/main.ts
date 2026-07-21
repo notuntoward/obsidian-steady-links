@@ -158,6 +158,18 @@ export default class SteadyLinksPlugin extends Plugin {
 			if (key !== "n" && key !== "p" && key !== "b" && key !== "f") return;
 
 			const containers = document.querySelectorAll(".suggestion-container");
+			
+			console.log("[SteadyLinks capturing keydown]", {
+				key,
+				containersCount: containers.length,
+				containers: Array.from(containers).map(c => ({
+					classList: Array.from(c.classList),
+					display: (c as HTMLElement).style.display,
+					opacity: (c as HTMLElement).style.opacity,
+					visibility: (c as HTMLElement).style.visibility
+				}))
+			});
+
 			let isAnySuggestOpen = false;
 			for (let i = 0; i < containers.length; i++) {
 				const container = containers[i];
@@ -193,14 +205,12 @@ export default class SteadyLinksPlugin extends Plugin {
 					mappedKeyCode = 39;
 				}
 
-				const target = document.activeElement || document;
-				const shouldBubble = !("tagName" in target) || ((target as any).tagName !== "INPUT" && (target as any).tagName !== "TEXTAREA");
-				target.dispatchEvent(new KeyboardEvent("keydown", {
+				window.dispatchEvent(new KeyboardEvent("keydown", {
 					key: mappedKey,
 					code: mappedCode,
 					keyCode: mappedKeyCode,
 					which: mappedKeyCode,
-					bubbles: shouldBubble,
+					bubbles: true,
 					cancelable: true
 				}));
 			}
@@ -208,6 +218,20 @@ export default class SteadyLinksPlugin extends Plugin {
 		window.addEventListener("keydown", globalKeydownHandler, true);
 		this.register(() => {
 			window.removeEventListener("keydown", globalKeydownHandler, true);
+		});
+
+		const bubblingLogHandler = (e: KeyboardEvent) => {
+			if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+				console.log("[SteadyLinks bubbling keydown]", {
+					key: e.key,
+					defaultPrevented: e.defaultPrevented,
+					isTrusted: e.isTrusted
+				});
+			}
+		};
+		window.addEventListener("keydown", bubblingLogHandler);
+		this.register(() => {
+			window.removeEventListener("keydown", bubblingLogHandler);
 		});
 		// -----------------------------------------------------------------------
 
