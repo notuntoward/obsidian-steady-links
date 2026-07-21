@@ -1,6 +1,7 @@
 import { Plugin, Editor, MarkdownView, Notice, FileSystemAdapter, TFile, Menu, Platform } from "obsidian";
 import { Extension, EditorSelection } from "@codemirror/state";
 import { EditLinkModal } from "./EditLinkModal";
+import { EditorFileSuggest } from "./EditorFileSuggest";
 import { SteadyLinksSettingTab } from "./SettingTab";
 import { PluginSettings, LinkInfo } from "./types";
 import {
@@ -39,6 +40,8 @@ const DEFAULT_SETTINGS: PluginSettings = {
 
 export default class SteadyLinksPlugin extends Plugin {
 	settings!: PluginSettings;
+	private editorFileSuggest!: EditorFileSuggest;
+	private disabledBuiltInSuggest: any = null;
 
 	/**
 	 * Live array registered with `registerEditorExtension`.
@@ -145,9 +148,78 @@ export default class SteadyLinksPlugin extends Plugin {
 		});
 		// -----------------------------------------------------------------------
 
+		// -----------------------------------------------------------------------
+		// Capture Ctrl+n / Ctrl+p / Ctrl+b / Ctrl+f globally when suggestions are open
+		// to bypass default global commands (like Ctrl+n = New Note) and Vim overrides.
+		// -----------------------------------------------------------------------
+		this.registerDomEvent(window, "keydown", (e: KeyboardEvent) => {
+			if (!e.ctrlKey || e.shiftKey || e.altKey || e.metaKey) return;
+			const key = e.key.toLowerCase();
+			if (key !== "n" && key !== "p" && key !== "b" && key !== "f") return;
+
+			const containers = document.querySelectorAll(".suggestion-container");
+			let isAnySuggestOpen = false;
+			for (let i = 0; i < containers.length; i++) {
+				const container = containers[i];
+				if (!container.classList.contains("is-hidden") && (container as HTMLElement).style.display !== "none") {
+					isAnySuggestOpen = true;
+					break;
+				}
+			}
+
+			if (isAnySuggestOpen) {
+				e.preventDefault();
+				e.stopImmediatePropagation();
+
+				let mappedKey = "";
+				let mappedCode = "";
+				let mappedKeyCode = 0;
+
+				if (key === "n") {
+					mappedKey = "ArrowDown";
+					mappedCode = "ArrowDown";
+					mappedKeyCode = 40;
+				} else if (key === "p") {
+					mappedKey = "ArrowUp";
+					mappedCode = "ArrowUp";
+					mappedKeyCode = 38;
+				} else if (key === "b") {
+					mappedKey = "ArrowLeft";
+					mappedCode = "ArrowLeft";
+					mappedKeyCode = 37;
+				} else if (key === "f") {
+					mappedKey = "ArrowRight";
+					mappedCode = "ArrowRight";
+					mappedKeyCode = 39;
+				}
+
+				const target = document.activeElement || document;
+				const shouldBubble = !("tagName" in target) || ((target as any).tagName !== "INPUT" && (target as any).tagName !== "TEXTAREA");
+				target.dispatchEvent(new KeyboardEvent("keydown", {
+					key: mappedKey,
+					code: mappedCode,
+					keyCode: mappedKeyCode,
+					which: mappedKeyCode,
+					bubbles: shouldBubble,
+					cancelable: true
+				}));
+			}
+		}, true);
+		// -----------------------------------------------------------------------
+
 		// Register the (initially empty) extension array.  We populate it
 		// later based on the user's setting.
 		this.registerEditorExtension(this.syntaxHiderExtensions);
+
+		this.editorFileSuggest = new EditorFileSuggest(this.app, this);
+		this.registerEditorSuggest(this.editorFileSuggest);
+
+		this.app.workspace.onLayoutReady(() => {
+			if (this.settings.keepLinksSteady) {
+				this.disableBuiltInLinkSuggest();
+			}
+		});
+
 		this.applySyntaxHiderSetting();
 
 		this.addCommand({
@@ -560,6 +632,9 @@ export default class SteadyLinksPlugin extends Plugin {
 		};
 		if (this.settings.keepLinksSteady) {
 			this.syntaxHiderExtensions.push(...createLinkSyntaxHiderExtension(wikiLinkOptions));
+			this.disableBuiltInLinkSuggest();
+		} else {
+			this.enableBuiltInLinkSuggest();
 		}
 		this.app.workspace.updateOptions();
 
@@ -803,10 +878,57 @@ export default class SteadyLinksPlugin extends Plugin {
 	}
 
 	onunload() {
-		// No cleanup needed. This plugin's lifecycle is managed by Obsidian:
-		// - Editor extensions are cleared when `this.syntaxHiderExtensions` array is emptied
-		// - Event listeners in modals are cleaned up automatically when modals close
-		// - Command handlers are unregistered by the plugin system
+		this.enableBuiltInLinkSuggest();
+	}
+
+	disableBuiltInLinkSuggest() {
+		const suggests = (this.app.workspace as any).editorSuggest?.suggests;
+		if (!suggests) return;
+
+		// Find the built-in link suggest that triggers on "[["
+		const mockEditor: any = {
+			getLine: (line: number) => "[[",
+		};
+		const mockCursor: any = { line: 0, ch: 2 };
+		const mockFile: any = {};
+
+		let builtIn = null;
+		for (const s of suggests) {
+			try {
+				const trigger = s.onTrigger(mockCursor, mockEditor, mockFile);
+				if (trigger && typeof trigger === "object") {
+					const noTriggerEditor: any = {
+						getLine: (line: number) => "a",
+					};
+					const noTriggerCursor: any = { line: 0, ch: 1 };
+					const noTrigger = s.onTrigger(noTriggerCursor, noTriggerEditor, mockFile);
+					if (!noTrigger) {
+						builtIn = s;
+						break;
+					}
+				}
+			} catch {
+				// ignore
+			}
+		}
+
+		if (builtIn && suggests.includes(builtIn)) {
+			this.disabledBuiltInSuggest = builtIn;
+			const idx = suggests.indexOf(builtIn);
+			if (idx > -1) {
+				suggests.splice(idx, 1);
+			}
+		}
+	}
+
+	enableBuiltInLinkSuggest() {
+		const suggests = (this.app.workspace as any).editorSuggest?.suggests;
+		if (!suggests || !this.disabledBuiltInSuggest) return;
+
+		if (!suggests.includes(this.disabledBuiltInSuggest)) {
+			suggests.unshift(this.disabledBuiltInSuggest);
+		}
+		this.disabledBuiltInSuggest = null;
 	}
 
 	async loadSettings() {

@@ -276,3 +276,33 @@ body.le-keep-links-steady .cm-cursor {
 	background-color: var(--interactive-accent);
 	color: var(--text-on-accent) !important;
 }
+
+/* ── Suggestion Popup Hint & Flashing ─────────────────────────────── */
+
+.steady-links-hint {
+	border-top: 1px solid var(--background-modifier-border);
+	padding: 6px 12px;
+	font-size: var(--font-smaller);
+	color: var(--text-muted);
+	display: flex;
+	justify-content: flex-start;
+	align-items: center;
+	gap: 4px;
+	background-color: var(--background-secondary);
+}
+
+.steady-links-hint-key {
+	color: var(--text-normal);
+	font-weight: bold;
+}
+
+.suggestion-container.is-flashing {
+	animation: steady-links-flash 0.15s ease-in-out;
+}
+
+@keyframes steady-links-flash {
+	0% { opacity: 1; }
+	50% { opacity: 0.4; }
+	100% { opacity: 1; }
+}
+

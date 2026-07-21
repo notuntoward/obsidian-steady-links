@@ -210,8 +210,9 @@ export class Workspace {
 		this.protocolHandlers = {};
 		this.editorExtensions = [];
 		this.mobileToolbar = {};
-		this.rootSplit = {};
-		this.onLayoutReady = {};
+		this.onLayoutReady = (callback: () => any) => {
+			callback();
+		};
 		this.changeLayout = {};
 		this.getLayout = {};
 		this.createLeafInParent = {};
@@ -490,6 +491,9 @@ export class Plugin {
 		return this;
 	}
 	registerEditorExtension(): this {
+		return this;
+	}
+	registerEditorSuggest(): this {
 		return this;
 	}
 
@@ -896,6 +900,45 @@ export abstract class AbstractInputSuggest<T> {
 		this.isOpen = false;
 	}
 }
+
+export interface EditorSuggestContext {
+	editor: Editor;
+	file: TFile;
+	start: EditorPosition;
+	end: EditorPosition;
+	query: string;
+}
+
+export interface EditorSuggestTriggerInfo {
+	start: EditorPosition;
+	end: EditorPosition;
+	query: string;
+}
+
+export abstract class EditorSuggest<T> {
+	app: App;
+	limit: number = 40;
+	scope: any;
+	context: EditorSuggestContext | null = null;
+	suggestions: any;
+
+	constructor(app: App) {
+		this.app = app;
+		this.scope = {
+			register: () => {}
+		};
+		this.suggestions = {
+			selectedId: 0,
+			values: []
+		};
+	}
+
+	abstract onTrigger(cursor: EditorPosition, editor: Editor, file: TFile): EditorSuggestTriggerInfo | null;
+	abstract getSuggestions(context: EditorSuggestContext): T[] | Promise<T[]>;
+	abstract renderSuggestion(item: T, el: HTMLElement): void;
+	abstract selectSuggestion(item: T, evt: MouseEvent | KeyboardEvent): void;
+}
+
 
 // ============================================================================
 // Type-only exports

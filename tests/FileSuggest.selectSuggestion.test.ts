@@ -46,6 +46,7 @@ function makeModalStub(initialText = "Old Alias") {
 		showAliasNotice: vi.fn(),
 		clearAliasNotice: vi.fn(),
 		isTextProvisional: vi.fn().mockReturnValue(true),
+		getFocusableElements: vi.fn().mockReturnValue([]),
 		// expose destInputEl so tests can read the final dest value
 		_destInputEl: destInputEl,
 	};

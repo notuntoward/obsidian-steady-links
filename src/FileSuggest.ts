@@ -3,6 +3,19 @@ import { SuggestionItem } from "./types";
 import { isUrl } from "./utils";
 import type { EditLinkModal } from "./EditLinkModal";
 import { parseSuggestionQuery } from "./suggestionQuery";
+import {
+	getFiles,
+	getHeadingsInCurrentFile,
+	getAllHeadings,
+	getHeadingsInFile,
+	getAllBlocksInFile,
+	findFile,
+	renderSuggestionItem,
+	getCompletionText,
+	flashSuggestContainer,
+	generateBlockId,
+	addBlockIdToFile
+} from "./suggestionLogic";
 
 export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 	modal: EditLinkModal;
@@ -21,16 +34,83 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 		this.inputEl.addEventListener("focus", (e) => {
 			this.focusValue = this.inputEl.value;
 		});
+
+		// Empty block for key registration since we only need Tab handled locally
+		if (this.scope) {
+			// Register TAB key to complete the prefix/basename and not close suggest
+			this.scope.register([], "Tab", () => {
+				let selectedId = (this as any).selectedId;
+				
+				// Resolve selected ID dynamically by querying the suggest DOM list
+				if (selectedId === undefined) {
+					const suggestInnerEl = (this as any).suggestInnerEl;
+					if (suggestInnerEl) {
+						const selectedEl = suggestInnerEl.querySelector(".suggestion-item.is-selected");
+						if (selectedEl) {
+							const items = Array.from(suggestInnerEl.querySelectorAll(".suggestion-item"));
+							const index = items.indexOf(selectedEl);
+							if (index !== -1) {
+								selectedId = index;
+							}
+						}
+					}
+				}
+
+				let values = (this as any).values || (this as any).suggestions;
+				if (selectedId === undefined) {
+					selectedId = (this as any).suggestions?.selectedId;
+				}
+				if (!Array.isArray(values)) {
+					values = (this as any).suggestions?.values;
+				}
+
+				if (selectedId === undefined || !values || !values[selectedId]) {
+					return true;
+				}
+
+				const item = values[selectedId];
+				const completionText = getCompletionText(item, this.inputEl.value);
+
+				if (this.inputEl.value.trim() === completionText.trim()) {
+					// Flash completion window to show it is already fully completed
+					const containers = document.querySelectorAll(".suggestion-container");
+					for (let i = 0; i < containers.length; i++) {
+						const container = containers[i];
+						if (!container.classList.contains("is-hidden") && (container as HTMLElement).style.display !== "none") {
+							flashSuggestContainer(container as HTMLElement);
+							break;
+						}
+					}
+					return false; // consume event
+				} else {
+					this.inputEl.value = completionText;
+					this.modal.handleDestInput();
+					// Refresh suggestion window to match the new value
+					this.inputEl.dispatchEvent(new Event("input"));
+					return false; // consume event
+				}
+			});
+		}
 	}
 
 	async getSuggestions(query: string): Promise<SuggestionItem[]> {
-		if (isUrl(query)) return [];
+		// Only show suggestions if the destination input is actually focused
+		const isAttached = this.inputEl.ownerDocument?.body?.contains(this.inputEl);
+		if (isAttached && this.inputEl.ownerDocument.activeElement !== this.inputEl) {
+			return [];
+		}
 
 		// Don't show suggestions automatically on focus when tabbing
 		// Only show if the user has actually modified the input
 		if (query === this.focusValue && query.trim().length > 0) {
 			return [];
 		}
+
+		return this.getSuggestionsInternal(query);
+	}
+
+	async getSuggestionsInternal(query: string): Promise<SuggestionItem[]> {
+		if (isUrl(query)) return [];
 
 		const trimmedQuery = query.trim();
 
@@ -82,306 +162,32 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 	}
 
 	getFiles(query: string): SuggestionItem[] {
-		const files = this.app.vault.getFiles();
-		const lowerQuery = query.toLowerCase();
-		const currentFile = this.app.workspace.getActiveFile();
-		const currentDir = currentFile ? currentFile.parent?.path : "";
-
-		const results: SuggestionItem[] = [];
-
-		for (const f of files) {
-			const aliases = lowerQuery ? this.getFileAliases(f) : [];
-			const matchesName =
-				f.path.toLowerCase().includes(lowerQuery) ||
-				f.basename.toLowerCase().includes(lowerQuery);
-			const matchingAliases = aliases.filter((alias) =>
-				alias.toLowerCase().includes(lowerQuery)
-			);
-
-			// Skip file if neither name nor any alias matches
-			if (!matchesName && matchingAliases.length === 0) continue;
-
-			const fileDir = f.parent?.path || "";
-			const showPath = fileDir !== currentDir && fileDir !== "";
-
-			// Always add the file itself when name matches
-			if (matchesName) {
-				results.push({
-					type: "file" as const,
-					file: f,
-					basename: f.basename,
-					path: f.path,
-					name: f.name,
-					extension: f.extension,
-					displayPath: showPath ? fileDir + "/" : "",
-				});
-			}
-
-			// When there is query text, add alias suggestions:
-			// - All aliases if the file name matched (to allow picking an alias for a known file)
-			// - Only matching aliases if found via alias search
-			// Skip alias rows when query is empty (avoid flooding the list before the user types)
-			if (lowerQuery) {
-				const aliasesToShow = matchesName ? aliases : matchingAliases;
-				for (const alias of aliasesToShow) {
-					results.push({
-						type: "alias" as const,
-						file: f,
-						alias: alias,
-						basename: f.basename,
-						path: f.path,
-						name: f.name,
-						extension: f.extension,
-						displayPath: showPath ? fileDir + "/" : "",
-					});
-				}
-			}
-		}
-
-		// Sort by modification time, putting files before aliases
-		results.sort((a, b) => {
-			if (a.file && b.file) {
-				if (a.type === "file" && b.type === "alias") return -1;
-				if (a.type === "alias" && b.type === "file") return 1;
-				return b.file.stat.mtime - a.file.stat.mtime;
-			}
-			return 0;
-		});
-
-		return results.slice(0, 20);
-	}
-
-	getFileAliases(file: TFile): string[] {
-		const cache = this.app.metadataCache.getFileCache(file);
-		if (!cache || !cache.frontmatter) return [];
-
-		const aliases: string[] = [];
-		const frontmatter = cache.frontmatter;
-
-		// Handle both alias and aliases fields
-		if (frontmatter.alias) {
-			if (Array.isArray(frontmatter.alias)) {
-				aliases.push(...frontmatter.alias.map(String));
-			} else if (typeof frontmatter.alias === "string") {
-				aliases.push(frontmatter.alias);
-			}
-		}
-
-		if (frontmatter.aliases) {
-			if (Array.isArray(frontmatter.aliases)) {
-				aliases.push(...frontmatter.aliases.map(String));
-			} else if (typeof frontmatter.aliases === "string") {
-				aliases.push(frontmatter.aliases);
-			}
-		}
-
-		return aliases.filter((alias) => alias && typeof alias === "string");
+		return getFiles(query, this.app);
 	}
 
 	getHeadingsInCurrentFile(): SuggestionItem[] {
-		const activeFile = this.app.workspace.getActiveFile();
-		if (!activeFile) return [];
-		const cache = this.app.metadataCache.getFileCache(activeFile);
-		if (!cache || !cache.headings) return [];
-		return cache.headings.map((h) => ({
-			type: "heading" as const,
-			heading: h.heading,
-			level: h.level,
-			file: activeFile,
-		}));
+		return getHeadingsInCurrentFile(this.app);
 	}
 
 	getAllHeadings(): SuggestionItem[] {
-		const files = this.app.vault.getMarkdownFiles();
-		const all: SuggestionItem[] = [];
-		for (const file of files) {
-			const cache = this.app.metadataCache.getFileCache(file);
-			if (cache && cache.headings) {
-				cache.headings.forEach((h) => {
-					all.push({
-						type: "heading",
-						heading: h.heading,
-						level: h.level,
-						file,
-					});
-				});
-			}
-		}
-		return all.slice(0, 50);
+		return getAllHeadings(this.app);
 	}
 
 	getHeadingsInFile(fileName: string, headingQuery = ""): SuggestionItem[] {
-		const file = this.findFile(fileName);
-		if (!file) return [];
+		return getHeadingsInFile(fileName, this.app, headingQuery);
+	}
 
-		const cache = this.app.metadataCache.getFileCache(file);
-		if (!cache || !cache.headings) return [];
-
-		const lowerHeadingQuery = headingQuery.toLowerCase();
-		return cache.headings
-			.filter((h) => !headingQuery || h.heading.toLowerCase().includes(lowerHeadingQuery))
-			.map((h) => ({
-				type: "heading" as const,
-				heading: h.heading,
-				level: h.level,
-				file,
-			}));
+	getAllBlocksInFile(file: TFile, blockQuery = ""): Promise<SuggestionItem[]> {
+		return getAllBlocksInFile(file, this.app, blockQuery);
 	}
 
 	findFile(fileName: string): TFile | undefined {
-		if (!fileName) return undefined;
-		const activeFile = this.app.workspace.getActiveFile();
-		const sourcePath = activeFile ? activeFile.path : "";
-		let file: TFile | null = null;
-		try {
-			file = this.app.metadataCache.getFirstLinkpathDest(fileName, sourcePath);
-		} catch {
-			file = null;
-		}
-		if (file) return file;
-
-		// Fallback for partial/subpath matches
-		const files = this.app.vault.getFiles();
-		const lowerFileName = fileName.toLowerCase();
-		return (
-			files.find((f) => f.basename.toLowerCase() === lowerFileName) ||
-			files.find((f) => f.path.toLowerCase().includes(lowerFileName))
-		);
-	}
-
-	async getAllBlocksInFile(file: TFile, blockQuery = ""): Promise<SuggestionItem[]> {
-		const cache = this.app.metadataCache.getFileCache(file);
-		if (!cache) return [];
-
-		const content = await this.app.vault.cachedRead(file);
-		const lines = content.split("\n");
-		const results: SuggestionItem[] = [];
-
-		if (cache.sections) {
-			for (const section of cache.sections) {
-				if (["paragraph", "list", "blockquote", "code"].includes(section.type)) {
-					const startLine = section.position.start.line;
-					const endLine = section.position.end.line;
-					const blockText = lines.slice(startLine, endLine + 1).join("\n");
-					const blockIdMatch = blockText.match(/\^([a-zA-Z0-9-]+)\s*$/);
-					const blockId = blockIdMatch ? blockIdMatch[1] : null;
-					const displayText = blockId
-						? blockText.replace(/\s*\^[a-zA-Z0-9-]+\s*$/, "")
-						: blockText;
-
-					if (blockQuery) {
-						const q = blockQuery.toLowerCase();
-						const matchesId = blockId && blockId.toLowerCase().includes(q);
-						const matchesText = displayText.toLowerCase().includes(q);
-						if (!matchesId && !matchesText) continue;
-					}
-
-					results.push({
-						type: "block",
-						blockId,
-						blockText: displayText.trim(),
-						file,
-						position: section.position,
-					});
-				}
-			}
-		}
-
-		return results;
-	}
-
-	generateBlockId(): string {
-		let result = "";
-		while (result.length < 6) {
-			result += Math.random().toString(36).substring(2);
-		}
-		return result.substring(0, 6);
-	}
-
-	async addBlockIdToFile(file: TFile, position: any, blockId: string) {
-		const content = await this.app.vault.read(file);
-		const lines = content.split("\n");
-		const endLine = position.end.line;
-		lines[endLine] = lines[endLine].trimEnd() + ` ^${blockId}`;
-		await this.app.vault.modify(file, lines.join("\n"));
+		return findFile(fileName, this.app);
 	}
 
 	renderSuggestion(item: SuggestionItem, el: HTMLElement): void {
-		el.addClass("mod-complex");
-		const content = el.createDiv({ cls: "suggestion-content" });
-
-		if (item.type === "heading") {
-			content.createDiv({
-				text: item.heading || "",
-				cls: "suggestion-title",
-			});
-			const aux = el.createDiv({ cls: "suggestion-aux" });
-			aux.createSpan({
-				text: `H${item.level}`,
-				cls: "suggestion-flair",
-			});
-
-			if (item.file) {
-				const currentQuery = this.inputEl.value.trim();
-				const currentFile = this.app.workspace.getActiveFile();
-				const isFilenameHeadingPattern =
-					currentQuery.includes("#") &&
-					!currentQuery.startsWith("#") &&
-					!currentQuery.startsWith("##");
-				const showPath =
-					!isFilenameHeadingPattern &&
-					(!currentFile || item.file.path !== currentFile.path);
-
-				if (showPath) {
-					content.createDiv({
-						text: item.file.path,
-						cls: "suggestion-note",
-					});
-				}
-			}
-		} else if (item.type === "block") {
-			const blockText = item.blockText || "";
-			const displayText =
-				blockText.length > 100 ? blockText.substring(0, 100) + "..." : blockText;
-			content.createDiv({
-				text: displayText,
-				cls: "suggestion-title",
-			});
-			if (item.blockId) {
-				content.createDiv({
-					text: `^${item.blockId}`,
-					cls: "suggestion-note",
-				});
-			}
-		} else if (item.type === "alias") {
-			// Alias
-			const displayName = item.alias || "";
-			const displayPath = item.displayPath || "";
-
-			content.createDiv({ text: displayName, cls: "suggestion-title" });
-
-			// Show the actual filename as a note
-			content.createDiv({
-				text: `→ ${item.basename || ""}`,
-				cls: "suggestion-note",
-			});
-
-			// Only show path if it's in a different folder than current note
-			if (displayPath && displayPath !== "/") {
-				content.createDiv({ text: displayPath, cls: "suggestion-note" });
-			}
-		} else {
-			// File
-			const displayName = item.basename || "";
-			const displayPath = item.displayPath || "";
-
-			content.createDiv({ text: displayName, cls: "suggestion-title" });
-
-			// Only show path if it's in a different folder than current note
-			if (displayPath && displayPath !== "/") {
-				content.createDiv({ text: displayPath, cls: "suggestion-note" });
-			}
-		}
+		const query = this.inputEl.value;
+		renderSuggestionItem(item, el, query, this.app);
 	}
 
 	async selectSuggestion(item: SuggestionItem, evt?: MouseEvent | KeyboardEvent): Promise<void> {
@@ -400,9 +206,9 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 			}
 		} else if (item.type === "block") {
 			if (!item.blockId) {
-				const newBlockId = this.generateBlockId();
+				const newBlockId = generateBlockId();
 				if (item.file && item.position) {
-					await this.addBlockIdToFile(item.file, item.position, newBlockId);
+					await addBlockIdToFile(item.file, this.app, item.position, newBlockId);
 					item.blockId = newBlockId;
 				}
 			}
@@ -417,7 +223,6 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 				linkValue = `#^${item.blockId}`;
 			}
 		} else if (item.type === "alias") {
-			// Alias - destination is the actual file basename, not the alias text
 			if (item.file && item.file.extension === "md") {
 				linkValue = item.file.basename || "";
 			} else if (item.file) {
@@ -425,10 +230,8 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 			} else {
 				linkValue = item.alias || "";
 			}
-			// Selecting an alias row: use the alias as link text
 			newLinkText = item.alias || "";
 		} else {
-			// File row: use the basename as link text (clears any stale alias)
 			if (item.extension === "md") {
 				linkValue = item.basename || "";
 				newLinkText = item.basename || "";
@@ -442,8 +245,8 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 		this.modal.handleDestInput();
 		this.close();
 
-		// Update link text after close so the suggester popup is gone and the
-		// text input is fully visible before we write to it.
+		let focusMoved = false;
+
 		if (newLinkText !== null && this.modal.isTextProvisional()) {
 			const textEl = this.modal.textInput.inputEl;
 			textEl.value = newLinkText;
@@ -454,22 +257,40 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 			} else {
 				this.modal.clearAliasNotice();
 			}
+
+			// Focus and select the Link Text field if selecting an alias
+			textEl.focus();
+			textEl.select();
+			focusMoved = true;
 		}
 
-		if (document.activeElement !== this.inputEl) {
-			this.inputEl.focus();
+		if (!focusMoved && typeof this.modal.getFocusableElements === "function") {
+			const focusable = this.modal.getFocusableElements();
+			const destIdx = focusable.indexOf(this.inputEl);
+			if (destIdx !== -1 && focusable.length > 1) {
+				const nextEl = focusable[(destIdx + 1) % focusable.length];
+				if (nextEl) {
+					nextEl.focus();
+					if (nextEl.tagName === "INPUT") {
+						(nextEl as HTMLInputElement).select();
+					}
+				}
+			}
 		}
 	}
 
-	// Helper method to check if suggestions are open
 	get isSuggestOpen(): boolean {
-		// Check if the suggestion container exists and has suggestions
-		const container = document.querySelector(".suggestion-container");
-		return container !== null && !container.hasClass("is-hidden");
+		const containers = document.querySelectorAll(".suggestion-container");
+		for (let i = 0; i < containers.length; i++) {
+			const container = containers[i];
+			if (!container.classList.contains("is-hidden") && (container as HTMLElement).style.display !== "none") {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	selectCurrentSuggestion(): void {
-		// Find the selected suggestion and trigger its click event
 		const selected = document.querySelector(".suggestion-item.is-selected") as HTMLElement;
 		if (selected) {
 			selected.click();

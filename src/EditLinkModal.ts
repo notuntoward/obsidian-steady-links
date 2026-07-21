@@ -364,16 +364,11 @@ export class EditLinkModal extends Modal {
 		const modalKeydownHandler = (e: KeyboardEvent) => {
 			// TAB: accept suggestion if open, otherwise cycle focus
 			if (e.key === "Tab") {
-				// If on dest and suggester open, Tab accept suggestion (don't cycle focus)
+				// If on dest and suggester open, let suggester handle Tab completion (don't cycle focus)
 				if (document.activeElement === this.destInput.inputEl) {
 					const isOpen = this.fileSuggest.isSuggestOpen;
-					if (isOpen && this.destInput.getValue().trim().length > 0) {
-						// Only accept suggestion if text is provisional (not from existing link)
-						if (this.isTextProvisional()) {
-							e.preventDefault();
-							this.fileSuggest.selectCurrentSuggestion();
-							return; // Stay on dest input after accepting suggestion
-						}
+					if (isOpen) {
+						return; // Let the suggest scope handler process Tab completion
 					}
 				}
 
