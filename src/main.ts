@@ -149,6 +149,50 @@ export default class SteadyLinksPlugin extends Plugin {
 		// -----------------------------------------------------------------------
 
 		// -----------------------------------------------------------------------
+		// Monkeypatch commands.executeCommandById to suppress editor movement
+		// commands when autocomplete/suggestions are open.
+		// -----------------------------------------------------------------------
+		const commands = (this.app as any).commands;
+		if (commands && commands.executeCommandById) {
+			const originalExecuteCommandById = commands.executeCommandById;
+			commands.executeCommandById = function (id: string) {
+				// Detect if any suggestion popover is open
+				const containers = document.querySelectorAll(".suggestion-container");
+				let isAnySuggestOpen = false;
+				for (let i = 0; i < containers.length; i++) {
+					const container = containers[i];
+					if (!container.classList.contains("is-hidden") && (container as HTMLElement).style.display !== "none") {
+						isAnySuggestOpen = true;
+						break;
+					}
+				}
+
+				if (isAnySuggestOpen) {
+					const lowerId = id.toLowerCase();
+					const isMovementCommand =
+						lowerId === "editor:go-down" ||
+						lowerId === "editor:go-up" ||
+						lowerId === "editor:go-left" ||
+						lowerId === "editor:go-right" ||
+						(lowerId.includes("emacs") &&
+							(lowerId.includes("line") || lowerId.includes("char") || lowerId.includes("word") || lowerId.includes("paragraph") || lowerId.includes("scroll")));
+					
+					if (isMovementCommand) {
+						console.log("[SteadyLinks] Suppressed cursor command when suggestions are open:", id);
+						return true; // Return true to signal the command was handled
+					}
+				}
+
+				return originalExecuteCommandById.apply(this, arguments);
+			};
+
+			this.register(() => {
+				commands.executeCommandById = originalExecuteCommandById;
+			});
+		}
+		// -----------------------------------------------------------------------
+
+		// -----------------------------------------------------------------------
 		// Capture Ctrl+n / Ctrl+p / Ctrl+b / Ctrl+f globally when suggestions are open
 		// to bypass default global commands (like Ctrl+n = New Note) and Emacs/Vim overrides.
 		// -----------------------------------------------------------------------
