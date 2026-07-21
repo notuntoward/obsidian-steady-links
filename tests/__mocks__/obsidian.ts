@@ -511,6 +511,9 @@ export class Plugin {
 	registerDomEvent(): this {
 		return this;
 	}
+	register(cb: () => any): void {
+		// Mock stub
+	}
 	registerInterval(): number {
 		return 0;
 	}

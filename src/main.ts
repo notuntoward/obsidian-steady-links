@@ -152,7 +152,7 @@ export default class SteadyLinksPlugin extends Plugin {
 		// Capture Ctrl+n / Ctrl+p / Ctrl+b / Ctrl+f globally when suggestions are open
 		// to bypass default global commands (like Ctrl+n = New Note) and Vim overrides.
 		// -----------------------------------------------------------------------
-		this.registerDomEvent(window, "keydown", (e: KeyboardEvent) => {
+		const globalKeydownHandler = (e: KeyboardEvent) => {
 			if (!e.ctrlKey || e.shiftKey || e.altKey || e.metaKey) return;
 			const key = e.key.toLowerCase();
 			if (key !== "n" && key !== "p" && key !== "b" && key !== "f") return;
@@ -166,6 +166,8 @@ export default class SteadyLinksPlugin extends Plugin {
 					break;
 				}
 			}
+
+			console.log("[SteadyLinks Capturing Keydown]", { key, isAnySuggestOpen });
 
 			if (isAnySuggestOpen) {
 				e.preventDefault();
@@ -204,7 +206,11 @@ export default class SteadyLinksPlugin extends Plugin {
 					cancelable: true
 				}));
 			}
-		}, true);
+		};
+		window.addEventListener("keydown", globalKeydownHandler, true);
+		this.register(() => {
+			window.removeEventListener("keydown", globalKeydownHandler, true);
+		});
 		// -----------------------------------------------------------------------
 
 		// Register the (initially empty) extension array.  We populate it
