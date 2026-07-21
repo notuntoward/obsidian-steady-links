@@ -2482,6 +2482,92 @@ describe("Integration: DOM copy event focus handling", () => {
 		expect(view.state.doc.toString()).toBe("- [ ][[Note-01]]");
 		expect(view.state.selection.main.head).toBe(4);
 	});
+
+	it("Home key on a bullet list item starting with a link snaps to textFrom on 1st press, then line start on 2nd press, then stays at 0", () => {
+		const doc = "- [[Note-01]]";
+		// Link starts at index 2. textFrom is at index 4.
+		// Start cursor at the end of the line (index 13)
+		view = createTestView(doc, 13);
+
+		// First hit of Home
+		let handled = handleHomeKey(view, false);
+		expect(handled).toBe(true);
+		expect(view.state.selection.main.head).toBe(4); // textFrom
+
+		// Second hit of Home
+		handled = handleHomeKey(view, false);
+		expect(handled).toBe(true);
+		expect(view.state.selection.main.head).toBe(0); // line.from
+
+		// Third hit of Home
+		handled = handleHomeKey(view, false);
+		expect(handled).toBe(true);
+		expect(view.state.selection.main.head).toBe(0); // stays at 0
+	});
+
+	it("Home key on a numbered list item starting with a link snaps to textFrom on 1st press, then line start on 2nd press, then stays at 0", () => {
+		const doc = "10. [[Note-01]]";
+		// Link starts at index 4. textFrom is at index 6.
+		// Start cursor at the end of the line (index 15)
+		view = createTestView(doc, 15);
+
+		// First hit of Home
+		let handled = handleHomeKey(view, false);
+		expect(handled).toBe(true);
+		expect(view.state.selection.main.head).toBe(6); // textFrom
+
+		// Second hit of Home
+		handled = handleHomeKey(view, false);
+		expect(handled).toBe(true);
+		expect(view.state.selection.main.head).toBe(0); // line.from
+
+		// Third hit of Home
+		handled = handleHomeKey(view, false);
+		expect(handled).toBe(true);
+		expect(view.state.selection.main.head).toBe(0); // stays at 0
+	});
+
+	it("emacs.moveToBeginning on a numbered list item with a link snaps to textFrom on first press, 0 on second press, and stays at 0", () => {
+		const doc = "1. [[Note-01]]";
+		// Link starts at index 3. textFrom is at index 5.
+		// Start cursor at end of line (index 14)
+		view = createTestView(doc, 14);
+
+		// First press of Emacs beginning-of-line: targets homeOffset (index 3)
+		view.dispatch({
+			selection: EditorSelection.cursor(3),
+			userEvent: "emacs.moveToBeginning",
+		});
+		expect(view.state.selection.main.head).toBe(5); // textFrom
+
+		// Second press of Emacs beginning-of-line: targets index 3 again
+		view.dispatch({
+			selection: EditorSelection.cursor(3),
+			userEvent: "emacs.moveToBeginning",
+		});
+		expect(view.state.selection.main.head).toBe(0); // line start
+
+		// Third press of Emacs beginning-of-line: targets index 3 again
+		view.dispatch({
+			selection: EditorSelection.cursor(3),
+			userEvent: "emacs.moveToBeginning",
+		});
+		expect(view.state.selection.main.head).toBe(0); // stays at 0
+	});
+
+	it("emacs.moveToBeginning on a numbered list item with a link snaps to textFrom even if target is 0 on first press", () => {
+		const doc = "1. [[Note-01]]";
+		// Link starts at index 3. textFrom is at index 5.
+		// Start cursor at end of line (index 14)
+		view = createTestView(doc, 14);
+
+		// Emacs command dispatches 0
+		view.dispatch({
+			selection: EditorSelection.cursor(0),
+			userEvent: "emacs.moveToBeginning",
+		});
+		expect(view.state.selection.main.head).toBe(5); // textFrom
+	});
 });
 
 

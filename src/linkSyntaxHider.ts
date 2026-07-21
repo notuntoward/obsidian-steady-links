@@ -1575,25 +1575,19 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 				? (oldH: number, spanTo: number, spanTextFrom: number) => oldH >= spanTo || oldH <= spanTextFrom
 				: (oldH: number, spanTo: number, spanTextFrom: number) => oldH > spanTo;
 
-			// Helper: check if a position is the "home" position of a line
-			// (first non-space character after any structural markers like
-			// list bullets, numbers, checkboxes, headings, blockquotes).
-			const isHomePosition = (pos: number): boolean => {
-				const line = state.doc.lineAt(pos);
-				const lineText = line.text;
-				const match = lineText.match(/^(\s*(?:(?:(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?)|(?:#+|>+)\s+)*)/);
-				const homeCol = match ? match[0].length : 0;
-				return pos === line.from + homeCol;
-			};
-
 			const lineStartSpan = linkSpans.find(
 				(span) => {
 					// Original check: link starts at column 0
 					const isLineStart = span.leading.from === state.doc.lineAt(span.leading.from).from;
 					// New check: link starts at the "home" position (after list markers, etc.)
-					const isHomePos = isHomePosition(span.leading.from);
+					const isHomePos = isHomePosition(span.leading.from, state.doc);
 					const matchesPosition = isLineStart || isHomePos;
 					
+					if (isEmacsMoveToBeginning) {
+						// For Emacs move-to-beginning, we match if the span is at the line start or home position.
+						// The target position could be anywhere, so we don't require head === span.leading.from etc.
+						return matchesPosition;
+					}
 					return matchesPosition &&
 						lineStartSpanOutsideCheck(oldHead, span.to, span.textFrom) &&
 						(head === span.leading.from || head === span.textFrom);
@@ -1602,62 +1596,13 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 
 			if (lineStartSpan) {
 				const isLineStart = lineStartSpan.leading.from === state.doc.lineAt(lineStartSpan.leading.from).from;
-				const isHomePos = isHomePosition(lineStartSpan.leading.from);
+				const isHomePos = isHomePosition(lineStartSpan.leading.from, state.doc);
 				
-				if (
-					head === lineStartSpan.leading.from &&
-					(intentionalLeadingFromNow === head || isEmacsMoveToBeginning)
-				) {
-					// For links at column 0 (isLineStart), keep cursor at leading.from
-					// so editor.getCursor() returns ch:0 for kill-line / kill-region.
-					// For links after list markers (isHomePos but not isLineStart),
-					// leading.from is NOT column 0, so we should NOT keep the cursor there.
-					// Instead, let it stay at leading.from but don't set intentionalLeadingFrom.
-					if (isLineStart) {
-						// Intentional Home / Emacs Ctrl+A placement at leading.from —
-						// do not snap.  Keep cursor at ch:0 so editor.getCursor()
-						// returns ch:0 for kill-line / kill-region.
-						// Mark arrivedFromOutside so Obsidian normalisation is suppressed.
-						(update.view as any).__leArrivedFromOutside = lineStartSpan.leading.from;
-						// For Emacs Ctrl+A, we also need to set the
-						// intentionalLeadingFrom effect so subsequent operations
-						// (kill-line, Enter) know the cursor is intentionally here.
-						if (isEmacsMoveToBeginning) {
-							needsAdjust = true; // trigger dispatch to attach effects
-							(update.view as any).__leEmacsIntentionalLeadingFrom =
-								lineStartSpan.leading.from;
-							(update.view as any).__leEmacsPendingExpansion = {
-								from: lineStartSpan.from,
-								to: lineStartSpan.to,
-							};
-						}
-					} else if (isHomePos && isEmacsMoveToBeginning) {
-						// Link after list marker: leading.from is NOT column 0.
-						// If we are arriving from textFrom (meaning this is the second press),
-						// redirect to the line start (column 0).
-						// Otherwise, snap to textFrom (just like standard Home) to keep it collapsed.
-						if (oldHead === lineStartSpan.textFrom) {
-							head = state.doc.lineAt(head).from;
-							needsAdjust = true;
-							(update.view as any).__leArrivedFromOutside = lineStartSpan.leading.from;
-						} else {
-							head = lineStartSpan.textFrom;
-							needsAdjust = true;
-							(update.view as any).__leArrivedFromOutside = lineStartSpan.leading.from;
-						}
-					}
-				} else if (head === lineStartSpan.leading.from) {
-					// Case A: snap to visible text start
-					head = lineStartSpan.textFrom;
+				if (isEmacsMoveToBeginning) {
+					head = getLineStartTarget(lineStartSpan, state.doc.lineAt(head).from, oldHead);
 					needsAdjust = true;
-					(update.view as any).__leArrivedFromOutside = lineStartSpan.leading.from;
-				} else if (isEmacsMoveToBeginning && head === lineStartSpan.textFrom) {
-					// Emacs Ctrl+A landed at textFrom.
-					// If the link starts at column 0 (isLineStart), redirect to leading.from
-					// so editor.getCursor() returns ch:0 for kill-line.
-					if (isLineStart) {
-						head = lineStartSpan.leading.from;
-						needsAdjust = true;
+					
+					if (head === lineStartSpan.leading.from) {
 						(update.view as any).__leArrivedFromOutside = lineStartSpan.leading.from;
 						(update.view as any).__leEmacsIntentionalLeadingFrom =
 							lineStartSpan.leading.from;
@@ -1665,11 +1610,23 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 							from: lineStartSpan.from,
 							to: lineStartSpan.to,
 						};
-					} else {
-						// Link after list marker: let it stay at textFrom.
-						needsAdjust = true;
+					} else if (head === lineStartSpan.textFrom || head === state.doc.lineAt(head).from) {
 						(update.view as any).__leArrivedFromOutside = lineStartSpan.leading.from;
 					}
+				} else if (
+					head === lineStartSpan.leading.from &&
+					(intentionalLeadingFromNow === head)
+				) {
+					// For links at column 0 (isLineStart), keep cursor at leading.from
+					// so editor.getCursor() returns ch:0 for kill-line / kill-region.
+					if (isLineStart) {
+						(update.view as any).__leArrivedFromOutside = lineStartSpan.leading.from;
+					}
+				} else if (head === lineStartSpan.leading.from) {
+					// Case A: snap to visible text start
+					head = lineStartSpan.textFrom;
+					needsAdjust = true;
+					(update.view as any).__leArrivedFromOutside = lineStartSpan.leading.from;
 				} else {
 					// Case B: already at textFrom, just mark it
 					needsAdjust = true; // trigger dispatch so the effect is attached
@@ -2060,6 +2017,36 @@ const deleteInLinkTextKeymap = keymap.of([
 	},
 ]);
 
+// Helper: check if a position is the "home" position of a line
+// (first non-space character after any structural markers like
+// list bullets, numbers, checkboxes, headings, blockquotes).
+function isHomePosition(pos: number, doc: EditorState["doc"]): boolean {
+	const line = doc.lineAt(pos);
+	const lineText = line.text;
+	const match = lineText.match(/^(\s*(?:(?:(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?)|(?:#+|>+)\s+)*)/);
+	const homeCol = match ? match[0].length : 0;
+	return pos === line.from + homeCol;
+}
+
+/**
+ * Determine the target cursor position for a HOME or Emacs beginning-of-line action
+ * on a line that starts with a link (either at column 0 or after list markers).
+ */
+function getLineStartTarget(
+	span: { from: number; textFrom: number; leading: { from: number } },
+	lineFrom: number,
+	currentPos: number
+): number {
+	const isLineStart = span.leading.from === lineFrom;
+	if (isLineStart) {
+		return span.from;
+	}
+	if (currentPos === span.textFrom || currentPos === lineFrom) {
+		return lineFrom;
+	}
+	return span.textFrom;
+}
+
 // ---------------------------------------------------------------------------
 // Enter key at link end
 // ---------------------------------------------------------------------------
@@ -2141,20 +2128,12 @@ function handleHomeKey(view: EditorView, extend: boolean): boolean {
 	const linkSpans = buildVisibleLinkSpans(hidden, doc);
 
 	for (const span of linkSpans) {
-		if (span.leading.from !== line.from) continue; // link must start at line start
+		const isLineStart = span.leading.from === line.from;
+		const isHomePos = isHomePosition(span.leading.from, doc);
+		if (!isLineStart && !isHomePos) continue;
 
-		// Fire for any cursor position on this line, including inside the link.
-		// The cursor corrector normally snaps Home-from-right to textFrom, but
-		// we need leading.from (ch:0) so that editor.getCursor() returns ch:0
-		// and external commands like Emacs kill-line select the full raw link.
+		const dest = getLineStartTarget(span, line.from, head);
 
-		// Cursor is on the same line as a line-start link.
-		// We dispatch to span.from (= line.from = ch:0) so that
-		// editor.getCursor() returns ch:0, which makes external commands like
-		// Emacs kill-line select from the real start of the raw link text.
-		// The intentionalLeadingFromField suppresses the normal cursor
-		// corrector bounce (which would snap to textFrom or prev-line).
-		const dest = span.from;
 		debugLog("home key snap", {
 			lineFrom: line.from,
 			lineTo: line.to,
@@ -2166,17 +2145,24 @@ function handleHomeKey(view: EditorView, extend: boolean): boolean {
 			textTo: span.textTo,
 			lineText: line.text,
 		});
+
+		const effects: any[] = [];
+		if (dest === span.textFrom) {
+			effects.push(arrivedAtTextFromFromOutsideEffect.of(true));
+		}
+		if (dest === span.from) {
+			effects.push(arrivedAtTextFromFromOutsideEffect.of(true));
+			effects.push(intentionalLeadingFromEffect.of(span.from));
+			effects.push(setPendingExternalSelectionExpansion.of({ from: span.from, to: span.to }));
+		}
+
 		view.dispatch({
 			selection: extend
 				? EditorSelection.range(sel.main.anchor, dest)
 				: EditorSelection.cursor(dest),
 			scrollIntoView: true,
 			userEvent: "select",
-			effects: [
-				arrivedAtTextFromFromOutsideEffect.of(true),
-				intentionalLeadingFromEffect.of(span.from),
-				setPendingExternalSelectionExpansion.of({ from: span.from, to: span.to }),
-			],
+			effects: effects.length > 0 ? effects : undefined,
 		});
 		return true;
 	}
