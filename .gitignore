@@ -5,6 +5,9 @@ main.js.map
 *.js
 tsconfig.tsbuildinfo
 
+# Test coverage output
+coverage/
+
 # npm
 node_modules
 
