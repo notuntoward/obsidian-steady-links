@@ -831,19 +831,37 @@ export default class SteadyLinksPlugin extends Plugin {
 		if (!suggests) return;
 
 		// Find the built-in link suggest that triggers on "[["
+		const mockFile: any = {
+			path: "mock.md",
+			name: "mock.md",
+			extension: "md",
+			vault: this.app.vault,
+			stat: { ctime: 0, mtime: 0, size: 0 },
+			parent: { path: "", name: "" }
+		};
+
 		const mockEditor: any = {
 			getLine: (line: number) => "[[",
+			getCursor: () => ({ line: 0, ch: 2 }),
+			getValue: () => "[[",
+			getSelection: () => "",
 		};
+
 		const mockCursor: any = { line: 0, ch: 2 };
-		const mockFile: any = {};
 
 		let builtIn = null;
 		for (const s of suggests) {
+			if (s === this.editorFileSuggest || s.constructor?.name === "EditorFileSuggest") {
+				continue;
+			}
 			try {
 				const trigger = s.onTrigger(mockCursor, mockEditor, mockFile);
 				if (trigger && typeof trigger === "object") {
 					const noTriggerEditor: any = {
 						getLine: (line: number) => "a",
+						getCursor: () => ({ line: 0, ch: 1 }),
+						getValue: () => "a",
+						getSelection: () => "",
 					};
 					const noTriggerCursor: any = { line: 0, ch: 1 };
 					const noTrigger = s.onTrigger(noTriggerCursor, noTriggerEditor, mockFile);
@@ -852,17 +870,20 @@ export default class SteadyLinksPlugin extends Plugin {
 						break;
 					}
 				}
-			} catch {
-				// ignore
+			} catch (e) {
+				console.log("[SteadyLinks] Error testing suggest provider:", s, e);
 			}
 		}
 
 		if (builtIn && suggests.includes(builtIn)) {
+			console.log("[SteadyLinks] Disabling built-in suggest provider:", builtIn.constructor?.name || builtIn);
 			this.disabledBuiltInSuggest = builtIn;
 			const idx = suggests.indexOf(builtIn);
 			if (idx > -1) {
 				suggests.splice(idx, 1);
 			}
+		} else {
+			console.log("[SteadyLinks] Could not find built-in link suggest to disable among:", suggests.map((s: any) => s.constructor?.name || s));
 		}
 	}
 
