@@ -30,6 +30,7 @@ import {
 	StateEffect,
 	StateField,
 	Transaction,
+	ChangeSet,
 } from "@codemirror/state";
 import { wikiLinkVisibleTextOffset, type WikiLinkHidingOptions } from "./utils";
 
@@ -2994,7 +2995,35 @@ function isMarkdownLinkSpan(doc: EditorState["doc"], span: VisibleLinkSpan): boo
 	return stripped.startsWith("[") && !stripped.startsWith("[[");
 }
 
-function rewriteDeleteChangeForLinks(change: ChangeSpec, links: LinkSpan[]): ChangeSpec[] {
+/**
+ * If `link` is a bare (unaliased) wikilink — `[[Destination]]` or
+ * `![[Destination]]`, with no `|alias` — returns the raw destination text
+ * (the exact substring between the brackets, ignoring any visual
+ * shortening). Returns null for markdown links, already-aliased wikilinks,
+ * or anything that doesn't match the expected `[[...]]` / `![[...]]` shape.
+ *
+ * For a bare wikilink the visible text *is* the destination, so a partial
+ * deletion of the visible text would otherwise silently corrupt the note
+ * reference. Callers use this to convert such an edit into an aliased
+ * wikilink instead, preserving the original destination.
+ */
+function getBareWikiLinkDestination(doc: EditorState["doc"], link: LinkSpan): string | null {
+	const isEmbed = doc.sliceString(link.from, link.from + 1) === "!";
+	const openLen = isEmbed ? 3 : 2;
+	if (link.to - link.from < openLen + 2) return null;
+	const prefix = doc.sliceString(link.from, link.from + openLen);
+	if (prefix !== (isEmbed ? "![[" : "[[")) return null;
+	if (doc.sliceString(link.to - 2, link.to) !== "]]") return null;
+	const inner = doc.sliceString(link.from + openLen, link.to - 2);
+	if (inner.includes("|")) return null;
+	return inner;
+}
+
+function rewriteDeleteChangeForLinks(
+	change: ChangeSpec,
+	links: LinkSpan[],
+	doc?: EditorState["doc"]
+): ChangeSpec[] {
 	if (change.insert !== "" || change.from >= change.to) {
 		return [change];
 	}
@@ -3039,6 +3068,19 @@ function rewriteDeleteChangeForLinks(change: ChangeSpec, links: LinkSpan[]): Cha
 		if (deletesEntireDisplay || coversEmptyLink) {
 			rewritten.push({ from: link.from, to: link.to, insert: "" });
 		} else if (overlapsDisplay) {
+			// A bare wikilink's visible text is its destination. Deleting only
+			// part of it would silently truncate/corrupt the note reference.
+			// Convert it into an aliased wikilink instead, preserving the full
+			// original destination and using the surviving visible text as
+			// the alias.
+			const destination = doc ? getBareWikiLinkDestination(doc, link) : null;
+			if (destination !== null) {
+				rewritten.push({
+					from: link.textFrom,
+					to: link.textFrom,
+					insert: `${destination}|`,
+				});
+			}
 			rewritten.push({
 				from: selectedDisplayFrom,
 				to: selectedDisplayTo,
@@ -3097,13 +3139,14 @@ function rewriteDeleteChanges(
 	changes: ChangeSpec[],
 	hidden: HiddenRange[],
 	links: LinkSpan[],
-	hasSelectionDelete: boolean
+	hasSelectionDelete: boolean,
+	doc?: EditorState["doc"]
 ): ChangeSpec[] {
 	const rewritten: ChangeSpec[] = [];
 
 	for (const c of changes) {
 		if (hasSelectionDelete) {
-			rewritten.push(...rewriteDeleteChangeForLinks(c, links));
+			rewritten.push(...rewriteDeleteChangeForLinks(c, links, doc));
 		} else {
 			rewritten.push(...clampDeleteChangeAgainstHidden(c, hidden));
 		}
@@ -3146,7 +3189,7 @@ const deleteSelectionKeymap = keymap.of([
 
 			if (!changesInteractWithLinks(changes, links)) return false;
 
-			const rewritten = rewriteDeleteChanges(changes, hidden, links, true);
+			const rewritten = rewriteDeleteChanges(changes, hidden, links, true, view.state.doc);
 			if (rewritten.length === 0) {
 				view.dispatch({
 					selection: EditorSelection.cursor(sel.main.from),
@@ -3155,9 +3198,10 @@ const deleteSelectionKeymap = keymap.of([
 				return true;
 			}
 
+			const cursorPos = ChangeSet.of(rewritten, view.state.doc.length).mapPos(sel.main.from);
 			view.dispatch({
 				changes: rewritten,
-				selection: EditorSelection.cursor(rewritten[0].from),
+				selection: EditorSelection.cursor(cursorPos),
 				scrollIntoView: true,
 				effects: [rewrittenSelectionDelete.of(null)],
 			});
@@ -3186,7 +3230,7 @@ const deleteSelectionKeymap = keymap.of([
 
 			if (!changesInteractWithLinks(changes, links)) return false;
 
-			const rewritten = rewriteDeleteChanges(changes, hidden, links, true);
+			const rewritten = rewriteDeleteChanges(changes, hidden, links, true, view.state.doc);
 			if (rewritten.length === 0) {
 				view.dispatch({
 					selection: EditorSelection.cursor(sel.main.from),
@@ -3195,9 +3239,10 @@ const deleteSelectionKeymap = keymap.of([
 				return true;
 			}
 
+			const cursorPos = ChangeSet.of(rewritten, view.state.doc.length).mapPos(sel.main.from);
 			view.dispatch({
 				changes: rewritten,
-				selection: EditorSelection.cursor(rewritten[0].from),
+				selection: EditorSelection.cursor(cursorPos),
 				scrollIntoView: true,
 				effects: [rewrittenSelectionDelete.of(null)],
 			});
@@ -3242,10 +3287,12 @@ const clampSelectionDeleteFilter = EditorState.transactionFilter.of((tr) => {
 	// If there are no deletions, this isn't a delete we need to vet.
 	if (deleteChanges.length === 0) return tr;
 
-	const hidden = tr.startState.field(hiddenRangesField, false);
-	if (!hidden || hidden.length === 0) return tr;
-	const links = buildLinkSpans(hidden);
+	const deleteStart = deleteChanges[0].from;
+	const deleteEnd = deleteChanges[deleteChanges.length - 1].to;
+	const links = computeAllLinkSpansForState(tr.startState, deleteStart, deleteEnd);
 	if (links.length === 0) return tr;
+
+	const hidden = tr.startState.field(hiddenRangesField, false) ?? [];
 
 	// If every deletion is ≤1 char and this is not a selection delete,
 	// let the single-char boundary filters handle it.
@@ -3282,7 +3329,8 @@ const clampSelectionDeleteFilter = EditorState.transactionFilter.of((tr) => {
 		deleteChanges,
 		hidden,
 		links,
-		hasSelectionDelete
+		hasSelectionDelete,
+		tr.startState.doc
 	);
 
 	debugLog("delete transaction rewrite", {
@@ -3354,8 +3402,14 @@ const clampSelectionDeleteFilter = EditorState.transactionFilter.of((tr) => {
 	const allChanges = [...otherChanges, ...rewrittenDeletes];
 	allChanges.sort((a, b) => a.from - b.from || a.to - b.to);
 
-	// Place cursor at the start of the first deletion
-	const cursorPos = rewrittenDeletes[0].from;
+	// Place the cursor at the start of the original deletion, mapped through
+	// the rewritten changes. A plain deletion leaves this identical to
+	// `rewrittenDeletes[0].from`, but when a bare wikilink was converted into
+	// an aliased wikilink (see getBareWikiLinkDestination), an insertion is
+	// added ahead of the deletion point, which must shift the cursor forward.
+	const cursorPos = ChangeSet.of(allChanges, tr.startState.doc.length).mapPos(
+		deleteChanges[0].from
+	);
 	const dispatchUserEvent = tr.annotation(Transaction.userEvent) ?? undefined;
 
 	const effects: StateEffect<any>[] = [];
@@ -3851,6 +3905,22 @@ export function createLinkSyntaxHiderExtension(wikiLinkOptions: WikiLinkHidingOp
 	];
 }
 
+function computeAllLinkSpansForState(state: EditorState, from: number, to: number): LinkSpan[] {
+	const fromLine = state.doc.lineAt(from).number;
+	const toLine = state.doc.lineAt(to).number;
+	const wikiLinkOptions = state.field(wikiLinkHidingOptionsField, false) ?? {};
+	const allRanges: HiddenRange[] = [];
+	for (let lineNo = fromLine; lineNo <= toLine; lineNo += 1) {
+		const line = state.doc.line(lineNo);
+		allRanges.push(
+			...findMarkdownLinkSyntaxRanges(line.text, line.from),
+			...findWikiLinkSyntaxRanges(line.text, line.from, wikiLinkOptions)
+		);
+	}
+	allRanges.sort((a, b) => a.from - b.from || a.to - b.to);
+	return buildLinkSpans(allRanges);
+}
+
 export {
 	findMarkdownLinkSyntaxRanges,
 	findWikiLinkSyntaxRanges,
@@ -3877,5 +3947,7 @@ export {
 	suppressSameLineCursorResetEffect,
 	setPendingExternalSelectionExpansion,
 	setWikiLinkHidingOptions,
+	buildLinkSpans,
+	computeAllLinkSpansForState,
 };
-export type { HiddenRange, LinkRange, VisibleLinkSpan };
+export type { HiddenRange, LinkRange, VisibleLinkSpan, LinkSpan };

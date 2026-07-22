@@ -1701,10 +1701,13 @@ describe("clampSelectionDeleteFilter: selection-spanning delete (plain text + li
 		expect(newState.doc.toString()).toBe("hell[rld](https://example.com) there");
 	});
 
-	it("selection spanning display text and into trailing syntax is clipped", () => {
+	it("selection spanning display text and into trailing syntax converts to an aliased link", () => {
 		// "[[note]]" — leading: [0,2), display: [2,6), trailing: [6,8)
 		// Selection from pos 3 to 7 would delete "ote]" (spanning display + trailing)
-		// Clamped: stops at h.from=6, deletes "ote" only
+		// Clamped: stops at h.from=6, deletes "ote" only. Since "note" is a bare
+		// (unaliased) wikilink, the visible text IS the destination, so the
+		// partial deletion converts it into an aliased link that preserves the
+		// original destination instead of corrupting it.
 		const doc = "[[note]]";
 		const state = makeHiderStateWithRange(doc, 3, 7); // select "ote]"
 
@@ -1714,13 +1717,16 @@ describe("clampSelectionDeleteFilter: selection-spanning delete (plain text + li
 			annotations: [Transaction.userEvent.of("delete")],
 		}).state;
 
-		// "ote" (positions 3-6) deleted, "]]" preserved → "[[n]]"
-		expect(newState.doc.toString()).toBe("[[n]]");
+		// "ote" (positions 3-6) deleted, "]]" preserved, destination preserved
+		// via alias → "[[note|n]]"
+		expect(newState.doc.toString()).toBe("[[note|n]]");
 	});
 
-	it("selection entirely within display text is unaffected by clamp", () => {
+	it("selection entirely within display text converts to an aliased link", () => {
 		// "[[hello world]]" — leading: [0,2), display: [2,13), trailing: [13,15)
-		// Selection [3, 8) deletes "ello " — entirely within display text, no clamping needed.
+		// Selection [3, 8) deletes "ello " — entirely within display text. Since
+		// this is a bare wikilink, the destination must survive the edit via
+		// aliasing rather than being truncated in place.
 		const doc = "[[hello world]]";
 		const state = makeHiderStateWithRange(doc, 3, 8); // select "ello "
 
@@ -1730,8 +1736,8 @@ describe("clampSelectionDeleteFilter: selection-spanning delete (plain text + li
 			annotations: [Transaction.userEvent.of("delete")],
 		}).state;
 
-		// "ello " deleted → "[[hworld]]"
-		expect(newState.doc.toString()).toBe("[[hworld]]");
+		// "ello " deleted, destination preserved via alias → "[[hello world|hworld]]"
+		expect(newState.doc.toString()).toBe("[[hello world|hworld]]");
 	});
 
 	it("selection containing all markdown link text deletes the entire link", () => {
@@ -1771,7 +1777,10 @@ describe("clampSelectionDeleteFilter: selection-spanning delete (plain text + li
 			annotations: [Transaction.userEvent.of("delete")],
 		}).state;
 
-		expect(newState.doc.toString()).toBe("hello [[w]]t");
+		// "world" is a bare wikilink, so the partial display-text deletion
+		// preserves the destination via an alias; the plain text after the
+		// link ("next" minus the deleted "ex") is still deleted normally.
+		expect(newState.doc.toString()).toBe("hello [[world|w]]t");
 	});
 
 	it("pure delete without userEvent that overlaps links is rewritten to preserve syntax", () => {
@@ -1786,9 +1795,10 @@ describe("clampSelectionDeleteFilter: selection-spanning delete (plain text + li
 			selection: EditorSelection.cursor(2),
 		}).state;
 
-		// "c " (plain) and "no" (visible text) are deleted;
-		// "[[" (hidden leading) is preserved.
-		expect(newState.doc.toString()).toBe("ab[[te]]");
+		// "c " (plain) and "no" (visible text) are deleted; "[[" (hidden
+		// leading) is preserved, and the destination survives via an alias
+		// since "note" was a bare wikilink.
+		expect(newState.doc.toString()).toBe("ab[[note|te]]");
 	});
 });
 
@@ -1814,7 +1824,8 @@ describe("clampSelectionDeleteFilter: multi-char delete from plain text into lea
 		// "abc [[note]]" — leading: [4,6) for "[["
 		// kill-region [2, 8) would delete "c [[no"
 		// Gmail-style selection delete removes the visible plain text and the
-		// visible display-text prefix while preserving hidden syntax.
+		// visible display-text prefix while preserving hidden syntax. Since
+		// "note" is a bare wikilink, the destination survives via an alias.
 		const doc = "abc [[note]]";
 		const state = makeHiderStateWithRange(doc, 2, 8);
 
@@ -1824,8 +1835,8 @@ describe("clampSelectionDeleteFilter: multi-char delete from plain text into lea
 			annotations: [Transaction.userEvent.of("delete")],
 		}).state;
 
-		// Visible "c no" deleted → "ab[[te]]"
-		expect(newState.doc.toString()).toBe("ab[[te]]");
+		// Visible "c no" deleted → "ab[[note|te]]"
+		expect(newState.doc.toString()).toBe("ab[[note|te]]");
 	});
 });
 
