@@ -22,6 +22,7 @@ import {
 	determineLinkFromContext,
 	validateLinkDestination,
 	computeDisplayedTextRange,
+	moveToFront,
 } from '../src/utils';
 
 // ============================================================================
@@ -1951,5 +1952,65 @@ describe('computeDisplayedTextRange', () => {
 				displayedTextEnd: 18
 			});
 		});
+	});
+});
+
+// ============================================================================
+// moveToFront Tests
+// ============================================================================
+describe('moveToFront', () => {
+	it('moves an item from the middle to the front', () => {
+		const list = ['a', 'b', 'c', 'd'];
+		moveToFront(list, 'c');
+		expect(list).toEqual(['c', 'a', 'b', 'd']);
+	});
+
+	it('moves an item from the end to the front', () => {
+		const list = ['a', 'b', 'c'];
+		moveToFront(list, 'c');
+		expect(list).toEqual(['c', 'a', 'b']);
+	});
+
+	it('is a no-op when the item is already first', () => {
+		const list = ['a', 'b', 'c'];
+		moveToFront(list, 'a');
+		expect(list).toEqual(['a', 'b', 'c']);
+	});
+
+	it('is a no-op when the item is not present', () => {
+		const list = ['a', 'b', 'c'];
+		moveToFront(list, 'z');
+		expect(list).toEqual(['a', 'b', 'c']);
+	});
+
+	it('is a no-op on an empty list', () => {
+		const list: string[] = [];
+		moveToFront(list, 'a');
+		expect(list).toEqual([]);
+	});
+
+	it('works with object references, not just primitives', () => {
+		const objA = { id: 'a' };
+		const objB = { id: 'b' };
+		const objC = { id: 'c' };
+		const list = [objA, objB, objC];
+		moveToFront(list, objC);
+		expect(list).toEqual([objC, objA, objB]);
+		expect(list[0]).toBe(objC);
+	});
+
+	it('does not move a different object that happens to be structurally equal', () => {
+		const objA = { id: 'a' };
+		const notInList = { id: 'a' };
+		const list = [objA];
+		moveToFront(list, notInList);
+		expect(list).toEqual([objA]);
+		expect(list[0]).toBe(objA);
+	});
+
+	it('leaves a single-element list unchanged', () => {
+		const list = ['only'];
+		moveToFront(list, 'only');
+		expect(list).toEqual(['only']);
 	});
 });

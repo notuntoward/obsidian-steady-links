@@ -1278,3 +1278,19 @@ export function validateLinkDestination(
 	};
 }
 
+/**
+ * Move `item` to the front of `list` in place, if it is present and not
+ * already first. No-ops if `item` is absent or already at index 0.
+ *
+ * Used to make our own EditorSuggest checked before any other registered
+ * suggest (e.g. Obsidian's built-in `[[` suggest) without disabling,
+ * removing, or otherwise touching anyone else's registration.
+ */
+export function moveToFront<T>(list: T[], item: T): void {
+	const idx = list.indexOf(item);
+	if (idx > 0) {
+		list.splice(idx, 1);
+		list.unshift(item);
+	}
+}
+

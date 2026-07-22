@@ -14,6 +14,7 @@ import {
 	computeDisplayedTextRange,
 	bareDomainNoteTargetFromUrl,
 	fileExtTokenAtCursor,
+	moveToFront,
 } from "./utils";
 import {
 	buildLinkText,
@@ -41,7 +42,6 @@ const DEFAULT_SETTINGS: PluginSettings = {
 export default class SteadyLinksPlugin extends Plugin {
 	settings!: PluginSettings;
 	private editorFileSuggest!: EditorFileSuggest;
-	private disabledBuiltInSuggest: any = null;
 
 	/**
 	 * Live array registered with `registerEditorExtension`.
@@ -159,10 +159,11 @@ export default class SteadyLinksPlugin extends Plugin {
 		this.editorFileSuggest = new EditorFileSuggest(this.app, this);
 		this.registerEditorSuggest(this.editorFileSuggest);
 
+		// Re-assert our suggest's position once more after layout is fully
+		// restored (all plugins finished loading), in case another plugin
+		// raced to the front of the list during its own onload().
 		this.app.workspace.onLayoutReady(() => {
-			if (this.settings.keepLinksSteady) {
-				this.disableBuiltInLinkSuggest();
-			}
+			this.prioritizeOwnSuggest();
 		});
 
 		this.applySyntaxHiderSetting();
@@ -577,10 +578,13 @@ export default class SteadyLinksPlugin extends Plugin {
 		};
 		if (this.settings.keepLinksSteady) {
 			this.syntaxHiderExtensions.push(...createLinkSyntaxHiderExtension(wikiLinkOptions));
-			this.disableBuiltInLinkSuggest();
-		} else {
-			this.enableBuiltInLinkSuggest();
 		}
+		// Keep our own [[ suggest first in line regardless of the setting.
+		// EditorFileSuggest.onTrigger() already returns null immediately when
+		// keepLinksSteady is off, so Obsidian falls through to the next
+		// registered suggest (e.g. the built-in one) on its own — there is
+		// nothing to "restore" when the setting is disabled.
+		this.prioritizeOwnSuggest();
 		this.app.workspace.updateOptions();
 
 		// Broadcast the current wikilink-shortening options directly to every
@@ -822,79 +826,28 @@ export default class SteadyLinksPlugin extends Plugin {
 		).open();
 	}
 
-	onunload() {
-		this.enableBuiltInLinkSuggest();
-	}
-
-	disableBuiltInLinkSuggest() {
+	/**
+	 * Move our own `[[` suggest to the front of Obsidian's internal suggest
+	 * list so it is always checked before the built-in `[[` suggest (or any
+	 * other plugin's), instead of trying to detect and disable the built-in
+	 * one.
+	 *
+	 * Obsidian's suggest manager calls each registered EditorSuggest's
+	 * `onTrigger()` in array order and uses the first one that returns a
+	 * non-null result, so simply going first is enough to make our own
+	 * popup win — there is nothing to disable, remove, or later restore.
+	 * `EditorFileSuggest.onTrigger()` already returns null immediately when
+	 * `keepLinksSteady` is off, so Obsidian falls through to the next
+	 * registered suggest on its own in that case.
+	 *
+	 * This only reorders an array we already have an entry in via the
+	 * documented `registerEditorSuggest` API; it never inspects, calls, or
+	 * mutates any other plugin's suggest.
+	 */
+	private prioritizeOwnSuggest() {
 		const suggests = (this.app.workspace as any).editorSuggest?.suggests;
-		if (!suggests) return;
-
-		// Find the built-in link suggest that triggers on "[["
-		const mockFile: any = {
-			path: "mock.md",
-			name: "mock.md",
-			extension: "md",
-			vault: this.app.vault,
-			stat: { ctime: 0, mtime: 0, size: 0 },
-			parent: { path: "", name: "" }
-		};
-
-		const mockEditor: any = {
-			getLine: (line: number) => "[[",
-			getCursor: () => ({ line: 0, ch: 2 }),
-			getValue: () => "[[",
-			getSelection: () => "",
-		};
-
-		const mockCursor: any = { line: 0, ch: 2 };
-
-		let builtIn = null;
-		for (const s of suggests) {
-			if (s === this.editorFileSuggest || s.constructor?.name === "EditorFileSuggest") {
-				continue;
-			}
-			try {
-				const trigger = s.onTrigger(mockCursor, mockEditor, mockFile);
-				if (trigger && typeof trigger === "object") {
-					const noTriggerEditor: any = {
-						getLine: (line: number) => "a",
-						getCursor: () => ({ line: 0, ch: 1 }),
-						getValue: () => "a",
-						getSelection: () => "",
-					};
-					const noTriggerCursor: any = { line: 0, ch: 1 };
-					const noTrigger = s.onTrigger(noTriggerCursor, noTriggerEditor, mockFile);
-					if (!noTrigger) {
-						builtIn = s;
-						break;
-					}
-				}
-			} catch (e) {
-				console.log("[SteadyLinks] Error testing suggest provider:", s, e);
-			}
-		}
-
-		if (builtIn && suggests.includes(builtIn)) {
-			console.log("[SteadyLinks] Disabling built-in suggest provider:", builtIn.constructor?.name || builtIn);
-			this.disabledBuiltInSuggest = builtIn;
-			const idx = suggests.indexOf(builtIn);
-			if (idx > -1) {
-				suggests.splice(idx, 1);
-			}
-		} else {
-			console.log("[SteadyLinks] Could not find built-in link suggest to disable among:", suggests.map((s: any) => s.constructor?.name || s));
-		}
-	}
-
-	enableBuiltInLinkSuggest() {
-		const suggests = (this.app.workspace as any).editorSuggest?.suggests;
-		if (!suggests || !this.disabledBuiltInSuggest) return;
-
-		if (!suggests.includes(this.disabledBuiltInSuggest)) {
-			suggests.unshift(this.disabledBuiltInSuggest);
-		}
-		this.disabledBuiltInSuggest = null;
+		if (!Array.isArray(suggests)) return;
+		moveToFront(suggests, this.editorFileSuggest);
 	}
 
 	async loadSettings() {
