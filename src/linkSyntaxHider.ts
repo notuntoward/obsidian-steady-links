@@ -3370,19 +3370,39 @@ const clampSelectionDeleteFilter = EditorState.transactionFilter.of((tr) => {
 			// Re-emit with the rewrittenSelectionDelete marker so
 			// protectSyntaxFilter passes it through.
 			const dispatchUserEvent = tr.annotation(Transaction.userEvent) ?? undefined;
+			const identicalCursorPos = deleteChanges[0].from;
 			const identicalEffects: StateEffect<any>[] = [rewrittenSelectionDelete.of(null)];
 
-			// Also suppress follow-up setCursor when deleting a
-			// line-start link (same logic as the non-identical path).
-			const deleteLine = tr.startState.doc.lineAt(deleteChanges[0].from);
-			if (deleteChanges[0].from === deleteLine.from) {
-				const deleteStartIsLeading = hidden.some(
-					(h) => h.side === "leading" && h.from === deleteChanges[0].from
-				);
-				if (deleteStartIsLeading) {
-					identicalEffects.push(
-						suppressSameLineCursorResetEffect.of(deleteChanges[0].from)
+			// Same as the non-identical path below: when the selection that
+			// produced this delete started right at a link boundary (e.g. the
+			// end of a link's visible text) and ran to end of line — the
+			// classic kill-line-at-link-edge shape — arm the same-line reset
+			// suppression so a follow-up setCursor(originalPos) from an
+			// external plugin (Emacs) is redirected back here instead of
+			// landing wherever that now-deleted position maps to.
+			const startSelFrom = tr.startState.selection.main.from;
+			const startSelTo = tr.startState.selection.main.to;
+			const startSelLine = tr.startState.doc.lineAt(startSelFrom);
+			const selectionStartsAtLinkEdge = links.some(
+				(link) =>
+					startSelFrom === link.textFrom ||
+					startSelFrom === link.from ||
+					startSelFrom === link.textTo
+			);
+			if (selectionStartsAtLinkEdge && startSelTo === startSelLine.to) {
+				identicalEffects.push(suppressSameLineCursorResetEffect.of(identicalCursorPos));
+			} else {
+				// Legacy: also suppress for line-start link deletes.
+				const deleteLine = tr.startState.doc.lineAt(deleteChanges[0].from);
+				if (deleteChanges[0].from === deleteLine.from) {
+					const deleteStartIsLeading = hidden.some(
+						(h) => h.side === "leading" && h.from === deleteChanges[0].from
 					);
+					if (deleteStartIsLeading) {
+						identicalEffects.push(
+							suppressSameLineCursorResetEffect.of(identicalCursorPos)
+						);
+					}
 				}
 			}
 

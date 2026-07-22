@@ -877,6 +877,66 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			expect(result.clipboard).not.toContain("https://");
 			expect(view.state.doc.lineAt(result.cursor).number).toBe(startLine.number);
 		});
+
+		it("kill-line at the start of a whole-line-deleting alias inside a nested list item keeps cursor on the same line", () => {
+			// Bug guard: cursor at link.textFrom (the start of a link's visible
+			// alias text), where the alias is the entire remainder of the line
+			// (nothing follows the link). expandSelectionToLeadingSyntaxFilter
+			// expands the kill-line selection from [textFrom, lineEnd) to the
+			// full raw link range [link.from, link.to) so external consumers
+			// (e.g. Emacs kill-line's clipboard read) see the complete link
+			// syntax. Because that expanded selection already matches exactly
+			// what rewriteDeleteChangeForLinks would also produce, the
+			// resulting rewrite is byte-identical to the incoming change, so
+			// clampSelectionDeleteFilter's "nothing changed" fast path used to
+			// skip arming the same-line cursor-reset suppression. The Emacs
+			// plugin's follow-up setCursor(originalPos) then landed wherever
+			// that now-deleted pre-expansion position mapped to in the new,
+			// much shorter document — several lines down, on an
+			// indented/nested list item — instead of staying put.
+			//
+			// This intentionally does not use emulateEmacsKillLine(): that
+			// helper re-reads the selection *after* our own internal
+			// leading-syntax expansion runs, so its simulated follow-up reset
+			// targets the already-expanded position rather than the true
+			// pre-expansion cursor a real external plugin would remember —
+			// which is exactly the discrepancy this bug depends on.
+			const doc =
+				"- top bullet\n\t- [[Voting Systems in WA State|Voting Systems in WA State]]\n\t- a bullet";
+			const originalCursor = doc.indexOf("|") + 1; // link.textFrom: start of visible alias
+			view = createTestView(doc, originalCursor);
+
+			const startLine = view.state.doc.lineAt(originalCursor);
+			const line = view.state.doc.lineAt(originalCursor);
+
+			// Step 1: kill-line selects from cursor to end of line. Our own
+			// expandSelectionToLeadingSyntaxFilter should expand this further
+			// to cover the link's hidden leading syntax too.
+			view.dispatch({ selection: EditorSelection.range(originalCursor, line.to) });
+			expect(view.state.selection.main.from).toBeLessThan(originalCursor);
+
+			// Step 2: delete the (expanded) selection exactly like a real
+			// editor.replaceSelection("") call — no explicit `selection:`
+			// override, letting the filter pipeline compute the resulting
+			// cursor.
+			const selAfterExpand = view.state.selection.main;
+			view.dispatch({
+				changes: { from: selAfterExpand.from, to: selAfterExpand.to, insert: "" },
+				annotations: [Transaction.userEvent.of("delete")],
+			});
+
+			// Step 3: the external plugin's follow-up setCursor(originalPos),
+			// using the position it remembered before Ctrl+K was pressed — the
+			// true original cursor, not our internally expanded selection.
+			view.dispatch({
+				selection: EditorSelection.cursor(Math.min(originalCursor, view.state.doc.length)),
+			});
+
+			expect(view.state.doc.toString()).toBe("- top bullet\n\t- \n\t- a bullet");
+			expect(view.state.doc.lineAt(view.state.selection.main.head).number).toBe(
+				startLine.number
+			);
+		});
 	});
 
 	// ──────────────────────────────────────────────────────────────────────
