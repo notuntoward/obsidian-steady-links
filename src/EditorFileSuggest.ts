@@ -71,20 +71,15 @@ export class EditorFileSuggest extends EditorSuggest<SuggestionItem> {
 
 		const query = sub.substring(openIdx + 2);
 
-		const result = {
+		return {
 			start: { line: cursor.line, ch: openIdx + 2 },
 			end: { line: cursor.line, ch: cursor.ch },
 			query: query,
 		};
-		console.log("[SteadyLinks] EditorFileSuggest onTrigger:", result);
-		return result;
 	}
 
 	async getSuggestions(context: EditorSuggestContext): Promise<SuggestionItem[]> {
-		console.log("[SteadyLinks] EditorFileSuggest getSuggestions query:", context.query);
-		const suggestions = await getSuggestionItems(context.query, this.app, true);
-		console.log("[SteadyLinks] EditorFileSuggest getSuggestions count:", suggestions.length);
-		return suggestions;
+		return getSuggestionItems(context.query, this.app, true);
 	}
 
 	renderSuggestion(item: SuggestionItem, el: HTMLElement): void {
@@ -146,7 +141,7 @@ export class EditorFileSuggest extends EditorSuggest<SuggestionItem> {
 
 		const editor = context.editor;
 		const startPos = { line: context.start.line, ch: context.start.ch - 2 }; // include the "[["
-		
+
 		// If Obsidian auto-paired "]]" immediately after the cursor, consume them so we don't leave duplicates.
 		let endCh = context.end.ch;
 		const lineText = editor.getLine(context.end.line);
