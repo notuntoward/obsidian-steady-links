@@ -456,6 +456,22 @@ describe("EditorFileSuggest.selectSuggestion — block items", () => {
 		const line = editor.getLine(0);
 		expect(line).toMatch(/^\[\[#\^[a-z0-9]{6}\]\]$/);
 	});
+
+	it("inserts [[Note-09|a_note_alias]] when selecting alias suggestion", async () => {
+		editor.setLines(["[[Note-09|a_note_alias"]);
+		setContext("Note-09|a_note_alias", 2, 22);
+
+		const noteFile = tf({ path: "Note-09.md" });
+		const item: SuggestionItem = {
+			type: "alias",
+			alias: "a_note_alias",
+			file: noteFile as any,
+			basename: "Note-09",
+		};
+
+		await suggest.selectSuggestion(item, {} as any);
+		expect(editor.getLine(0)).toBe("[[Note-09|a_note_alias]]");
+	});
 });
 
 // ============================================================================

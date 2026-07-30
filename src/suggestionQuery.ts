@@ -20,6 +20,7 @@ export type QueryType =
 	| 'file-block'          // file#^block - blocks in specific file
 	| 'file-heading'        // file#heading - headings in specific file
 	| 'file-block-no-hash'  // file^block - blocks in specific file (no #)
+	| 'file-alias'          // file|alias - alias display text query
 	| 'file';               // file - just a file name
 
 /**
@@ -62,45 +63,50 @@ export function parseSuggestionQuery(query: string): ParsedQuery {
 	const trimmed = query.trim();
 	const original = trimmed;
 
+	// Strip optional leading brackets if present (e.g. [[## or [## or [[Note#Heading)
+	const clean = trimmed.replace(/^\[{1,2}/, '');
+
 	// 1. ##heading - Global heading search
-	if (trimmed.startsWith('##')) {
+	if (clean.startsWith('##')) {
 		return {
 			type: 'global-heading',
-			searchTerm: trimmed.slice(2),
+			searchTerm: clean.slice(2),
 			original,
 		};
 	}
 
 	// 2. #^block - Block in current file (must check before #heading)
-	if (trimmed.startsWith('#^')) {
+	if (clean.startsWith('#^')) {
 		return {
 			type: 'current-block',
-			searchTerm: trimmed.slice(2),
+			searchTerm: clean.slice(2),
 			original,
 		};
 	}
 
 	// 3. #heading - Heading in current file
-	if (trimmed.startsWith('#') && !trimmed.startsWith('##')) {
+	if (clean.startsWith('#') && !clean.startsWith('##')) {
 		return {
 			type: 'current-heading',
-			searchTerm: trimmed.slice(1),
+			searchTerm: clean.slice(1),
 			original,
 		};
 	}
 
 	// 4. ^block - Block in current file (without #)
-	if (trimmed.startsWith('^')) {
+	if (clean.startsWith('^')) {
 		return {
 			type: 'block',
-			searchTerm: trimmed.slice(1),
+			searchTerm: clean.slice(1),
 			original,
 		};
 	}
 
 	// 5. file#^block - Block in specific file (must check before file#heading)
-	if (trimmed.includes('#^')) {
-		const [fileName, searchTerm = ''] = trimmed.split('#^');
+	if (clean.includes('#^')) {
+		const hashIdx = clean.indexOf('#^');
+		const fileName = clean.slice(0, hashIdx);
+		const searchTerm = clean.slice(hashIdx + 2);
 		return {
 			type: 'file-block',
 			fileName,
@@ -110,8 +116,10 @@ export function parseSuggestionQuery(query: string): ParsedQuery {
 	}
 
 	// 6. file#heading - Heading in specific file
-	if (trimmed.includes('#') && !trimmed.startsWith('#')) {
-		const [fileName, searchTerm = ''] = trimmed.split('#');
+	if (clean.includes('#') && !clean.startsWith('#')) {
+		const hashIdx = clean.indexOf('#');
+		const fileName = clean.slice(0, hashIdx);
+		const searchTerm = clean.slice(hashIdx + 1);
 		return {
 			type: 'file-heading',
 			fileName,
@@ -121,8 +129,10 @@ export function parseSuggestionQuery(query: string): ParsedQuery {
 	}
 
 	// 7. file^block - Block in specific file (without #)
-	if (trimmed.includes('^') && !trimmed.startsWith('^')) {
-		const [fileName, searchTerm = ''] = trimmed.split('^');
+	if (clean.includes('^') && !clean.startsWith('^')) {
+		const caretIdx = clean.indexOf('^');
+		const fileName = clean.slice(0, caretIdx);
+		const searchTerm = clean.slice(caretIdx + 1);
 		return {
 			type: 'file-block-no-hash',
 			fileName,
@@ -131,10 +141,23 @@ export function parseSuggestionQuery(query: string): ParsedQuery {
 		};
 	}
 
-	// 8. Default: file search
+	// 8. file|alias - Alias display text for note
+	if (clean.includes('|')) {
+		const pipeIdx = clean.indexOf('|');
+		const fileName = clean.slice(0, pipeIdx);
+		const searchTerm = clean.slice(pipeIdx + 1);
+		return {
+			type: 'file-alias',
+			fileName,
+			searchTerm,
+			original,
+		};
+	}
+
+	// 9. Default: file search
 	return {
 		type: 'file',
-		searchTerm: trimmed,
+		searchTerm: clean,
 		original,
 	};
 }

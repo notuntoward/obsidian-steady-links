@@ -218,15 +218,62 @@ describe("FileSuggest.selectCurrentSuggestion", () => {
 		const el = document.createElement("div");
 		el.className = "suggestion-item is-selected";
 		let clicked = false;
-		el.addEventListener("click", () => { clicked = true; });
+		el.addEventListener("click", () => {
+			clicked = true;
+		});
 		document.body.appendChild(el);
 
 		const app = new App();
 		const modal = makeModalStub();
 		const suggest = makeSuggest(app, modal);
+
 		suggest.selectCurrentSuggestion();
 		expect(clicked).toBe(true);
 
 		document.body.removeChild(el);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// FileSuggest scope key handlers (# and ^)
+// ---------------------------------------------------------------------------
+
+describe("FileSuggest scope key handlers", () => {
+	it("completes file basename and appends # when # is pressed on selected file item", () => {
+		const app = new App();
+		const modal = makeModalStub();
+		const suggest = makeSuggest(app, modal);
+
+		suggest.inputEl.value = "note-0";
+		(suggest as any).suggestions = {
+			selectedId: 0,
+			values: [{ type: "file", basename: "Note-08", extension: "md" }],
+		};
+
+		const hashHandler = (suggest as any).scope.keys.find((k: any) => k.key === "#")?.func;
+		expect(hashHandler).toBeDefined();
+
+		const result = hashHandler();
+		expect(result).toBe(false); // consumed
+		expect(suggest.inputEl.value).toBe("Note-08#");
+	});
+
+	it("completes file basename and appends #^ when ^ is pressed on selected file item", () => {
+		const app = new App();
+		const modal = makeModalStub();
+		const suggest = makeSuggest(app, modal);
+
+		suggest.inputEl.value = "note-0";
+		(suggest as any).suggestions = {
+			selectedId: 0,
+			values: [{ type: "file", basename: "Note-08", extension: "md" }],
+		};
+
+		const caretHandler = (suggest as any).scope.keys.find((k: any) => k.key === "^")?.func;
+		expect(caretHandler).toBeDefined();
+
+		const result = caretHandler();
+		expect(result).toBe(false); // consumed
+		expect(suggest.inputEl.value).toBe("Note-08#^");
 	});
 });

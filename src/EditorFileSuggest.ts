@@ -12,47 +12,144 @@ import type SteadyLinksPlugin from "./main";
 
 export class EditorFileSuggest extends EditorSuggest<SuggestionItem> {
 	plugin: SteadyLinksPlugin;
+	private lastSuggestions: SuggestionItem[] = [];
 
 	constructor(app: App, plugin: SteadyLinksPlugin) {
 		super(app);
 		this.plugin = plugin;
 
 		if (this.scope) {
-			// Register TAB key to complete the prefix/basename and not close suggest
-			this.scope.register([], "Tab", () => {
+			this.scope.register(null, "Tab", (evt?: KeyboardEvent) => {
+				if (evt) {
+					evt.preventDefault();
+					evt.stopPropagation();
+				}
 				const context = this.context;
 				if (!context) return true;
 
-				let selectedId = (this as any).selectedId;
-				let values = (this as any).suggestions;
-				if (selectedId === undefined) {
-					selectedId = (this as any).suggestions?.selectedId;
-				}
-				if (!Array.isArray(values)) {
-					values = (this as any).suggestions?.values;
-				}
+				const item = this.getSelectedSuggestionItem();
+				if (!item) return true;
 
-				if (selectedId === undefined || !values || !values[selectedId]) {
-					return true;
-				}
-
-				const item = values[selectedId];
 				const completionText = getCompletionText(item, context.query);
 
-				if (context.query.trim() === completionText.trim()) {
+				if (context.query.trim().toLowerCase() === completionText.trim().toLowerCase()) {
 					flashSuggestContainer();
-					return false; // consume event
-				} else {
-					const editor = context.editor;
-					editor.replaceRange(completionText, context.start, context.end);
-					editor.setCursor({
-						line: context.start.line,
-						ch: context.start.ch + completionText.length
-					});
-					return false; // consume event
+					return false;
 				}
+
+				const editor = context.editor;
+				editor.replaceRange(completionText, context.start, context.end);
+				const newEndCh = context.start.ch + completionText.length;
+				const newCursor = { line: context.start.line, ch: newEndCh };
+				editor.setCursor(newCursor);
+
+				context.end = newCursor;
+				context.query = completionText;
+
+				try {
+					if (typeof (this as any).suggestions?.update === "function") {
+						(this as any).suggestions.update();
+					}
+				} catch {
+					// ignore
+				}
+
+				return false;
 			});
+
+			const handleSuffixCompletion = (suffix: "#" | "#^" | "|", evt?: KeyboardEvent) => {
+				if (evt) {
+					evt.preventDefault();
+					evt.stopPropagation();
+				}
+				const context = this.context;
+				if (!context) return true;
+
+				const item = this.getSelectedSuggestionItem();
+				let fileTargetName: string;
+				if (item && (item.type === "file" || item.type === "alias")) {
+					fileTargetName = item.type === "alias"
+						? (item.file?.basename || item.alias || "")
+						: (item.extension === "md" ? (item.basename || "") : (item.name || ""));
+				} else {
+					fileTargetName = context.query.split("#")[0].split("|")[0];
+				}
+
+				if (!fileTargetName) return true;
+
+				const completionText = fileTargetName + suffix;
+				const editor = context.editor;
+				editor.replaceRange(completionText, context.start, context.end);
+				const newEndCh = context.start.ch + completionText.length;
+				const newCursor = { line: context.start.line, ch: newEndCh };
+				editor.setCursor(newCursor);
+
+				context.end = newCursor;
+				context.query = completionText;
+
+				try {
+					if (typeof (this as any).suggestions?.update === "function") {
+						(this as any).suggestions.update();
+					}
+				} catch {
+					// ignore
+				}
+
+				return false;
+			};
+
+			this.scope.register(null, "#", (evt?: KeyboardEvent) => handleSuffixCompletion("#", evt));
+			this.scope.register(null, "^", (evt?: KeyboardEvent) => handleSuffixCompletion("#^", evt));
+			this.scope.register(null, "|", (evt?: KeyboardEvent) => handleSuffixCompletion("|", evt));
 		}
+	}
+
+	private getSelectedSuggestionItem(): SuggestionItem | undefined {
+		let items = this.lastSuggestions;
+		if (!items || items.length === 0) {
+			let v = (this as any).values || (this as any).suggestions;
+			if (!Array.isArray(v)) {
+				v = (this as any).suggestions?.values;
+			}
+			if (Array.isArray(v)) {
+				items = v;
+			}
+		}
+
+		if (!items || items.length === 0) return undefined;
+
+		let selectedId: number | undefined = (this as any).selectedId;
+		if (selectedId === undefined) {
+			selectedId = (this as any).suggestions?.selectedId;
+		}
+
+		if (selectedId === undefined) {
+			const containers = document.querySelectorAll(".suggestion-container");
+			for (let i = 0; i < containers.length; i++) {
+				const container = containers[i] as HTMLElement;
+				if (!container.classList.contains("is-hidden") && container.style.display !== "none") {
+					const selectedEl = container.querySelector(".suggestion-item.is-selected");
+					if (selectedEl) {
+						const allItems = Array.from(container.querySelectorAll(".suggestion-item"));
+						const idx = allItems.indexOf(selectedEl);
+						if (idx !== -1) {
+							selectedId = idx;
+							break;
+						}
+					}
+				}
+			}
+		}
+
+		if (selectedId === undefined && items.length > 0) {
+			selectedId = 0;
+		}
+
+		if (selectedId !== undefined && items[selectedId]) {
+			return items[selectedId];
+		}
+
+		return undefined;
 	}
 
 	onTrigger(cursor: EditorPosition, editor: Editor, file: TFile): EditorSuggestTriggerInfo | null {
@@ -65,21 +162,24 @@ export class EditorFileSuggest extends EditorSuggest<SuggestionItem> {
 		const openIdx = sub.lastIndexOf("[[");
 		if (openIdx === -1) return null;
 
-		// Make sure it's not closed before the cursor
-		const closeIdx = sub.indexOf("]]", openIdx);
-		if (closeIdx !== -1 && closeIdx < cursor.ch) return null;
+		const closeIdx = line.indexOf("]]", openIdx);
+		// If "]]" exists and cursor is past "]]" by more than 2 chars, then we are outside the link
+		if (closeIdx !== -1 && cursor.ch > closeIdx + 2) return null;
 
-		const query = sub.substring(openIdx + 2);
+		const queryEnd = (closeIdx !== -1 && cursor.ch >= closeIdx) ? closeIdx : cursor.ch;
+		const query = line.substring(openIdx + 2, queryEnd);
 
 		return {
 			start: { line: cursor.line, ch: openIdx + 2 },
-			end: { line: cursor.line, ch: cursor.ch },
+			end: { line: cursor.line, ch: queryEnd },
 			query: query,
 		};
 	}
 
 	async getSuggestions(context: EditorSuggestContext): Promise<SuggestionItem[]> {
-		return getSuggestionItems(context.query, this.app, true);
+		const items = await getSuggestionItems(context.query, this.app, true);
+		this.lastSuggestions = items;
+		return items;
 	}
 
 	renderSuggestion(item: SuggestionItem, el: HTMLElement): void {

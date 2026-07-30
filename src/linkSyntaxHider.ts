@@ -1328,7 +1328,7 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 		if (
 			insertText !== undefined &&
 			insertCount === 1 &&
-			insertFrom === insertTo &&
+			(insertFrom === insertTo || insertText !== "") &&
 			!insertText.includes("\n") &&
 			newSel.ranges.length === 1 &&
 			newSel.main.empty

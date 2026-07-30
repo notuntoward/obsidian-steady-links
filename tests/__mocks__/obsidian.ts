@@ -867,6 +867,18 @@ export class MarkdownView {
 	}
 }
 
+export class Scope {
+	keys: Array<{ modifiers: string[]; key: string; func: (e?: any) => any }> = [];
+
+	register(modifiers: string[], key: string, func: (e?: any) => any): void {
+		this.keys.push({ modifiers, key, func });
+	}
+
+	unregister(func: (e?: any) => any): void {
+		this.keys = this.keys.filter((k) => k.func !== func);
+	}
+}
+
 // ============================================================================
 // AbstractInputSuggest - Base class for suggestion providers
 // ============================================================================
@@ -874,12 +886,14 @@ export class MarkdownView {
 export abstract class AbstractInputSuggest<T> {
 	protected app: App;
 	protected inputEl: HTMLInputElement;
+	scope: Scope;
 	private suggestions: T[] = [];
 	private isOpen = false;
 
 	constructor(app: App, inputEl: HTMLInputElement) {
 		this.app = app;
 		this.inputEl = inputEl;
+		this.scope = new Scope();
 	}
 
 	abstract getSuggestions(query: string): Promise<T[]>;
@@ -921,15 +935,13 @@ export interface EditorSuggestTriggerInfo {
 export abstract class EditorSuggest<T> {
 	app: App;
 	limit: number = 40;
-	scope: any;
+	scope: Scope;
 	context: EditorSuggestContext | null = null;
 	suggestions: any;
 
 	constructor(app: App) {
 		this.app = app;
-		this.scope = {
-			register: () => {}
-		};
+		this.scope = new Scope();
 		this.suggestions = {
 			selectedId: 0,
 			values: []

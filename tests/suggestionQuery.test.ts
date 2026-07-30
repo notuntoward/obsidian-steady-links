@@ -37,6 +37,16 @@ describe('parseSuggestionQuery', () => {
 			expect(result.type).toBe('global-heading');
 			expect(result.searchTerm).toBe('Heading');
 		});
+
+		it('should handle leading [ or [[ brackets for global heading', () => {
+			const result1 = parseSuggestionQuery('[##');
+			expect(result1.type).toBe('global-heading');
+			expect(result1.searchTerm).toBe('');
+
+			const result2 = parseSuggestionQuery('[[##Header');
+			expect(result2.type).toBe('global-heading');
+			expect(result2.searchTerm).toBe('Header');
+		});
 	});
 
 	describe('current file block search (#^block)', () => {

@@ -21,6 +21,7 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 	modal: EditLinkModal;
 	inputEl: HTMLInputElement;
 	private focusValue: string = "";
+	private lastSuggestions: SuggestionItem[] = [];
 
 	constructor(app: App, textInputEl: HTMLInputElement, modal: EditLinkModal) {
 		super(app, textInputEl);
@@ -91,40 +92,17 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 			});
 
 			// Register TAB key to complete the prefix/basename and not close suggest
-			this.scope.register([], "Tab", () => {
-				let selectedId = (this as any).selectedId;
-				
-				// Resolve selected ID dynamically by querying the suggest DOM list
-				if (selectedId === undefined) {
-					const suggestInnerEl = (this as any).suggestInnerEl;
-					if (suggestInnerEl) {
-						const selectedEl = suggestInnerEl.querySelector(".suggestion-item.is-selected");
-						if (selectedEl) {
-							const items = Array.from(suggestInnerEl.querySelectorAll(".suggestion-item"));
-							const index = items.indexOf(selectedEl);
-							if (index !== -1) {
-								selectedId = index;
-							}
-						}
-					}
+			this.scope.register(null, "Tab", (evt?: KeyboardEvent) => {
+				if (evt) {
+					evt.preventDefault();
+					evt.stopPropagation();
 				}
+				const item = this.getSelectedSuggestionItem();
+				if (!item) return true;
 
-				let values = (this as any).values || (this as any).suggestions;
-				if (selectedId === undefined) {
-					selectedId = (this as any).suggestions?.selectedId;
-				}
-				if (!Array.isArray(values)) {
-					values = (this as any).suggestions?.values;
-				}
-
-				if (selectedId === undefined || !values || !values[selectedId]) {
-					return true;
-				}
-
-				const item = values[selectedId];
 				const completionText = getCompletionText(item, this.inputEl.value);
 
-				if (this.inputEl.value.trim() === completionText.trim()) {
+				if (this.inputEl.value.trim().toLowerCase() === completionText.trim().toLowerCase()) {
 					// Flash completion window to show it is already fully completed
 					const containers = document.querySelectorAll(".suggestion-container");
 					for (let i = 0; i < containers.length; i++) {
@@ -143,7 +121,83 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 					return false; // consume event
 				}
 			});
+
+			// Register "#" and "^" to complete active file/alias suggestion and transition to heading/block query
+			const handleHashCaretCompletion = (suffix: "#" | "#^", evt?: KeyboardEvent) => {
+				if (evt) {
+					evt.preventDefault();
+					evt.stopPropagation();
+				}
+				const item = this.getSelectedSuggestionItem();
+				if (!item) return true;
+
+				if (item.type !== "file" && item.type !== "alias") {
+					return true; // Let normal typing handle heading/block items
+				}
+
+				const fileTargetName = item.type === "alias"
+					? (item.file?.basename || item.alias || "")
+					: (item.extension === "md" ? (item.basename || "") : (item.name || ""));
+
+				if (!fileTargetName) return true;
+
+				this.inputEl.value = fileTargetName + suffix;
+				this.modal.handleDestInput();
+				this.inputEl.dispatchEvent(new Event("input"));
+				return false; // consume event
+			};
+
+			this.scope.register(null, "#", (evt?: KeyboardEvent) => handleHashCaretCompletion("#", evt));
+			this.scope.register(null, "^", (evt?: KeyboardEvent) => handleHashCaretCompletion("#^", evt));
 		}
+	}
+
+	private getSelectedSuggestionItem(): SuggestionItem | undefined {
+		let items = this.lastSuggestions;
+		if (!items || items.length === 0) {
+			let v = (this as any).values || (this as any).suggestions;
+			if (!Array.isArray(v)) {
+				v = (this as any).suggestions?.values;
+			}
+			if (Array.isArray(v)) {
+				items = v;
+			}
+		}
+
+		if (!items || items.length === 0) return undefined;
+
+		let selectedId: number | undefined = (this as any).selectedId;
+		if (selectedId === undefined) {
+			selectedId = (this as any).suggestions?.selectedId;
+		}
+
+		if (selectedId === undefined) {
+			const containers = document.querySelectorAll(".suggestion-container");
+			for (let i = 0; i < containers.length; i++) {
+				const container = containers[i] as HTMLElement;
+				if (!container.classList.contains("is-hidden") && container.style.display !== "none") {
+					const selectedEl = container.querySelector(".suggestion-item.is-selected");
+					if (selectedEl) {
+						const allItems = Array.from(container.querySelectorAll(".suggestion-item"));
+						const idx = allItems.indexOf(selectedEl);
+						if (idx !== -1) {
+							selectedId = idx;
+							break;
+						}
+					}
+				}
+			}
+		}
+
+		if (selectedId === undefined && items.length > 0) {
+			selectedId = 0;
+		}
+
+		if (selectedId !== undefined && items[selectedId]) {
+			return items[selectedId];
+		}
+
+		return undefined;
 	}
 
 	async getSuggestions(query: string): Promise<SuggestionItem[]> {
@@ -159,7 +213,9 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 			return [];
 		}
 
-		return this.getSuggestionsInternal(query);
+		const items = await this.getSuggestionsInternal(query);
+		this.lastSuggestions = items;
+		return items;
 	}
 
 	async getSuggestionsInternal(query: string): Promise<SuggestionItem[]> {

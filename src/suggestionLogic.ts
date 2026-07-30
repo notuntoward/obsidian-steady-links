@@ -53,6 +53,9 @@ export async function getSuggestionItems(
 		case "file-heading": {
 			return await getHeadingsInFile(parsed.fileName ?? "", app, parsed.searchTerm ?? "");
 		}
+		case "file-alias": {
+			return getFileAliasesForFile(parsed.fileName ?? "", parsed.searchTerm ?? "", app);
+		}
 		case "file":
 		default:
 			return getFiles(parsed.searchTerm ?? "", app);
@@ -202,6 +205,78 @@ export function getFileAliases(file: TFile, app: App): string[] {
 	}
 
 	return aliases.filter((alias) => alias && typeof alias === "string");
+}
+
+export function getFileAliasesForFile(targetFileName: string, searchTerm: string, app: App): SuggestionItem[] {
+	const files = app.vault.getFiles();
+	// Strip heading/block suffix from targetFileName to get raw file/note name
+	const rawNoteName = targetFileName.split("#")[0].split("^")[0].trim();
+	const cleanTarget = rawNoteName.toLowerCase();
+	let targetFile: TFile | undefined;
+
+	if (cleanTarget) {
+		for (const f of files) {
+			if (f.basename.toLowerCase() === cleanTarget || f.name.toLowerCase() === cleanTarget || f.path.toLowerCase() === cleanTarget) {
+				targetFile = f;
+				break;
+			}
+		}
+
+		if (!targetFile) {
+			for (const f of files) {
+				if (f.basename.toLowerCase().includes(cleanTarget)) {
+					targetFile = f;
+					break;
+				}
+			}
+		}
+	}
+
+	const results: SuggestionItem[] = [];
+	const lowerSearch = searchTerm.toLowerCase();
+
+	if (targetFile) {
+		const aliases = getFileAliases(targetFile, app);
+		for (const alias of aliases) {
+			if (!lowerSearch || alias.toLowerCase().includes(lowerSearch)) {
+				results.push({
+					type: "alias",
+					file: targetFile,
+					alias: alias,
+					basename: targetFile.basename,
+					path: targetFile.path,
+					name: targetFile.name,
+					extension: targetFile.extension,
+				});
+			}
+		}
+	}
+
+	if (searchTerm.trim().length > 0) {
+		const exists = results.some((r) => r.alias?.toLowerCase() === lowerSearch);
+		if (!exists) {
+			results.push({
+				type: "alias",
+				file: targetFile,
+				alias: searchTerm.trim(),
+				basename: targetFile ? targetFile.basename : rawNoteName,
+			});
+		}
+	}
+
+	if (results.length === 0) {
+		results.push({
+			type: "alias",
+			file: targetFile,
+			alias: targetFile ? targetFile.basename : (rawNoteName || "alias"),
+			basename: targetFile ? targetFile.basename : rawNoteName,
+			path: targetFile ? targetFile.path : "",
+			name: targetFile ? targetFile.name : "",
+			extension: targetFile ? targetFile.extension : "md",
+		});
+	}
+
+	return results;
 }
 
 export function getHeadingsInCurrentFile(app: App): SuggestionItem[] {
@@ -467,6 +542,10 @@ export function getCompletionText(item: SuggestionItem, query: string): string {
 		return `#^${item.blockId}`;
 	}
 	if (item.type === "alias") {
+		if (query.includes("|")) {
+			const filePart = query.split("|")[0];
+			return `${filePart}|${item.alias || ""}`;
+		}
 		if (item.file && item.file.extension === "md") {
 			return item.file.basename;
 		}
