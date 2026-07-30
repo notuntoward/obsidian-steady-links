@@ -239,6 +239,23 @@ describe("FileSuggest.selectCurrentSuggestion", () => {
 // ---------------------------------------------------------------------------
 
 describe("FileSuggest scope key handlers", () => {
+	it("does not register Emacs navigation keys (Ctrl+n, Ctrl+p, Ctrl+b, Ctrl+f) in scope", () => {
+		const app = new App();
+		const modal = makeModalStub();
+		const suggest = makeSuggest(app, modal);
+
+		const scopeKeys = (suggest as any).scope.keys;
+		const ctrlN = scopeKeys.find((k: any) => k.key === "n" && k.modifiers?.includes("Ctrl"));
+		const ctrlP = scopeKeys.find((k: any) => k.key === "p" && k.modifiers?.includes("Ctrl"));
+		const ctrlB = scopeKeys.find((k: any) => k.key === "b" && k.modifiers?.includes("Ctrl"));
+		const ctrlF = scopeKeys.find((k: any) => k.key === "f" && k.modifiers?.includes("Ctrl"));
+
+		expect(ctrlN).toBeUndefined();
+		expect(ctrlP).toBeUndefined();
+		expect(ctrlB).toBeUndefined();
+		expect(ctrlF).toBeUndefined();
+	});
+
 	it("completes file basename and appends # when # is pressed on selected file item", () => {
 		const app = new App();
 		const modal = makeModalStub();
