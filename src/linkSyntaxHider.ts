@@ -3983,5 +3983,6 @@ export {
 	buildLinkSpans,
 	computeAllLinkSpansForState,
 	isAnySuggestOpen,
+	enterAtLinkEndKeymap,
 };
 export type { HiddenRange, LinkRange, VisibleLinkSpan, LinkSpan };
