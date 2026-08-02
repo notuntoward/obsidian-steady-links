@@ -133,6 +133,23 @@ describe("FileSuggest.getSuggestionsInternal", () => {
 		expect(results[0].heading).toBe("Section");
 	});
 
+	it("routes file|alias query to getFileAliasesForFile", async () => {
+		const file = new TFile({ path: "mynote.md" });
+		app.vault.addFile(file);
+		app.metadataCache.setFileCache("mynote.md", {
+			frontmatter: { alias: ["SuperAlias"] },
+		});
+
+		const modal = makeModalStub();
+		const suggest = makeSuggest(app, modal);
+		const results = await suggest.getSuggestionsInternal("mynote|Super");
+		expect(results).toHaveLength(2);
+		expect(results[0].type).toBe("alias");
+		expect(results[0].alias).toBe("SuperAlias");
+		expect(results[1].type).toBe("alias");
+		expect(results[1].alias).toBe("Super");
+	});
+
 	it("returns empty for file#block when file not found", async () => {
 		const modal = makeModalStub();
 		const suggest = makeSuggest(app, modal);
@@ -256,41 +273,4 @@ describe("FileSuggest scope key handlers", () => {
 		expect(ctrlF).toBeUndefined();
 	});
 
-	it("completes file basename and appends # when # is pressed on selected file item", () => {
-		const app = new App();
-		const modal = makeModalStub();
-		const suggest = makeSuggest(app, modal);
-
-		suggest.inputEl.value = "note-0";
-		(suggest as any).suggestions = {
-			selectedId: 0,
-			values: [{ type: "file", basename: "Note-08", extension: "md" }],
-		};
-
-		const hashHandler = (suggest as any).scope.keys.find((k: any) => k.key === "#")?.func;
-		expect(hashHandler).toBeDefined();
-
-		const result = hashHandler();
-		expect(result).toBe(false); // consumed
-		expect(suggest.inputEl.value).toBe("Note-08#");
-	});
-
-	it("completes file basename and appends #^ when ^ is pressed on selected file item", () => {
-		const app = new App();
-		const modal = makeModalStub();
-		const suggest = makeSuggest(app, modal);
-
-		suggest.inputEl.value = "note-0";
-		(suggest as any).suggestions = {
-			selectedId: 0,
-			values: [{ type: "file", basename: "Note-08", extension: "md" }],
-		};
-
-		const caretHandler = (suggest as any).scope.keys.find((k: any) => k.key === "^")?.func;
-		expect(caretHandler).toBeDefined();
-
-		const result = caretHandler();
-		expect(result).toBe(false); // consumed
-		expect(suggest.inputEl.value).toBe("Note-08#^");
-	});
 });

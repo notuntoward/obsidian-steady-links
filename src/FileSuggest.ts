@@ -17,6 +17,8 @@ import {
 	addBlockIdToFile
 } from "./suggestionLogic";
 
+import { getFileAliasesForFile } from "./suggestionLogic";
+
 export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 	modal: EditLinkModal;
 	inputEl: HTMLInputElement;
@@ -68,33 +70,6 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 				}
 			});
 
-			// Register "#" and "^" to complete active file/alias suggestion and transition to heading/block query
-			const handleHashCaretCompletion = (suffix: "#" | "#^", evt?: KeyboardEvent) => {
-				if (evt) {
-					evt.preventDefault();
-					evt.stopPropagation();
-				}
-				const item = this.getSelectedSuggestionItem();
-				if (!item) return true;
-
-				if (item.type !== "file" && item.type !== "alias") {
-					return true; // Let normal typing handle heading/block items
-				}
-
-				const fileTargetName = item.type === "alias"
-					? (item.file?.basename || item.alias || "")
-					: (item.extension === "md" ? (item.basename || "") : (item.name || ""));
-
-				if (!fileTargetName) return true;
-
-				this.inputEl.value = fileTargetName + suffix;
-				this.modal.handleDestInput();
-				this.inputEl.dispatchEvent(new Event("input"));
-				return false; // consume event
-			};
-
-			this.scope.register(null, "#", (evt?: KeyboardEvent) => handleHashCaretCompletion("#", evt));
-			this.scope.register(null, "^", (evt?: KeyboardEvent) => handleHashCaretCompletion("#^", evt));
 		}
 	}
 
@@ -210,6 +185,9 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 			case "file-heading": {
 				return await this.getHeadingsInFile(parsed.fileName ?? "", parsed.searchTerm ?? "");
 			}
+			case "file-alias": {
+				return this.getFileAliasesForFile(parsed.fileName ?? "", parsed.searchTerm ?? "");
+			}
 			case "file":
 			default:
 				return this.getFiles(parsed.searchTerm ?? "");
@@ -230,6 +208,10 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 
 	getHeadingsInFile(fileName: string, headingQuery = ""): SuggestionItem[] {
 		return getHeadingsInFile(fileName, this.app, headingQuery);
+	}
+
+	getFileAliasesForFile(targetFileName: string, searchTerm: string): SuggestionItem[] {
+		return getFileAliasesForFile(targetFileName, searchTerm, this.app);
 	}
 
 	getAllBlocksInFile(file: TFile, blockQuery = ""): Promise<SuggestionItem[]> {

@@ -501,5 +501,12 @@ describe("FileSuggest focus behavior", () => {
 			await suggest.getSuggestions("note#^block123");
 			expect(mockGetAllBlocksInFile).toHaveBeenCalled();
 		});
+
+		it("routes file|alias query to getFileAliasesForFile", async () => {
+			const mockGetFileAliasesForFile = vi.fn().mockResolvedValue([]);
+			(suggest as any).getFileAliasesForFile = mockGetFileAliasesForFile;
+			await suggest.getSuggestions("note|alias123");
+			expect(mockGetFileAliasesForFile).toHaveBeenCalledWith("note", "alias123");
+		});
 	});
 });

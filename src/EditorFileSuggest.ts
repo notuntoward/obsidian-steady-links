@@ -57,50 +57,6 @@ export class EditorFileSuggest extends EditorSuggest<SuggestionItem> {
 				return false;
 			});
 
-			const handleSuffixCompletion = (suffix: "#" | "#^" | "|", evt?: KeyboardEvent) => {
-				if (evt) {
-					evt.preventDefault();
-					evt.stopPropagation();
-				}
-				const context = this.context;
-				if (!context) return true;
-
-				const item = this.getSelectedSuggestionItem();
-				let fileTargetName: string;
-				if (item && (item.type === "file" || item.type === "alias")) {
-					fileTargetName = item.type === "alias"
-						? (item.file?.basename || item.alias || "")
-						: (item.extension === "md" ? (item.basename || "") : (item.name || ""));
-				} else {
-					fileTargetName = context.query.split("#")[0].split("|")[0];
-				}
-
-				if (!fileTargetName) return true;
-
-				const completionText = fileTargetName + suffix;
-				const editor = context.editor;
-				editor.replaceRange(completionText, context.start, context.end);
-				const newEndCh = context.start.ch + completionText.length;
-				const newCursor = { line: context.start.line, ch: newEndCh };
-				editor.setCursor(newCursor);
-
-				context.end = newCursor;
-				context.query = completionText;
-
-				try {
-					if (typeof (this as any).suggestions?.update === "function") {
-						(this as any).suggestions.update();
-					}
-				} catch {
-					// ignore
-				}
-
-				return false;
-			};
-
-			this.scope.register(null, "#", (evt?: KeyboardEvent) => handleSuffixCompletion("#", evt));
-			this.scope.register(null, "^", (evt?: KeyboardEvent) => handleSuffixCompletion("#^", evt));
-			this.scope.register(null, "|", (evt?: KeyboardEvent) => handleSuffixCompletion("|", evt));
 		}
 	}
 
