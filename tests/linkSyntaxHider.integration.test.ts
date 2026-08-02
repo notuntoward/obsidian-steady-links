@@ -2219,6 +2219,93 @@ describe("Emacs next-line with active mark", () => {
 		expect(view.state.doc.lineAt(view.state.selection.main.head).text).toBe("[[Western Climate Initiative]]");
 	});
 
+	it("reproduces Emacs selection expansion bounce bug on blank lines and line-start wikilinks", () => {
+		// Test markdown:
+		// (blank line)
+		// startA [[Untitled 6#Dialog]] alfkjalsjdf
+		// (blank line)
+		// startB [[Untitled 6#Dialog]]
+		// (blank line)
+		// [[Untitled 6#Dialog]]
+		const doc = [
+			"",
+			"startA [[Untitled 6#Dialog]] alfkjalsjdf",
+			"",
+			"startB [[Untitled 6#Dialog]]",
+			"",
+			"[[Untitled 6#Dialog]]"
+		].join("\n");
+
+		// Cursor starts on blank line at the very top (pos 0)
+		view = createTestView(doc, 0);
+
+		// Run Set Mark command at the starting position
+		const markPos = 0;
+
+		function emacsNextLine() {
+			const cursorPos = view.state.selection.main.head;
+			// Emacs plugin collapses to cursor before executing "goDown"
+			view.dispatch({ selection: EditorSelection.cursor(cursorPos) });
+
+			const currentLine = view.state.doc.lineAt(view.state.selection.main.head);
+			if (currentLine.number < view.state.doc.lines) {
+				const nextLine = view.state.doc.line(currentLine.number + 1);
+				view.dispatch({
+					selection: EditorSelection.create([
+						EditorSelection.cursor(nextLine.from, undefined, undefined, 0)
+					]),
+					annotations: [Transaction.userEvent.of("select")],
+				});
+
+				// Re-expand selection back to the mark
+				view.dispatch({
+					selection: EditorSelection.range(markPos, view.state.selection.main.head),
+				});
+
+				// Simulate Obsidian programmatic normalization after movement
+				// Obsidian normalizes from textFrom back to leading.from (nextLine.from) with no userEvent.
+				// This should be done AFTER selection re-expansion to simulate real-world sequence
+				// where Emacs moves selection first, then Obsidian normalization triggers.
+				view.dispatch({
+					selection: EditorSelection.range(markPos, nextLine.from),
+				});
+			} else {
+				// Re-expand selection back to the mark
+				view.dispatch({
+					selection: EditorSelection.range(markPos, view.state.selection.main.head),
+				});
+			}
+		}
+
+		// Run Emacs next-line 5 times:
+		// 1st: starts at line 1 (blank line, pos 0), moves to line 2 ("startA...")
+		// 2nd: moves to line 3 (blank line)
+		// 3rd: moves to line 4 ("startB...")
+		// 4th: moves to line 5 (blank line above "[[Untitled 6#Dialog]]")
+		// 5th: moves to line 6 ("[[Untitled 6#Dialog]]") - this starts with a link!
+		const cursorPositions: number[] = [];
+		const selectionRanges: { from: number; to: number }[] = [];
+
+		for (let i = 0; i < 5; i++) {
+			emacsNextLine();
+			cursorPositions.push(view.state.selection.main.head);
+			selectionRanges.push({
+				from: view.state.selection.main.from,
+				to: view.state.selection.main.to
+			});
+		}
+
+		// Let's assert on the progression of cursor positions and selection ranges.
+		// On the 5th step, the cursor should land on line 6 and stay there, NOT bounce back
+		// or collapse/terminate the selection.
+		const finalHead = view.state.selection.main.head;
+		const finalLine = view.state.doc.lineAt(finalHead);
+		expect(finalLine.number).toBe(6);
+		// The selection should NOT be terminated/collapsed (from markPos to finalHead)
+		expect(view.state.selection.main.anchor).toBe(markPos);
+		expect(view.state.selection.main.head).toBe(finalHead);
+	});
+
 	it("moves through the full Note-06.md structure with two line-start wikilinks", () => {
 		const doc = [
 			"---",

@@ -163,7 +163,16 @@ const intentionalLeadingFromField = StateField.define<number | null>({
 		for (const e of tr.effects) {
 			if (e.is(intentionalLeadingFromEffect)) return e.value;
 		}
-		if (tr.selection) return null;
+		if (tr.selection) {
+			// If the selection changed but the cursor head position didn't change,
+			// keep the intentional leading from marker (e.g. during selection expansion).
+			const oldHead = tr.startState.selection.main.head;
+			const newHead = tr.state.selection.main.head;
+			if (oldHead === newHead) {
+				return value;
+			}
+			return null;
+		}
 		return value;
 	},
 });
@@ -177,8 +186,17 @@ const arrivedAtTextFromFromOutsideField = StateField.define<boolean>({
 		for (const e of tr.effects) {
 			if (e.is(arrivedAtTextFromFromOutsideEffect)) return e.value;
 		}
-		// Clear on any selection change that doesn't set the effect
-		if (tr.selection) return false;
+		// Clear on any selection change that doesn't set the effect.
+		// However, if the selection changed but the cursor head position didn't change,
+		// keep the arrivedAtTextFromFromOutside marker (e.g. during selection expansion).
+		if (tr.selection) {
+			const oldHead = tr.startState.selection.main.head;
+			const newHead = tr.state.selection.main.head;
+			if (oldHead === newHead) {
+				return value;
+			}
+			return false;
+		}
 		return value;
 	},
 });
