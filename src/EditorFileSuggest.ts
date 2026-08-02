@@ -119,8 +119,8 @@ export class EditorFileSuggest extends EditorSuggest<SuggestionItem> {
 		if (openIdx === -1) return null;
 
 		const closeIdx = line.indexOf("]]", openIdx);
-		// If "]]" exists and cursor is past "]]" by more than 2 chars, then we are outside the link
-		if (closeIdx !== -1 && cursor.ch > closeIdx + 2) return null;
+		// If "]]" exists and cursor is at or past the closing "]]", then we are outside the link
+		if (closeIdx !== -1 && cursor.ch >= closeIdx + 2) return null;
 
 		const queryEnd = (closeIdx !== -1 && cursor.ch >= closeIdx) ? closeIdx : cursor.ch;
 		const query = line.substring(openIdx + 2, queryEnd);
