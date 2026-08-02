@@ -2170,10 +2170,23 @@ function handleHomeKey(view: EditorView, extend: boolean): boolean {
 	return false;
 }
 
+function isAnySuggestOpen(): boolean {
+	if (typeof document === "undefined") return false;
+	const containers = document.querySelectorAll(".suggestion-container");
+	for (let i = 0; i < containers.length; i++) {
+		const container = containers[i] as HTMLElement;
+		if (!container.classList.contains("is-hidden") && container.style.display !== "none") {
+			return true;
+		}
+	}
+	return false;
+}
+
 const enterAtLinkEndKeymap = keymap.of([
 	{
 		key: "Enter",
 		run(view) {
+			if (isAnySuggestOpen()) return false;
 			if (!view.state.field(syntaxHiderEnabledField, false)) return false;
 			const sel = view.state.selection;
 			if (sel.ranges.length !== 1 || !sel.main.empty) return false;
@@ -3969,5 +3982,6 @@ export {
 	setWikiLinkHidingOptions,
 	buildLinkSpans,
 	computeAllLinkSpansForState,
+	isAnySuggestOpen,
 };
 export type { HiddenRange, LinkRange, VisibleLinkSpan, LinkSpan };

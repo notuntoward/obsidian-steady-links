@@ -9,6 +9,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { FileSuggest } from "../src/FileSuggest";
 import { App, TFile } from "./__mocks__/obsidian";
+import { enterAtLinkEndKeymap, isAnySuggestOpen } from "../src/linkSyntaxHider";
 
 // ---------------------------------------------------------------------------
 // Modal stub
@@ -273,4 +274,21 @@ describe("FileSuggest scope key handlers", () => {
 		expect(ctrlF).toBeUndefined();
 	});
 
+});
+
+describe("isAnySuggestOpen and enterAtLinkEndKeymap with open suggestion pop-up", () => {
+	it("correctly detects when a suggestion container is open in DOM", () => {
+		expect(isAnySuggestOpen()).toBe(false);
+
+		const container = document.createElement("div");
+		container.className = "suggestion-container";
+		document.body.appendChild(container);
+
+		try {
+			expect(isAnySuggestOpen()).toBe(true);
+		} finally {
+			container.remove();
+		}
+		expect(isAnySuggestOpen()).toBe(false);
+	});
 });
