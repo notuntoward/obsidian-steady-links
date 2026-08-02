@@ -57,50 +57,6 @@ export class EditorFileSuggest extends EditorSuggest<SuggestionItem> {
 				return false;
 			});
 
-			const handleSuffixCompletion = (suffix: "#" | "#^" | "|", evt?: KeyboardEvent) => {
-				if (evt) {
-					evt.preventDefault();
-					evt.stopPropagation();
-				}
-				const context = this.context;
-				if (!context) return true;
-
-				const item = this.getSelectedSuggestionItem();
-				let fileTargetName: string;
-				if (item && (item.type === "file" || item.type === "alias")) {
-					fileTargetName = item.type === "alias"
-						? (item.file?.basename || item.alias || "")
-						: (item.extension === "md" ? (item.basename || "") : (item.name || ""));
-				} else {
-					fileTargetName = context.query.split("#")[0].split("|")[0];
-				}
-
-				if (!fileTargetName) return true;
-
-				const completionText = fileTargetName + suffix;
-				const editor = context.editor;
-				editor.replaceRange(completionText, context.start, context.end);
-				const newEndCh = context.start.ch + completionText.length;
-				const newCursor = { line: context.start.line, ch: newEndCh };
-				editor.setCursor(newCursor);
-
-				context.end = newCursor;
-				context.query = completionText;
-
-				try {
-					if (typeof (this as any).suggestions?.update === "function") {
-						(this as any).suggestions.update();
-					}
-				} catch {
-					// ignore
-				}
-
-				return false;
-			};
-
-			this.scope.register(null, "#", (evt?: KeyboardEvent) => handleSuffixCompletion("#", evt));
-			this.scope.register(null, "^", (evt?: KeyboardEvent) => handleSuffixCompletion("#^", evt));
-			this.scope.register(null, "|", (evt?: KeyboardEvent) => handleSuffixCompletion("|", evt));
 		}
 	}
 
@@ -163,8 +119,8 @@ export class EditorFileSuggest extends EditorSuggest<SuggestionItem> {
 		if (openIdx === -1) return null;
 
 		const closeIdx = line.indexOf("]]", openIdx);
-		// If "]]" exists and cursor is past "]]" by more than 2 chars, then we are outside the link
-		if (closeIdx !== -1 && cursor.ch > closeIdx + 2) return null;
+		// If "]]" exists and cursor is at or past the closing "]]", then we are outside the link
+		if (closeIdx !== -1 && cursor.ch >= closeIdx + 2) return null;
 
 		const queryEnd = (closeIdx !== -1 && cursor.ch >= closeIdx) ? closeIdx : cursor.ch;
 		const query = line.substring(openIdx + 2, queryEnd);
@@ -196,40 +152,28 @@ export class EditorFileSuggest extends EditorSuggest<SuggestionItem> {
 
 		if (item.type === "heading") {
 			const currentFile = this.app.workspace.getActiveFile();
-			if (item.file && currentFile && item.file.path === currentFile.path) {
-				linkValue = `#${item.heading}`;
-			} else if (item.file) {
-				const fileName = item.file.basename;
-				linkValue = `${fileName}#${item.heading}`;
+			if (item.file && (!currentFile || item.file.path !== currentFile.path)) {
+				linkValue = `${item.file.basename}#${item.heading}`;
 			} else {
 				linkValue = `#${item.heading}`;
 			}
 		} else if (item.type === "block") {
-			if (!item.blockId) {
+			if (!item.blockId && item.file && item.position) {
 				const newBlockId = generateBlockId();
-				if (item.file && item.position) {
-					await addBlockIdToFile(item.file, this.app, item.position, newBlockId);
-					item.blockId = newBlockId;
-				}
+				await addBlockIdToFile(item.file, this.app, item.position, newBlockId);
+				item.blockId = newBlockId;
 			}
 
 			const currentFile = this.app.workspace.getActiveFile();
-			if (item.file && currentFile && item.file.path === currentFile.path) {
-				linkValue = `#^${item.blockId}`;
-			} else if (item.file) {
-				const fileName = item.file.basename;
-				linkValue = `${fileName}#^${item.blockId}`;
+			if (item.file && (!currentFile || item.file.path !== currentFile.path)) {
+				linkValue = `${item.file.basename}#^${item.blockId}`;
 			} else {
 				linkValue = `#^${item.blockId}`;
 			}
 		} else if (item.type === "alias") {
-			if (item.file && item.file.extension === "md") {
-				linkValue = item.file.basename || "";
-			} else if (item.file) {
-				linkValue = item.file.name || "";
-			} else {
-				linkValue = item.alias || "";
-			}
+			linkValue = item.file
+				? (item.file.extension === "md" ? (item.file.basename || "") : (item.file.name || ""))
+				: (item.alias || "");
 			newLinkText = item.alias || "";
 		} else {
 			if (item.extension === "md") {

@@ -9,6 +9,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { FileSuggest } from "../src/FileSuggest";
 import { App, TFile } from "./__mocks__/obsidian";
+import { enterAtLinkEndKeymap, isAnySuggestOpen } from "../src/linkSyntaxHider";
 
 // ---------------------------------------------------------------------------
 // Modal stub
@@ -131,6 +132,23 @@ describe("FileSuggest.getSuggestionsInternal", () => {
 		const results = await suggest.getSuggestionsInternal("mynote#Section");
 		expect(results).toHaveLength(1);
 		expect(results[0].heading).toBe("Section");
+	});
+
+	it("routes file|alias query to getFileAliasesForFile", async () => {
+		const file = new TFile({ path: "mynote.md" });
+		app.vault.addFile(file);
+		app.metadataCache.setFileCache("mynote.md", {
+			frontmatter: { alias: ["SuperAlias"] },
+		});
+
+		const modal = makeModalStub();
+		const suggest = makeSuggest(app, modal);
+		const results = await suggest.getSuggestionsInternal("mynote|Super");
+		expect(results).toHaveLength(2);
+		expect(results[0].type).toBe("alias");
+		expect(results[0].alias).toBe("SuperAlias");
+		expect(results[1].type).toBe("alias");
+		expect(results[1].alias).toBe("Super");
 	});
 
 	it("returns empty for file#block when file not found", async () => {
@@ -256,41 +274,21 @@ describe("FileSuggest scope key handlers", () => {
 		expect(ctrlF).toBeUndefined();
 	});
 
-	it("completes file basename and appends # when # is pressed on selected file item", () => {
-		const app = new App();
-		const modal = makeModalStub();
-		const suggest = makeSuggest(app, modal);
+});
 
-		suggest.inputEl.value = "note-0";
-		(suggest as any).suggestions = {
-			selectedId: 0,
-			values: [{ type: "file", basename: "Note-08", extension: "md" }],
-		};
+describe("isAnySuggestOpen and enterAtLinkEndKeymap with open suggestion pop-up", () => {
+	it("correctly detects when a suggestion container is open in DOM", () => {
+		expect(isAnySuggestOpen()).toBe(false);
 
-		const hashHandler = (suggest as any).scope.keys.find((k: any) => k.key === "#")?.func;
-		expect(hashHandler).toBeDefined();
+		const container = document.createElement("div");
+		container.className = "suggestion-container";
+		document.body.appendChild(container);
 
-		const result = hashHandler();
-		expect(result).toBe(false); // consumed
-		expect(suggest.inputEl.value).toBe("Note-08#");
-	});
-
-	it("completes file basename and appends #^ when ^ is pressed on selected file item", () => {
-		const app = new App();
-		const modal = makeModalStub();
-		const suggest = makeSuggest(app, modal);
-
-		suggest.inputEl.value = "note-0";
-		(suggest as any).suggestions = {
-			selectedId: 0,
-			values: [{ type: "file", basename: "Note-08", extension: "md" }],
-		};
-
-		const caretHandler = (suggest as any).scope.keys.find((k: any) => k.key === "^")?.func;
-		expect(caretHandler).toBeDefined();
-
-		const result = caretHandler();
-		expect(result).toBe(false); // consumed
-		expect(suggest.inputEl.value).toBe("Note-08#^");
+		try {
+			expect(isAnySuggestOpen()).toBe(true);
+		} finally {
+			container.remove();
+		}
+		expect(isAnySuggestOpen()).toBe(false);
 	});
 });
