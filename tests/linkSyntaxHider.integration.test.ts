@@ -2041,6 +2041,8 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			});
 
 			expect(view.state.doc.toString()).toBe("[[WikiNoAlias|ikiNoAlias]]");
+			// Cursor must land at index 14 (the first visible character 'i' of the alias), NOT at 0 (hidden syntax)
+			expect(view.state.selection.main.head).toBe(14);
 		});
 
 		it("Emacs delete-char when goRight jumps full link decoration [0, link.to) deletes 1st visible char of markdown link", () => {
@@ -2057,6 +2059,8 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			});
 
 			expect(view.state.doc.toString()).toBe("[ext](url)");
+			// Cursor must land at index 1 (the first visible character 'e' of markdown link), NOT at 0 (hidden syntax)
+			expect(view.state.selection.main.head).toBe(1);
 		});
 	});
 });

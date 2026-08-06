@@ -3599,8 +3599,19 @@ const clampSelectionDeleteFilter = EditorState.transactionFilter.of((tr) => {
 	// `rewrittenDeletes[0].from`, but when a bare wikilink was converted into
 	// an aliased wikilink (see getBareWikiLinkDestination), an insertion is
 	// added ahead of the deletion point, which must shift the cursor forward.
+	// If the deletion started inside hidden leading syntax (e.g. cursor sitting
+	// at link.from = left edge of link during Emacs delete-char), snap targetPos
+	// to link.textFrom so the mapped cursor lands on the first visible character.
+	let targetPos = deleteChanges[0].from;
+	for (const link of links) {
+		if (targetPos >= link.from && targetPos < link.textFrom) {
+			targetPos = link.textFrom;
+			break;
+		}
+	}
 	const cursorPos = ChangeSet.of(allChanges, tr.startState.doc.length).mapPos(
-		deleteChanges[0].from
+		targetPos,
+		1
 	);
 	const dispatchUserEvent = tr.annotation(Transaction.userEvent) ?? undefined;
 
