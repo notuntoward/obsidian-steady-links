@@ -789,6 +789,57 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			expect(view.state.selection.main.head).toBe(cursor);
 		});
 
+		it("Emacs Kill line inside a bare wikilink converts it to aliased wikilink and does not bounce the cursor", () => {
+			const doc = "[[WikiNoAlias]]";
+			// Index of "N" is 6
+			const cursor = doc.indexOf("N");
+			view = createTestView(doc, cursor);
+
+			const startLine = view.state.doc.lineAt(cursor);
+			const result = emulateEmacsKillLine(view);
+
+			// Expected document should convert bare wikilink to aliased wikilink with rest of text deleted
+			expect(view.state.doc.toString()).toBe("[[WikiNoAlias|Wiki]]");
+			// Cursor should land right after "Wiki" (index 18)
+			expect(result.cursor).toBe(18);
+			expect(view.state.selection.main.head).toBe(18);
+			expect(view.state.doc.lineAt(result.cursor).number).toBe(startLine.number);
+		});
+
+		it("Emacs Kill line inside an aliased wikilink does not bounce the cursor", () => {
+			const doc = "[[WikiNoAlias|AliasText]]";
+			// Index of "T" is 19
+			const cursor = doc.indexOf("T");
+			view = createTestView(doc, cursor);
+
+			const startLine = view.state.doc.lineAt(cursor);
+			const result = emulateEmacsKillLine(view);
+
+			// Expected document: Rest of alias deleted, link syntax preserved
+			expect(view.state.doc.toString()).toBe("[[WikiNoAlias|Alias]]");
+			// Cursor should land right after "Alias" (index 19)
+			expect(result.cursor).toBe(19);
+			expect(view.state.selection.main.head).toBe(19);
+			expect(view.state.doc.lineAt(result.cursor).number).toBe(startLine.number);
+		});
+
+		it("Emacs Kill line inside a markdown link does not bounce the cursor", () => {
+			const doc = "[MarkdownText](https://example.com)";
+			// Index of "T" is 9
+			const cursor = doc.indexOf("T");
+			view = createTestView(doc, cursor);
+
+			const startLine = view.state.doc.lineAt(cursor);
+			const result = emulateEmacsKillLine(view);
+
+			// Expected document: Rest of text deleted, URL syntax preserved
+			expect(view.state.doc.toString()).toBe("[Markdown](https://example.com)");
+			// Cursor should land right after "Markdown" (index 9)
+			expect(result.cursor).toBe(9);
+			expect(view.state.selection.main.head).toBe(9);
+			expect(view.state.doc.lineAt(result.cursor).number).toBe(startLine.number);
+		});
+
 		it("kill-line from the visible start of a mid-line wikilink copies full raw link text and keeps the cursor on the same line", () => {
 			const doc = "bob\n\nabcdefg [[Note-08|123456]]  hhh\n\njane";
 			const cursor = doc.indexOf("123456");
