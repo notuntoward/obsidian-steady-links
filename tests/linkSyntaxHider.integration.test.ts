@@ -806,6 +806,28 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			expect(view.state.doc.lineAt(result.cursor).number).toBe(startLine.number);
 		});
 
+		it("Emacs Kill line inside a bare wikilink with subsequent text on same line", () => {
+			const doc = [
+				"[[Wikilink]] asdflk adsflkjasdf alsdkfjasdfl [[Wikilink]]",
+				"",
+				"[[WikiNoAlias]] adflkjadlsf al;dsfjalskdfj akdf [[WikiNoAlias]]"
+			].join("\n");
+			// Index of "N" in the first wikilink of Line 3
+			const cursor = doc.indexOf("WikiNoAlias") + 4; // middle of WikiNoAlias, where N is
+			view = createTestView(doc, cursor);
+
+			const startLine = view.state.doc.lineAt(cursor);
+			const result = emulateEmacsKillLine(view);
+
+			// Expected document should convert the first bare wikilink to aliased wikilink and delete the rest of the line
+			expect(view.state.doc.toString()).toBe(
+				"[[Wikilink]] asdflk adsflkjasdf alsdkfjasdfl [[Wikilink]]\n\n[[WikiNoAlias|Wiki]]"
+			);
+			// Cursor should land right after "Wiki" and stay on the same line
+			expect(view.state.doc.lineAt(result.cursor).number).toBe(startLine.number);
+			expect(view.state.selection.main.head).toBe(result.cursor);
+		});
+
 		it("Emacs Kill line inside an aliased wikilink does not bounce the cursor", () => {
 			const doc = "[[WikiNoAlias|AliasText]]";
 			// Index of "T" is 19

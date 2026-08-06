@@ -352,6 +352,10 @@ const suppressSameLineCursorResetField = StateField.define<number | null>({
 			if (!main.empty && main.from !== value) {
 				return null;
 			}
+			const userEvent = tr.annotation(Transaction.userEvent);
+			if (userEvent !== undefined) {
+				return null;
+			}
 		}
 
 		return value;
@@ -374,6 +378,10 @@ const suppressSameLineCursorResetAnchorField = StateField.define<number | null>(
 		if (tr.selection && value !== null) {
 			const main = tr.state.selection.main;
 			if (!main.empty) {
+				return null;
+			}
+			const userEvent = tr.annotation(Transaction.userEvent);
+			if (userEvent !== undefined) {
 				return null;
 			}
 		}
@@ -1195,11 +1203,14 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 	// still need to intercept the follow-up setCursor(originalPos) that
 	// external plugins (Emacs) dispatch and redirect it back to the preserved
 	// post-delete cursor.
+	const hasAnyUserEvent = update.transactions.some(
+		(tr) => tr.annotation(Transaction.userEvent) !== undefined
+	);
+
 	if (
 		suppressedResetPos !== null &&
 		newSel.main.empty &&
-		oldSel.main.empty &&
-		oldSel.main.head === suppressedResetPos &&
+		!hasAnyUserEvent &&
 		newSel.main.head !== suppressedResetPos
 	) {
 		debugLog("suppress same-line cursor reset (post-delete)", {
