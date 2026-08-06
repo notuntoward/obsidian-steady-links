@@ -2146,6 +2146,65 @@ describe("Integration: cursor correction with real CM6 state", () => {
 
 			expect(view.state.doc.toString()).toBe("1. [[Note 1|ote 1]]");
 		});
+
+		it("Emacs delete-char inside mid-line bare wikilink converts to aliased wikilink and does not bounce cursor backward", () => {
+			const doc = "[[WikiNoAlias]] adflkjadlsf al;dsfjalskdfj akdf [[WikiNoAlias]]";
+			// Link 2 is at [46, 61), textFrom is 48 ('W').
+			// Cursor between 'i' and 'N' in 2nd link -> index 52.
+			view = createTestView(doc, 52);
+
+			// 1. Emacs delete-char: setSelection(52, 53) then replaceSelection("")
+			view.dispatch({
+				selection: EditorSelection.single(52, 53),
+				userEvent: "select",
+			});
+			view.dispatch({
+				changes: { from: 52, to: 53, insert: "" },
+				selection: EditorSelection.cursor(52),
+			});
+
+			// Document must convert 2nd link to [[WikiNoAlias|WiiNoAlias]]
+			expect(view.state.doc.toString()).toBe(
+				"[[WikiNoAlias]] adflkjadlsf al;dsfjalskdfj akdf [[WikiNoAlias|WiiNoAlias]]"
+			);
+
+			// 2. Emulate external plugin / Obsidian setCursor(53) follow-up dispatch
+			view.dispatch({
+				selection: EditorSelection.cursor(53),
+			});
+
+			// Cursor MUST stay inside the 2nd link's visible text (>= 61), NOT bounce to before link 2 or line 1 start
+			const head = view.state.selection.main.head;
+			expect(head).toBeGreaterThanOrEqual(61);
+			expect(head).toBeLessThanOrEqual(71);
+		});
+
+		it("Emacs delete-char inside bare wikilink on line 3 does not bounce cursor to earlier blank line", () => {
+			const doc =
+				"[[Wikilink]] asdflk adsflkjasdf alsdkfjasdfl [[Wikilink]]\n\n[[Wiki|NoAlias]] adflkjadlsf al;dsfjalskdfj akdf [[WikiNoAlias]]";
+			// Line 3 starts at index 59.
+			// 2nd link on Line 3 is [[WikiNoAlias]] at [107, 122), textFrom = 109 ('W').
+			// Cursor between 'i' and 'N' -> index 113.
+			view = createTestView(doc, 113);
+
+			view.dispatch({
+				selection: EditorSelection.single(113, 114),
+				userEvent: "select",
+			});
+			view.dispatch({
+				changes: { from: 113, to: 114, insert: "" },
+				selection: EditorSelection.cursor(113),
+			});
+
+			// Follow-up external setCursor(114) dispatch
+			view.dispatch({
+				selection: EditorSelection.cursor(114),
+			});
+
+			// Cursor MUST stay on line 3 (index >= 59) inside visible alias text
+			const head = view.state.selection.main.head;
+			expect(head).toBeGreaterThanOrEqual(59);
+		});
 	});
 });
 

@@ -1974,7 +1974,10 @@ function buildSingleCharDisplayDeleteTransaction(
 			selection: EditorSelection.cursor(newHead),
 			scrollIntoView: true,
 			userEvent,
-			effects: extraEffects,
+			effects: [
+				...extraEffects,
+				suppressSameLineCursorResetEffect.of(newHead),
+			],
 		});
 	} else {
 		return state.update({
@@ -3659,7 +3662,13 @@ const clampSelectionDeleteFilter = EditorState.transactionFilter.of((tr) => {
 				startSelFrom === link.from ||
 				startSelFrom === link.textTo
 		);
-		if (selectionStartsAtLinkEdge && startSelTo === startSelLine.to) {
+		const didConvertBareWikilink = allChanges.some(
+			(c) => typeof c.insert === "string" && c.insert.includes("|")
+		);
+		if (
+			(selectionStartsAtLinkEdge && startSelTo === startSelLine.to) ||
+			didConvertBareWikilink
+		) {
 			effects.push(suppressSameLineCursorResetEffect.of(cursorPos));
 		} else {
 			// Legacy: also suppress for line-start link deletes.
