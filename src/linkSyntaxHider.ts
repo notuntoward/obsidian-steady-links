@@ -992,6 +992,15 @@ const syntaxHiderModePlugin = ViewPlugin.fromClass(SyntaxHiderModePlugin);
 // Cursor correction
 // ---------------------------------------------------------------------------
 
+/**
+ * Corrects the cursor position if it lands inside a hidden syntax range.
+ *
+ * @param isEditUpdate If true, this correction is triggered by an edit/document change
+ * (like a deletion or typing), rather than pure arrow-key/navigation movement. We use
+ * this to specifically disable navigation-style boundary corrections (like left-arrow
+ * bounce-to-previous-line or skipping trailing link syntax) during edit-driven updates,
+ * preventing cursor bouncing and ensuring edit stability.
+ */
 function correctCursorPos(
 	pos: number,
 	oldPos: number,
@@ -999,7 +1008,7 @@ function correctCursorPos(
 	doc: EditorState["doc"],
 	isPointer: boolean = false,
 	hasGoalColumn: boolean = false,
-	docChanged: boolean = false
+	isEditUpdate: boolean = false
 ): number | null {
 	const oldLine = doc.lineAt(Math.min(oldPos, doc.length));
 	const newLine = doc.lineAt(Math.min(pos, doc.length));
@@ -1053,7 +1062,7 @@ function correctCursorPos(
 				// Moving left (left-arrow from h.to or from inside the link):
 				// skip to before the link (end of prev line), or null if
 				// already at document start (nowhere to go).
-				return !docChanged && h.from > 0 ? h.from - 1 : null;
+				return !isEditUpdate && h.from > 0 ? h.from - 1 : null;
 			}
 			inside = pos >= h.from && pos < h.to;
 		} else {
@@ -1089,7 +1098,7 @@ function correctCursorPos(
 		// represent a meaningful visible cursor stop.  Go directly to
 		// h.from - 1 (the last character of the visible link text) so
 		// leftward motion enters the link text in one arrow press.
-		if (!docChanged && oldPos === h.to && h.from > 0) {
+		if (!isEditUpdate && oldPos === h.to && h.from > 0) {
 			return h.from - 1;
 		}
 		return h.from;
@@ -1382,7 +1391,9 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 	const adjusted = newSel.ranges.map((range, i) => {
 		let oldHead = i < oldSel.ranges.length ? oldSel.ranges[i].head : oldSel.main.head;
 		if (update.docChanged) {
-			oldHead = update.changes.mapPos(oldHead);
+			// Map oldHead through document changes. We use association 1 (forward/right)
+			// to keep the mapped position consistently aligned to the right edge of insertions/deletions.
+			oldHead = update.changes.mapPos(oldHead, 1);
 		}
 		let head = range.head;
 
