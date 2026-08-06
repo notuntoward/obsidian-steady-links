@@ -2717,4 +2717,100 @@ describe("Integration: DOM copy event focus handling", () => {
 	});
 });
 
+describe("Bare wikilinks non-corrupting alias conversion on deletion", () => {
+	let view: EditorView;
+
+	afterEach(() => {
+		if (view) view.destroy();
+	});
+
+	it("converts bare wikilink to aliased wikilink on Backspace at right edge of link", () => {
+		// "[[WikiNoAlias]]" — display text is "WikiNoAlias", length 11.
+		// Cursor at right edge: position 2 (hidden [[) + 11 = 13.
+		const doc = "[[WikiNoAlias]]";
+		view = createTestView(doc, 13);
+
+		// Dispatch Backspace keypress
+		view.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", code: "Backspace", keyCode: 8, which: 8, bubbles: true }));
+
+		// Expected: [[WikiNoAlias|WikiNoAlia]]
+		expect(view.state.doc.toString()).toBe("[[WikiNoAlias|WikiNoAlia]]");
+		// Destination untouched: WikiNoAlias
+	});
+
+	it("converts bare wikilink to aliased wikilink on Delete at left edge of link", () => {
+		// "[[WikiNoAlias]]" — position 2 is 'W'.
+		const doc = "[[WikiNoAlias]]";
+		view = createTestView(doc, 2);
+
+		// Dispatch Delete keypress
+		view.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", code: "Delete", keyCode: 46, which: 46, bubbles: true }));
+
+		// Expected: [[WikiNoAlias|ikiNoAlias]]
+		expect(view.state.doc.toString()).toBe("[[WikiNoAlias|ikiNoAlias]]");
+	});
+
+	it("converts bare wikilink to aliased wikilink on Delete in middle of link", () => {
+		// "[[WikiNoAlias]]" — positions: 0=[, 1=[, 2=W, 3=i, 4=k, 5=i, 6=N...
+		// Cursor left of 'N' at index 6. Delete deletes 'N'.
+		const doc = "[[WikiNoAlias]]";
+		view = createTestView(doc, 6);
+
+		// Dispatch Delete keypress
+		view.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", code: "Delete", keyCode: 46, which: 46, bubbles: true }));
+
+		// Expected: [[WikiNoAlias|WikioAlias]]
+		expect(view.state.doc.toString()).toBe("[[WikiNoAlias|WikioAlias]]");
+	});
+
+	it("converts bare wikilink to aliased wikilink on Backspace in middle of link", () => {
+		// "[[WikiNoAlias]]" — cursor at index 6 (left of 'N'). Backspace deletes 'i' at index 5.
+		const doc = "[[WikiNoAlias]]";
+		view = createTestView(doc, 6);
+
+		// Dispatch Backspace keypress
+		view.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", code: "Backspace", keyCode: 8, which: 8, bubbles: true }));
+
+		// Expected: [[WikiNoAlias|WikNoAlias]]
+		expect(view.state.doc.toString()).toBe("[[WikiNoAlias|WikNoAlias]]");
+	});
+
+	it("preserves target and updates alias on aliased wikilink Backspace", () => {
+		// "[[WikiNoAlias|Alias]]" — display alias is "Alias", ends at index 19.
+		const doc = "[[WikiNoAlias|Alias]]";
+		view = createTestView(doc, 19);
+
+		view.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", code: "Backspace", keyCode: 8, which: 8, bubbles: true }));
+
+		expect(view.state.doc.toString()).toBe("[[WikiNoAlias|Alia]]");
+	});
+
+	it("preserves URL and updates display text on markdown link Backspace", () => {
+		// "[text](url)" — cursor after 't' at index 5.
+		const doc = "[text](url)";
+		view = createTestView(doc, 5);
+
+		view.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", code: "Backspace", keyCode: 8, which: 8, bubbles: true }));
+
+		expect(view.state.doc.toString()).toBe("[tex](url)");
+	});
+
+	it("preserves target and converts bare wikilink on selection deletion of part of visible text", () => {
+		// "[[WikiNoAlias]]" — select "Wiki" (range [2, 6))
+		const doc = "[[WikiNoAlias]]";
+		view = createTestView(doc, 2);
+		view.dispatch({ selection: EditorSelection.single(2, 6) });
+
+		// Simulate Delete keypress on selection
+		view.dispatch({
+			changes: { from: 2, to: 6, insert: "" },
+			selection: EditorSelection.cursor(2),
+			userEvent: "delete",
+		});
+
+		expect(view.state.doc.toString()).toBe("[[WikiNoAlias|NoAlias]]");
+	});
+});
+
+
 

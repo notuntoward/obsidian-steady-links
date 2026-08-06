@@ -1279,8 +1279,8 @@ describe("deleteAtLinkEndFix: Backspace at link end (h.to) must delete last char
 			annotations: [Transaction.userEvent.of("delete")],
 		}).state;
 
-		// The filter should delete position 5 ("k"), leaving "[[lin]]"
-		expect(newState.doc.toString()).toBe("[[lin]]");
+		// The filter should delete position 5 ("k"), leaving "[[link|lin]]"
+		expect(newState.doc.toString()).toBe("[[link|lin]]");
 	});
 
 	it("deletes last char of wikilink text on an ordinary line with text before link", () => {
@@ -1296,7 +1296,7 @@ describe("deleteAtLinkEndFix: Backspace at link end (h.to) must delete last char
 			annotations: [Transaction.userEvent.of("delete")],
 		}).state;
 
-		expect(newState.doc.toString()).toBe("see [[not]]");
+		expect(newState.doc.toString()).toBe("see [[note|not]]");
 	});
 
 	it("deletes last char of wikilink text in a list item", () => {
@@ -1312,7 +1312,7 @@ describe("deleteAtLinkEndFix: Backspace at link end (h.to) must delete last char
 			annotations: [Transaction.userEvent.of("delete")],
 		}).state;
 
-		expect(newState.doc.toString()).toBe("- [[ite]]");
+		expect(newState.doc.toString()).toBe("- [[item|ite]]");
 	});
 
 	it("deletes last char of aliased wikilink display text at EOL", () => {
@@ -1362,7 +1362,6 @@ describe("deleteAtLinkEndFix: Backspace at link end (h.to) must delete last char
 		}).state;
 
 		// The "a" (position 2) should be deleted → "[[]]"
-		// (deleteAtLinkEndFix redirects to delete h.from-1 = position 2)
 		expect(newState.doc.toString()).toBe("[[]]");
 	});
 
@@ -1397,7 +1396,7 @@ describe("deleteAtLinkEndFix: Backspace at link end (h.to) must delete last char
 			annotations: [Transaction.userEvent.of("delete")],
 		}).state;
 
-		expect(newState.doc.toString()).toBe("Line one\n[[not]]");
+		expect(newState.doc.toString()).toBe("Line one\n[[note|not]]");
 	});
 
 	// ── BUG GUARD: protectSyntaxFilter blocks the delete without the fix ─────
@@ -1475,8 +1474,8 @@ describe("deleteAtLinkEndFix: Del (forward delete) at inside-right edge (cursor 
 			annotations: [Transaction.userEvent.of("delete")],
 		}).state;
 
-		expect(newState.doc.toString()).toBe("[[lin]]");
-		expect(newState.selection.main.head).toBe(5);
+		expect(newState.doc.toString()).toBe("[[link|lin]]");
+		expect(newState.selection.main.head).toBe(10);
 	});
 
 	it("Del at h.from of aliased wikilink trailing range deletes last display char", () => {
@@ -1526,7 +1525,7 @@ describe("deleteAtLinkEndFix: Del (forward delete) at inside-right edge (cursor 
 			annotations: [Transaction.userEvent.of("delete")],
 		}).state;
 
-		expect(newState.doc.toString()).toBe("Line one\n[[not]]");
+		expect(newState.doc.toString()).toBe("Line one\n[[note|not]]");
 	});
 
 	it("does NOT redirect Del inside link text that does NOT touch trailing range", () => {
@@ -1568,9 +1567,9 @@ describe("deleteAtLinkStartFix: Del from outside-left (cursor at leading h.from)
 			annotations: [Transaction.userEvent.of("delete")],
 		}).state;
 
-		// "l" (position 3) deleted → "x[[ink]]"
-		expect(newState.doc.toString()).toBe("x[[ink]]");
-		expect(newState.selection.main.head).toBe(3);
+		// "l" (position 3) deleted → "x[[link|ink]]"
+		expect(newState.doc.toString()).toBe("x[[link|ink]]");
+		expect(newState.selection.main.head).toBe(8);
 	});
 
 	it("Del at h.from of aliased wikilink leading range deletes first display char", () => {

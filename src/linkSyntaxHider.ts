@@ -1943,6 +1943,50 @@ const boundaryInputSuppressor = EditorView.domEventHandlers({
  *  - Cursor strictly inside display text or at the left edge (= textFrom = lead.to):
  *    delete char at cursor.
  */
+function buildSingleCharDisplayDeleteTransaction(
+	state: EditorState,
+	link: VisibleLinkSpan,
+	delFrom: number,
+	delTo: number,
+	userEvent?: string,
+	extraEffects: StateEffect<unknown>[] = []
+) {
+	if (delFrom <= link.textFrom && delTo >= link.textTo) {
+		return state.update({
+			changes: { from: link.from, to: link.to, insert: "" },
+			selection: EditorSelection.cursor(link.from),
+			scrollIntoView: true,
+			userEvent,
+			effects: extraEffects,
+		});
+	}
+
+	const destination = getBareWikiLinkDestination(state.doc, link);
+
+	if (destination !== null) {
+		const relFrom = delFrom - link.textFrom;
+		const newHead = link.textFrom + destination.length + 1 + relFrom;
+		return state.update({
+			changes: [
+				{ from: link.textFrom, to: link.textFrom, insert: `${destination}|` },
+				{ from: delFrom, to: delTo, insert: "" },
+			],
+			selection: EditorSelection.cursor(newHead),
+			scrollIntoView: true,
+			userEvent,
+			effects: extraEffects,
+		});
+	} else {
+		return state.update({
+			changes: { from: delFrom, to: delTo, insert: "" },
+			selection: EditorSelection.cursor(delFrom),
+			scrollIntoView: true,
+			userEvent,
+			effects: extraEffects,
+		});
+	}
+}
+
 const deleteInLinkTextKeymap = keymap.of([
 	{
 		key: "Backspace",
@@ -1953,36 +1997,44 @@ const deleteInLinkTextKeymap = keymap.of([
 
 			const head = sel.main.head;
 			const hidden = computeHiddenRanges(view.state);
+			const links = buildVisibleLinkSpans(hidden, view.state.doc);
 
-			for (let i = 0; i < hidden.length - 1; i++) {
-				const lead = hidden[i];
-				const trail = hidden[i + 1];
-				if (lead.side !== "leading" || trail.side !== "trailing") continue;
-
-				const textFrom = lead.to;
-				const textTo = trail.from;
+			for (const link of links) {
+				const textFrom = link.textFrom;
+				const textTo = link.textTo;
+				const trailTo = link.trailing.to;
 
 				// Case 1: cursor inside display text or at the right edge (textTo)
 				if (head > textFrom && head <= textTo) {
 					if (head - 1 < textFrom) return false; // nothing to delete
-					view.dispatch({
-						changes: { from: head - 1, to: head, insert: "" },
-						selection: EditorSelection.cursor(head - 1),
-						scrollIntoView: true,
-					});
+					const extra = head === textTo ? [setSuppressNextBoundaryInput.of(head - 1)] : [];
+					view.dispatch(
+						buildSingleCharDisplayDeleteTransaction(
+							view.state,
+							link,
+							head - 1,
+							head,
+							undefined,
+							extra
+						)
+					);
 					return true; // consume key — Obsidian never sees Backspace
 				}
 
 				// Case 2: cursor at trail.to (just past the closing syntax, e.g. after "]]")
 				// Backspace would target [trail.to-1, trail.to) = inside trailing syntax.
 				// Redirect to delete the last display char (textTo - 1).
-				if (head === trail.to && textTo > textFrom) {
-					view.dispatch({
-						changes: { from: textTo - 1, to: textTo, insert: "" },
-						selection: EditorSelection.cursor(textTo - 1),
-						scrollIntoView: true,
-						effects: [setSuppressNextBoundaryInput.of(textTo - 1)],
-					});
+				if (head === trailTo && textTo > textFrom) {
+					view.dispatch(
+						buildSingleCharDisplayDeleteTransaction(
+							view.state,
+							link,
+							textTo - 1,
+							textTo,
+							undefined,
+							[setSuppressNextBoundaryInput.of(textTo - 1)]
+						)
+					);
 					return true;
 				}
 			}
@@ -1998,23 +2050,24 @@ const deleteInLinkTextKeymap = keymap.of([
 
 			const head = sel.main.head;
 			const hidden = computeHiddenRanges(view.state);
+			const links = buildVisibleLinkSpans(hidden, view.state.doc);
 
-			for (let i = 0; i < hidden.length - 1; i++) {
-				const lead = hidden[i];
-				const trail = hidden[i + 1];
-				if (lead.side !== "leading" || trail.side !== "trailing") continue;
-
-				const textFrom = lead.to;
-				const textTo = trail.from;
+			for (const link of links) {
+				const textFrom = link.textFrom;
+				const textTo = link.textTo;
+				const leadFrom = link.leading.from;
 
 				// Cursor inside display text or at the left edge (textFrom)
 				if (head >= textFrom && head < textTo) {
 					if (head + 1 > textTo) return false; // nothing to delete
-					view.dispatch({
-						changes: { from: head, to: head + 1, insert: "" },
-						selection: EditorSelection.cursor(head),
-						scrollIntoView: true,
-					});
+					view.dispatch(
+						buildSingleCharDisplayDeleteTransaction(
+							view.state,
+							link,
+							head,
+							head + 1
+						)
+					);
 					return true; // consume key — Obsidian never sees Delete
 				}
 
@@ -2022,12 +2075,15 @@ const deleteInLinkTextKeymap = keymap.of([
 				// target the leading syntax (e.g. the first '[' of a wikilink). Redirect
 				// to delete the first visible display character and consume the key so
 				// Obsidian's link completion never sees the Delete press.
-				if (head === lead.from && textFrom < textTo) {
-					view.dispatch({
-						changes: { from: textFrom, to: textFrom + 1, insert: "" },
-						selection: EditorSelection.cursor(textFrom),
-						scrollIntoView: true,
-					});
+				if (head === leadFrom && textFrom < textTo) {
+					view.dispatch(
+						buildSingleCharDisplayDeleteTransaction(
+							view.state,
+							link,
+							textFrom,
+							textFrom + 1
+						)
+					);
 					return true;
 				}
 			}
@@ -2683,6 +2739,25 @@ const deleteAtLinkEndFix = EditorState.transactionFilter.of((tr) => {
 			});
 		}
 
+		const linkSpan = linkSpans.find(
+			(s) => s.trailing.from === h.from
+		);
+		if (linkSpan) {
+			return tr.startState.update(
+				buildSingleCharDisplayDeleteTransaction(
+					tr.startState,
+					linkSpan,
+					h.from - 1,
+					h.from,
+					userEvent,
+					[
+						suppressSuggestAfterDelete.of(h.from - 1),
+						setSuppressNextBoundaryInput.of(h.from - 1),
+					]
+				)
+			);
+		}
+
 		return tr.startState.update({
 			changes: { from: h.from - 1, to: h.from, insert: "" },
 			selection: EditorSelection.cursor(h.from - 1),
@@ -2811,6 +2886,20 @@ const deleteAtLinkStartFix = EditorState.transactionFilter.of((tr) => {
 			}
 
 			if (h.to >= doc.length) return tr; // Nothing after the leading syntax to delete
+			const linkSpanCase1 = linkSpansCase1.find((s) => s.leading.from === h.from);
+			if (linkSpanCase1) {
+				return tr.startState.update(
+					buildSingleCharDisplayDeleteTransaction(
+						tr.startState,
+						linkSpanCase1,
+						h.to,
+						h.to + 1,
+						userEvent,
+						[suppressSuggestAfterDelete.of(h.to)]
+					)
+				);
+			}
+
 			return tr.startState.update({
 				changes: { from: h.to, to: h.to + 1, insert: "" },
 				selection: EditorSelection.cursor(h.to),
