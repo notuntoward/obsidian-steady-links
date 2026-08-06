@@ -2062,6 +2062,26 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			// Cursor must land at index 1 (the first visible character 'e' of markdown link), NOT at 0 (hidden syntax)
 			expect(view.state.selection.main.head).toBe(1);
 		});
+
+		it("Emacs kill-line with cursor just to the left of a line-end link (textFrom) deletes to the end of the line", () => {
+			const doc = "prefix [[WikiNoAlias]]";
+			view = createTestView(doc, 7); // cursor at textFrom (index 9)
+
+			// Emulate Emacs kill-line sequence:
+			// 1. setSelection(cursor, lineEnd) -> [9, 22)
+			// expandSelectionToLeadingSyntaxFilter expands range to [7, 22) and sets pendingExpansion
+			view.dispatch({
+				selection: EditorSelection.single(9, 22),
+			});
+
+			// 2. replaceSelection("") deletes to end of line
+			view.dispatch({
+				changes: { from: 7, to: 22, insert: "" },
+				selection: EditorSelection.cursor(7),
+			});
+
+			expect(view.state.doc.toString()).toBe("prefix ");
+		});
 	});
 });
 

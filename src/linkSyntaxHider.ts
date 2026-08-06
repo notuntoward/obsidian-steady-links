@@ -3144,7 +3144,8 @@ function rewriteDeleteChangeForLinks(
 	links: LinkSpan[],
 	doc?: EditorState["doc"],
 	userEvent?: string | null,
-	selHead?: number
+	selHead?: number,
+	isKillLine?: boolean
 ): ChangeSpec[] {
 	if (change.insert !== "" || change.from >= change.to) {
 		return [change];
@@ -3186,11 +3187,18 @@ function rewriteDeleteChangeForLinks(
 		const matchesExactSingleLink =
 			change.from === link.from && change.to === link.to;
 
-		if (matchesExactSingleLink && !isEmptyTextLink && (userEvent === null || userEvent === undefined)) {
+		if (
+			matchesExactSingleLink &&
+			!isEmptyTextLink &&
+			!isKillLine &&
+			(userEvent === null || userEvent === undefined)
+		) {
 			// Programmatic selection deletion covering EXACTLY one full link span [link.from, link.to).
 			// This occurs when single-atom cursor navigation (like Emacs delete-char where goRight
 			// jumps across the hidden link decoration from link.from to link.to) is followed by
 			// replaceSelection("").
+			// Do NOT apply this when the selection extends to the line end (isKillLine), because
+			// Emacs kill-line is intended to kill all content from the cursor to line end.
 			// Redirect to delete the 1st visible display character (or last visible character if
 			// selection head is at link.from), converting bare wikilinks if applicable.
 			const destination = doc ? getBareWikiLinkDestination(doc, link) : null;
@@ -3332,13 +3340,14 @@ function rewriteDeleteChanges(
 	hasSelectionDelete: boolean,
 	doc?: EditorState["doc"],
 	userEvent?: string | null,
-	selHead?: number
+	selHead?: number,
+	isKillLine?: boolean
 ): ChangeSpec[] {
 	const rewritten: ChangeSpec[] = [];
 
 	for (const c of changes) {
 		if (hasSelectionDelete) {
-			rewritten.push(...rewriteDeleteChangeForLinks(c, links, doc, userEvent, selHead));
+			rewritten.push(...rewriteDeleteChangeForLinks(c, links, doc, userEvent, selHead, isKillLine));
 		} else {
 			rewritten.push(...clampDeleteChangeAgainstHidden(c, hidden));
 		}
@@ -3492,6 +3501,14 @@ const clampSelectionDeleteFilter = EditorState.transactionFilter.of((tr) => {
 
 	if (!changesInteractWithLinks(deleteChanges, links)) return tr;
 
+	const pendingExpansion = tr.startState.field(pendingExternalSelectionExpansionField, false);
+	const startSelFrom = tr.startState.selection.main.from;
+	const startSelTo = tr.startState.selection.main.to;
+	const isKillLine =
+		pendingExpansion !== null ||
+		(startSelFrom < startSelTo &&
+			links.some((l) => startSelFrom === l.textFrom && startSelTo === l.to));
+
 	// Rebuild the deletion changes. For selection deletes, preserve Gmail-style
 	// visible semantics. For non-selection multi-char deletes, keep the old
 	// clamping behavior used by kill-word / kill-line style commands.
@@ -3502,7 +3519,8 @@ const clampSelectionDeleteFilter = EditorState.transactionFilter.of((tr) => {
 		hasSelectionDelete,
 		tr.startState.doc,
 		userEvent,
-		tr.startState.selection.main.head
+		tr.startState.selection.main.head,
+		isKillLine
 	);
 
 	debugLog("delete transaction rewrite", {
