@@ -998,7 +998,8 @@ function correctCursorPos(
 	hidden: HiddenRange[],
 	doc: EditorState["doc"],
 	isPointer: boolean = false,
-	hasGoalColumn: boolean = false
+	hasGoalColumn: boolean = false,
+	docChanged: boolean = false
 ): number | null {
 	const oldLine = doc.lineAt(Math.min(oldPos, doc.length));
 	const newLine = doc.lineAt(Math.min(pos, doc.length));
@@ -1052,7 +1053,7 @@ function correctCursorPos(
 				// Moving left (left-arrow from h.to or from inside the link):
 				// skip to before the link (end of prev line), or null if
 				// already at document start (nowhere to go).
-				return h.from > 0 ? h.from - 1 : null;
+				return !docChanged && h.from > 0 ? h.from - 1 : null;
 			}
 			inside = pos >= h.from && pos < h.to;
 		} else {
@@ -1088,7 +1089,7 @@ function correctCursorPos(
 		// represent a meaningful visible cursor stop.  Go directly to
 		// h.from - 1 (the last character of the visible link text) so
 		// leftward motion enters the link text in one arrow press.
-		if (oldPos === h.to && h.from > 0) {
+		if (!docChanged && oldPos === h.to && h.from > 0) {
 			return h.from - 1;
 		}
 		return h.from;
@@ -1379,7 +1380,10 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 	let needsAdjust = false;
 
 	const adjusted = newSel.ranges.map((range, i) => {
-		const oldHead = i < oldSel.ranges.length ? oldSel.ranges[i].head : oldSel.main.head;
+		let oldHead = i < oldSel.ranges.length ? oldSel.ranges[i].head : oldSel.main.head;
+		if (update.docChanged) {
+			oldHead = update.changes.mapPos(oldHead);
+		}
 		let head = range.head;
 
 		// Obsidian's own link extension sometimes dispatches a programmatic
@@ -1796,7 +1800,8 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 				hidden,
 				state.doc,
 				isPointer,
-				hasGoalColumn
+				hasGoalColumn,
+				update.docChanged
 			);
 			if (corrected === null || corrected === head) break;
 			head = corrected;
