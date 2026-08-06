@@ -3507,7 +3507,11 @@ const clampSelectionDeleteFilter = EditorState.transactionFilter.of((tr) => {
 	const isKillLine =
 		pendingExpansion !== null ||
 		(startSelFrom < startSelTo &&
-			links.some((l) => startSelFrom === l.textFrom && startSelTo === l.to));
+			links.some(
+				(l) =>
+					startSelFrom === l.textFrom &&
+					startSelTo === tr.startState.doc.lineAt(l.from).to
+			));
 
 	// Rebuild the deletion changes. For selection deletes, preserve Gmail-style
 	// visible semantics. For non-selection multi-char deletes, keep the old
@@ -3737,6 +3741,8 @@ const expandSelectionToLeadingSyntaxFilter = EditorState.transactionFilter.of((t
 		const startsAtLinkEdge = sel.from === link.from || sel.from === link.textFrom;
 		if (!startsAtLinkEdge) continue;
 		if (sel.to <= link.textFrom) continue;
+		// Do not expand single-character selection moves within visible text
+		if (sel.to - sel.from === 1 && sel.to <= link.textTo) continue;
 
 		const line = tr.startState.doc.lineAt(link.from);
 		if (sel.to > line.to) continue;

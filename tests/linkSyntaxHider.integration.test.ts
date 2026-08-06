@@ -2082,6 +2082,70 @@ describe("Integration: cursor correction with real CM6 state", () => {
 
 			expect(view.state.doc.toString()).toBe("prefix ");
 		});
+
+		it("Emacs delete-char on bullet list item starting with a link deletes 1st visible char of link", () => {
+			const doc = "- [[Note 1]]";
+			view = createTestView(doc, 2); // cursor after "- "
+
+			view.dispatch({
+				selection: EditorSelection.single(2, 12),
+				userEvent: "select",
+			});
+			view.dispatch({
+				changes: { from: 2, to: 12, insert: "" },
+				selection: EditorSelection.cursor(2),
+			});
+
+			expect(view.state.doc.toString()).toBe("- [[Note 1|ote 1]]");
+		});
+
+		it("Emacs delete-char on checkbox task item starting with a link deletes 1st visible char of link", () => {
+			const doc = "- [ ] [[Note 1]]";
+			view = createTestView(doc, 6); // cursor after "- [ ] "
+
+			view.dispatch({
+				selection: EditorSelection.single(6, 16),
+				userEvent: "select",
+			});
+			view.dispatch({
+				changes: { from: 6, to: 16, insert: "" },
+				selection: EditorSelection.cursor(6),
+			});
+
+			expect(view.state.doc.toString()).toBe("- [ ] [[Note 1|ote 1]]");
+		});
+
+		it("Emacs delete-char on indented bullet list item starting with a link deletes 1st visible char of link", () => {
+			const doc = "  - [[Note 1]]";
+			view = createTestView(doc, 4); // cursor after "  - "
+
+			view.dispatch({
+				selection: EditorSelection.single(4, 14),
+				userEvent: "select",
+			});
+			view.dispatch({
+				changes: { from: 4, to: 14, insert: "" },
+				selection: EditorSelection.cursor(4),
+			});
+
+			expect(view.state.doc.toString()).toBe("  - [[Note 1|ote 1]]");
+		});
+
+		it("Emacs delete-char on numbered list item starting with a link deletes 1st visible char of link", () => {
+			const doc = "1. [[Note 1]]";
+			view = createTestView(doc, 3); // cursor after "1. "
+
+			view.dispatch({
+				selection: EditorSelection.single(3, 13),
+				userEvent: "select",
+			});
+			view.dispatch({
+				changes: { from: 3, to: 13, insert: "" },
+				selection: EditorSelection.cursor(3),
+			});
+
+			expect(view.state.doc.toString()).toBe("1. [[Note 1|ote 1]]");
+		});
 	});
 });
 
