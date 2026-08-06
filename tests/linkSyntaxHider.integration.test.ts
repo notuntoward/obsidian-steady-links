@@ -1967,7 +1967,7 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			expect(view.state.doc.toString()).toBe("11.");
 		});
 
-		it("delete key on a selection inside hidden link syntax deletes the whole link", () => {
+		it("delete key on a selection inside hidden link syntax deletes 1st visible char instead of whole link", () => {
 			view = createTestView("11. [[target|alias]]", 4);
 
 			// Select the hidden leading syntax only ([[target|)
@@ -1980,7 +1980,48 @@ describe("Integration: cursor correction with real CM6 state", () => {
 				new KeyboardEvent("keydown", { key: "Delete", bubbles: true })
 			);
 
-			expect(view.state.doc.toString()).toBe("11. ");
+			expect(view.state.doc.toString()).toBe("11. [[target|lias]]");
+		});
+
+		it("Emacs delete-char command when cursor is to the left of a link deletes 1st visible char of link", () => {
+			// Emacs delete-char from cursor at left of bare wikilink [[WikiNoAlias]]
+			const doc = "[[WikiNoAlias]]";
+			view = createTestView(doc, 0);
+
+			// Emulate Emacs deleteOneChar:
+			// 1. withDeleteInText sets selection from cursorBefore (0) to cursorAfter (2)
+			view.dispatch({
+				selection: EditorSelection.single(0, 2),
+				userEvent: "select",
+			});
+			// 2. replaceSelection("") deletes selection [0, 2)
+			view.dispatch({
+				changes: { from: 0, to: 2, insert: "" },
+				selection: EditorSelection.cursor(0),
+			});
+
+			// Expect bare wikilink to convert to aliased wikilink with 1st char deleted
+			expect(view.state.doc.toString()).toBe("[[WikiNoAlias|ikiNoAlias]]");
+		});
+
+		it("Emacs delete-char command when cursor is to the left of a markdown link deletes 1st visible char of link", () => {
+			// Emacs delete-char from cursor at left of markdown link [text](url)
+			const doc = "[text](url)";
+			view = createTestView(doc, 0);
+
+			// Emulate Emacs deleteOneChar:
+			// 1. withDeleteInText sets selection from cursorBefore (0) to cursorAfter (1)
+			view.dispatch({
+				selection: EditorSelection.single(0, 1),
+				userEvent: "select",
+			});
+			// 2. replaceSelection("") deletes selection [0, 1)
+			view.dispatch({
+				changes: { from: 0, to: 1, insert: "" },
+				selection: EditorSelection.cursor(0),
+			});
+
+			expect(view.state.doc.toString()).toBe("[ext](url)");
 		});
 	});
 });

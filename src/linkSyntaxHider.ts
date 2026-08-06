@@ -3213,12 +3213,51 @@ function rewriteDeleteChangeForLinks(
 			change.to <= link.to
 		) {
 			// Selection overlaps the link but not its visible text — it must be
-			// entirely inside the hidden leading or trailing syntax. Deleting
-			// just the hidden syntax would corrupt the link, so delete the
-			// whole link instead. This prevents the Delete key from appearing
-			// to do nothing when the user's selection lands inside a hidden
-			// range (e.g. selecting the leading "[[...|" of a wikilink).
-			rewritten.push({ from: link.from, to: link.to, insert: "" });
+			// entirely inside the hidden leading or trailing syntax.
+			if (change.to <= link.textFrom) {
+				// Selection covers only the hidden leading syntax (e.g. Emacs delete-char
+				// from cursor at leading.from = left edge of link).
+				// Redirect to delete the first visible display character instead of deleting the whole link.
+				if (link.textFrom >= link.textTo) {
+					rewritten.push({ from: link.from, to: link.to, insert: "" });
+				} else {
+					const destination = doc ? getBareWikiLinkDestination(doc, link) : null;
+					if (destination !== null) {
+						rewritten.push({
+							from: link.textFrom,
+							to: link.textFrom,
+							insert: `${destination}|`,
+						});
+					}
+					rewritten.push({
+						from: link.textFrom,
+						to: link.textFrom + 1,
+						insert: "",
+					});
+				}
+			} else if (change.from >= link.textTo) {
+				// Selection covers only the hidden trailing syntax.
+				// Redirect to delete the last visible display character instead of deleting the whole link.
+				if (link.textFrom >= link.textTo) {
+					rewritten.push({ from: link.from, to: link.to, insert: "" });
+				} else {
+					const destination = doc ? getBareWikiLinkDestination(doc, link) : null;
+					if (destination !== null) {
+						rewritten.push({
+							from: link.textFrom,
+							to: link.textFrom,
+							insert: `${destination}|`,
+						});
+					}
+					rewritten.push({
+						from: link.textTo - 1,
+						to: link.textTo,
+						insert: "",
+					});
+				}
+			} else {
+				rewritten.push({ from: link.from, to: link.to, insert: "" });
+			}
 		}
 
 		cursor = Math.max(cursor, link.to);
