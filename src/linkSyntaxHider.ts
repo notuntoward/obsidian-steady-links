@@ -3142,7 +3142,9 @@ function getBareWikiLinkDestination(doc: EditorState["doc"], link: LinkSpan): st
 function rewriteDeleteChangeForLinks(
 	change: ChangeSpec,
 	links: LinkSpan[],
-	doc?: EditorState["doc"]
+	doc?: EditorState["doc"],
+	userEvent?: string | null,
+	selHead?: number
 ): ChangeSpec[] {
 	if (change.insert !== "" || change.from >= change.to) {
 		return [change];
@@ -3175,17 +3177,46 @@ function rewriteDeleteChangeForLinks(
 			selectedDisplayFrom <= link.textFrom &&
 			selectedDisplayTo >= link.textTo;
 
-		// Empty-text link (textFrom === textTo): any change that covers the
-		// link's full span, or that reaches the empty text position from either
-		// side, should delete the entire link.  The normal overlapsDisplay check
-		// is never true for zero-width text, so we need this special path.
 		const isEmptyTextLink = link.textFrom === link.textTo;
 		const coversEmptyLink =
 			isEmptyTextLink &&
 			change.from <= link.textFrom &&
 			change.to >= link.textTo;
 
-		if (deletesEntireDisplay || coversEmptyLink) {
+		const matchesExactSingleLink =
+			change.from === link.from && change.to === link.to;
+
+		if (matchesExactSingleLink && !isEmptyTextLink && (userEvent === null || userEvent === undefined)) {
+			// Programmatic selection deletion covering EXACTLY one full link span [link.from, link.to).
+			// This occurs when single-atom cursor navigation (like Emacs delete-char where goRight
+			// jumps across the hidden link decoration from link.from to link.to) is followed by
+			// replaceSelection("").
+			// Redirect to delete the 1st visible display character (or last visible character if
+			// selection head is at link.from), converting bare wikilinks if applicable.
+			const destination = doc ? getBareWikiLinkDestination(doc, link) : null;
+			if (destination !== null) {
+				rewritten.push({
+					from: link.textFrom,
+					to: link.textFrom,
+					insert: `${destination}|`,
+				});
+			}
+			if (selHead !== undefined && selHead <= link.from) {
+				// Selection head at/before link.from: moving backward
+				rewritten.push({
+					from: link.textTo - 1,
+					to: link.textTo,
+					insert: "",
+				});
+			} else {
+				// Selection head at/after link.to: moving forward (e.g. Emacs delete-char at left of link)
+				rewritten.push({
+					from: link.textFrom,
+					to: link.textFrom + 1,
+					insert: "",
+				});
+			}
+		} else if (deletesEntireDisplay || coversEmptyLink) {
 			rewritten.push({ from: link.from, to: link.to, insert: "" });
 		} else if (overlapsDisplay) {
 			// A bare wikilink's visible text is its destination. Deleting only
@@ -3299,13 +3330,15 @@ function rewriteDeleteChanges(
 	hidden: HiddenRange[],
 	links: LinkSpan[],
 	hasSelectionDelete: boolean,
-	doc?: EditorState["doc"]
+	doc?: EditorState["doc"],
+	userEvent?: string | null,
+	selHead?: number
 ): ChangeSpec[] {
 	const rewritten: ChangeSpec[] = [];
 
 	for (const c of changes) {
 		if (hasSelectionDelete) {
-			rewritten.push(...rewriteDeleteChangeForLinks(c, links, doc));
+			rewritten.push(...rewriteDeleteChangeForLinks(c, links, doc, userEvent, selHead));
 		} else {
 			rewritten.push(...clampDeleteChangeAgainstHidden(c, hidden));
 		}
@@ -3459,28 +3492,6 @@ const clampSelectionDeleteFilter = EditorState.transactionFilter.of((tr) => {
 
 	if (!changesInteractWithLinks(deleteChanges, links)) return tr;
 
-	debugLog("delete transaction seen", {
-		userEvent,
-		selectionFrom: tr.startState.selection.main.from,
-		selectionTo: tr.startState.selection.main.to,
-		selectionHead: tr.startState.selection.main.head,
-		empty: tr.startState.selection.main.empty,
-	});
-
-	if (userEvent === null && hasSelectionDelete) {
-		// Programmatic (no userEvent) selection deletes from Obsidian's
-		// own extensions should generally pass through unchanged.
-		// However, external plugins (e.g. Emacs kill-region via
-		// editor.replaceSelection("")) also dispatch with no userEvent.
-		// These need rewriting when they overlap hidden syntax.
-		traceFilter(
-			"clampSelectionDeleteFilter",
-			tr,
-			"null userEvent but interacts with links, falling through to rewrite"
-		);
-		// Fall through to rewrite for external plugin compatibility.
-	}
-
 	// Rebuild the deletion changes. For selection deletes, preserve Gmail-style
 	// visible semantics. For non-selection multi-char deletes, keep the old
 	// clamping behavior used by kill-word / kill-line style commands.
@@ -3489,7 +3500,9 @@ const clampSelectionDeleteFilter = EditorState.transactionFilter.of((tr) => {
 		hidden,
 		links,
 		hasSelectionDelete,
-		tr.startState.doc
+		tr.startState.doc,
+		userEvent,
+		tr.startState.selection.main.head
 	);
 
 	debugLog("delete transaction rewrite", {

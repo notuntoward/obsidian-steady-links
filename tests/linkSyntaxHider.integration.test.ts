@@ -2023,6 +2023,41 @@ describe("Integration: cursor correction with real CM6 state", () => {
 
 			expect(view.state.doc.toString()).toBe("[ext](url)");
 		});
+
+		it("Emacs delete-char when goRight jumps full link decoration [0, link.to) deletes 1st visible char of bare wikilink", () => {
+			// Real Obsidian behavior: cursor is at 0, goRight jumps to link.to (15).
+			// withDeleteInText sets selection [0, 15) with head at 15.
+			// replaceSelection("") dispatches deletion [0, 15) with no userEvent.
+			const doc = "[[WikiNoAlias]]";
+			view = createTestView(doc, 0);
+
+			view.dispatch({
+				selection: EditorSelection.single(0, 15),
+				userEvent: "select",
+			});
+			view.dispatch({
+				changes: { from: 0, to: 15, insert: "" },
+				selection: EditorSelection.cursor(0),
+			});
+
+			expect(view.state.doc.toString()).toBe("[[WikiNoAlias|ikiNoAlias]]");
+		});
+
+		it("Emacs delete-char when goRight jumps full link decoration [0, link.to) deletes 1st visible char of markdown link", () => {
+			const doc = "[text](url)";
+			view = createTestView(doc, 0);
+
+			view.dispatch({
+				selection: EditorSelection.single(0, 11),
+				userEvent: "select",
+			});
+			view.dispatch({
+				changes: { from: 0, to: 11, insert: "" },
+				selection: EditorSelection.cursor(0),
+			});
+
+			expect(view.state.doc.toString()).toBe("[ext](url)");
+		});
 	});
 });
 
