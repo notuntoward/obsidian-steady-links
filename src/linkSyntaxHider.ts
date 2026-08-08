@@ -362,8 +362,8 @@ const suppressSameLineCursorResetField = StateField.define<number | null>({
 			const head = tr.startState.field(suppressSameLineCursorResetHeadField, false);
 			const docLen = tr.state.doc.length;
 			const targetValue = Math.min(value, docLen);
-			const targetAnchor = anchor !== null ? Math.min(anchor, docLen) : null;
-			const targetHead = head !== null ? Math.min(head, docLen) : null;
+			const targetAnchor = typeof anchor === "number" ? Math.min(anchor, docLen) : null;
+			const targetHead = typeof head === "number" ? Math.min(head, docLen) : null;
 			if (
 				main.head !== targetValue &&
 				(targetAnchor === null || main.head !== targetAnchor) &&
@@ -400,7 +400,7 @@ const suppressSameLineCursorResetHeadField = StateField.define<number | null>({
 			}
 			const pos = tr.startState.field(suppressSameLineCursorResetField, false);
 			const docLen = tr.state.doc.length;
-			const targetPos = pos !== null ? Math.min(pos, docLen) : null;
+			const targetPos = typeof pos === "number" ? Math.min(pos, docLen) : null;
 			const targetValue = Math.min(value, docLen);
 			if (targetPos !== null && main.head !== targetPos && main.head !== targetValue) {
 				return null;
@@ -434,7 +434,7 @@ const suppressSameLineCursorResetAnchorField = StateField.define<number | null>(
 			}
 			const pos = tr.startState.field(suppressSameLineCursorResetField, false);
 			const docLen = tr.state.doc.length;
-			const targetPos = pos !== null ? Math.min(pos, docLen) : null;
+			const targetPos = typeof pos === "number" ? Math.min(pos, docLen) : null;
 			const targetValue = Math.min(value, docLen);
 			if (targetPos !== null && main.head !== targetPos && main.head !== targetValue) {
 				return null;
@@ -1272,11 +1272,11 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 	);
 
 	const docLen = state.doc.length;
-	const targetAnchor = suppressedResetAnchor !== null ? Math.min(suppressedResetAnchor, docLen) : null;
-	const targetHead = suppressedResetHead !== null ? Math.min(suppressedResetHead, docLen) : null;
+	const targetAnchor = typeof suppressedResetAnchor === "number" ? Math.min(suppressedResetAnchor, docLen) : null;
+	const targetHead = typeof suppressedResetHead === "number" ? Math.min(suppressedResetHead, docLen) : null;
 
 	if (
-		suppressedResetPos !== null &&
+		typeof suppressedResetPos === "number" &&
 		newSel.main.empty &&
 		(
 			(targetAnchor !== null && newSel.main.head === targetAnchor) ||
@@ -1312,7 +1312,7 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 	const linkSpans = buildVisibleLinkSpans(hidden, state.doc);
 
 	if (
-		suppressedResetPos !== null &&
+		typeof suppressedResetPos === "number" &&
 		newSel.main.empty &&
 		oldSel.main.empty &&
 		oldSel.main.head === suppressedResetPos &&
