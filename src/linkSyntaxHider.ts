@@ -338,6 +338,8 @@ const suppressSameLineCursorResetEffect = StateEffect.define<number | null>();
 
 const suppressSameLineCursorResetAnchorEffect = StateEffect.define<number | null>();
 
+const suppressSameLineCursorResetHeadEffect = StateEffect.define<number | null>();
+
 const suppressSameLineCursorResetField = StateField.define<number | null>({
 	create() {
 		return null;
@@ -347,13 +349,63 @@ const suppressSameLineCursorResetField = StateField.define<number | null>({
 			if (e.is(suppressSameLineCursorResetEffect)) return e.value;
 		}
 
+		if (tr.docChanged) {
+			return null;
+		}
+
 		if (tr.selection && value !== null) {
 			const main = tr.state.selection.main;
 			if (!main.empty && main.from !== value) {
 				return null;
 			}
-			const userEvent = tr.annotation(Transaction.userEvent);
-			if (userEvent !== undefined) {
+			const anchor = tr.startState.field(suppressSameLineCursorResetAnchorField, false);
+			const head = tr.startState.field(suppressSameLineCursorResetHeadField, false);
+			const docLen = tr.state.doc.length;
+			const targetValue = Math.min(value, docLen);
+			const targetAnchor = anchor !== null ? Math.min(anchor, docLen) : null;
+			const targetHead = head !== null ? Math.min(head, docLen) : null;
+			if (
+				main.head !== targetValue &&
+				(targetAnchor === null || main.head !== targetAnchor) &&
+				(targetHead === null || main.head !== targetHead)
+			) {
+				return null;
+			}
+			if (tr.isUserEvent("select.pointer")) {
+				return null;
+			}
+		}
+
+		return value;
+	},
+});
+
+const suppressSameLineCursorResetHeadField = StateField.define<number | null>({
+	create() {
+		return null;
+	},
+	update(value, tr) {
+		for (const e of tr.effects) {
+			if (e.is(suppressSameLineCursorResetHeadEffect)) return e.value;
+		}
+
+		if (tr.docChanged) {
+			return null;
+		}
+
+		if (tr.selection && value !== null) {
+			const main = tr.state.selection.main;
+			if (!main.empty) {
+				return null;
+			}
+			const pos = tr.startState.field(suppressSameLineCursorResetField, false);
+			const docLen = tr.state.doc.length;
+			const targetPos = pos !== null ? Math.min(pos, docLen) : null;
+			const targetValue = Math.min(value, docLen);
+			if (targetPos !== null && main.head !== targetPos && main.head !== targetValue) {
+				return null;
+			}
+			if (tr.isUserEvent("select.pointer")) {
 				return null;
 			}
 		}
@@ -380,8 +432,14 @@ const suppressSameLineCursorResetAnchorField = StateField.define<number | null>(
 			if (!main.empty) {
 				return null;
 			}
-			const userEvent = tr.annotation(Transaction.userEvent);
-			if (userEvent !== undefined) {
+			const pos = tr.startState.field(suppressSameLineCursorResetField, false);
+			const docLen = tr.state.doc.length;
+			const targetPos = pos !== null ? Math.min(pos, docLen) : null;
+			const targetValue = Math.min(value, docLen);
+			if (targetPos !== null && main.head !== targetPos && main.head !== targetValue) {
+				return null;
+			}
+			if (tr.isUserEvent("select.pointer")) {
 				return null;
 			}
 		}
@@ -1196,6 +1254,12 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 	}
 	const suppressedResetPos = state.field(suppressSameLineCursorResetField, false);
 	const suppressedResetAnchor = state.field(suppressSameLineCursorResetAnchorField, false);
+	const suppressedResetHead = state.field(suppressSameLineCursorResetHeadField, false);
+
+	if (suppressedResetPos !== null && newSel.main.empty && newSel.main.head === suppressedResetPos) {
+		debugLog("cursor already at suppressedResetPos", { suppressedResetPos });
+		return;
+	}
 
 	// Same-line cursor reset suppression must run regardless of whether the
 	// current cursor position is inside a hidden range.  After a kill-line
@@ -1207,14 +1271,23 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 		(tr) => tr.annotation(Transaction.userEvent) !== undefined
 	);
 
+	const docLen = state.doc.length;
+	const targetAnchor = suppressedResetAnchor !== null ? Math.min(suppressedResetAnchor, docLen) : null;
+	const targetHead = suppressedResetHead !== null ? Math.min(suppressedResetHead, docLen) : null;
+
 	if (
 		suppressedResetPos !== null &&
 		newSel.main.empty &&
-		!hasAnyUserEvent &&
-		newSel.main.head !== suppressedResetPos
+		(
+			(targetAnchor !== null && newSel.main.head === targetAnchor) ||
+			(targetHead !== null && newSel.main.head === targetHead) ||
+			(!hasAnyUserEvent && newSel.main.head !== suppressedResetPos)
+		)
 	) {
 		debugLog("suppress same-line cursor reset (post-delete)", {
 			suppressedResetPos,
+			suppressedResetAnchor,
+			suppressedResetHead,
 			oldHead: oldSel.main.head,
 			newHead: newSel.main.head,
 		});
@@ -1226,6 +1299,7 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 				effects: [
 					suppressSameLineCursorResetEffect.of(null),
 					suppressSameLineCursorResetAnchorEffect.of(null),
+					suppressSameLineCursorResetHeadEffect.of(null),
 				],
 			});
 		} finally {
@@ -2004,6 +2078,7 @@ function buildSingleCharDisplayDeleteTransaction(
 			effects: [
 				...extraEffects,
 				suppressSameLineCursorResetEffect.of(newHead),
+				suppressSameLineCursorResetAnchorEffect.of(state.selection.main.head),
 			],
 		});
 	} else {
@@ -3595,40 +3670,12 @@ const clampSelectionDeleteFilter = EditorState.transactionFilter.of((tr) => {
 			// protectSyntaxFilter passes it through.
 			const dispatchUserEvent = tr.annotation(Transaction.userEvent) ?? undefined;
 			const identicalCursorPos = deleteChanges[0].from;
-			const identicalEffects: StateEffect<any>[] = [rewrittenSelectionDelete.of(null)];
-
-			// Same as the non-identical path below: when the selection that
-			// produced this delete started right at a link boundary (e.g. the
-			// end of a link's visible text) and ran to end of line — the
-			// classic kill-line-at-link-edge shape — arm the same-line reset
-			// suppression so a follow-up setCursor(originalPos) from an
-			// external plugin (Emacs) is redirected back here instead of
-			// landing wherever that now-deleted position maps to.
-			const startSelFrom = tr.startState.selection.main.from;
-			const startSelTo = tr.startState.selection.main.to;
-			const startSelLine = tr.startState.doc.lineAt(startSelFrom);
-			const selectionStartsAtLinkEdge = links.some(
-				(link) =>
-					startSelFrom === link.textFrom ||
-					startSelFrom === link.from ||
-					startSelFrom === link.textTo
-			);
-			if (selectionStartsAtLinkEdge && startSelTo === startSelLine.to) {
-				identicalEffects.push(suppressSameLineCursorResetEffect.of(identicalCursorPos));
-			} else {
-				// Legacy: also suppress for line-start link deletes.
-				const deleteLine = tr.startState.doc.lineAt(deleteChanges[0].from);
-				if (deleteChanges[0].from === deleteLine.from) {
-					const deleteStartIsLeading = hidden.some(
-						(h) => h.side === "leading" && h.from === deleteChanges[0].from
-					);
-					if (deleteStartIsLeading) {
-						identicalEffects.push(
-							suppressSameLineCursorResetEffect.of(identicalCursorPos)
-						);
-					}
-				}
-			}
+			const identicalEffects: StateEffect<any>[] = [
+				rewrittenSelectionDelete.of(null),
+				suppressSameLineCursorResetAnchorEffect.of(tr.startState.selection.main.anchor),
+				suppressSameLineCursorResetHeadEffect.of(tr.startState.selection.main.head),
+				suppressSameLineCursorResetEffect.of(identicalCursorPos),
+			];
 
 			return tr.startState.update({
 				changes: tr.changes,
@@ -3673,42 +3720,11 @@ const clampSelectionDeleteFilter = EditorState.transactionFilter.of((tr) => {
 		effects.push(
 			suppressSameLineCursorResetAnchorEffect.of(tr.startState.selection.main.anchor)
 		);
+		effects.push(
+			suppressSameLineCursorResetHeadEffect.of(tr.startState.selection.main.head)
+		);
 
-		// When kill-line deletes from a link boundary through the end of the
-		// line, the Emacs plugin follows up with editor.setCursor(originalPos)
-		// which maps through the deleted range and lands on a later line.
-		// Arm the same-line reset suppression so the follow-up selection-only
-		// dispatch is redirected back to the post-delete cursor position
-		// (which is on the preserved line).
-		const startSelFrom = tr.startState.selection.main.from;
-		const startSelTo = tr.startState.selection.main.to;
-		const startSelLine = tr.startState.doc.lineAt(startSelFrom);
-		const selectionStartsAtLinkEdge = links.some(
-			(link) =>
-				startSelFrom === link.textFrom ||
-				startSelFrom === link.from ||
-				startSelFrom === link.textTo
-		);
-		const didConvertBareWikilink = allChanges.some(
-			(c) => typeof c.insert === "string" && c.insert.includes("|")
-		);
-		if (
-			(selectionStartsAtLinkEdge && startSelTo === startSelLine.to) ||
-			didConvertBareWikilink
-		) {
-			effects.push(suppressSameLineCursorResetEffect.of(cursorPos));
-		} else {
-			// Legacy: also suppress for line-start link deletes.
-			const deleteLine = tr.startState.doc.lineAt(rewrittenDeletes[0].from);
-			if (rewrittenDeletes[0].from === deleteLine.from) {
-				const deleteStartIsLeading = hidden.some(
-					(h) => h.side === "leading" && h.from === rewrittenDeletes[0].from
-				);
-				if (deleteStartIsLeading) {
-					effects.push(suppressSameLineCursorResetEffect.of(cursorPos));
-				}
-			}
-		}
+		effects.push(suppressSameLineCursorResetEffect.of(cursorPos));
 	}
 
 	debugLog("delete transaction dispatch", {
@@ -4142,6 +4158,7 @@ export function createLinkSyntaxHiderExtension(wikiLinkOptions: WikiLinkHidingOp
 		syntaxHiderModePlugin,
 		hiddenRangesField,
 		suppressSameLineCursorResetAnchorField,
+		suppressSameLineCursorResetHeadField,
 		bodyClassPlugin,
 		temporarilyVisibleLinkField,
 		Prec.highest(hiddenSyntaxReplacePlugin),

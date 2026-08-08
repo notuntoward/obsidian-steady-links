@@ -78,20 +78,34 @@ function emulateEmacsKillLine(view: EditorView): { clipboard: string; cursor: nu
 	let selectionFrom = cursor;
 	let selectionTo = line.to;
 
-	view.dispatch({ selection: EditorSelection.range(selectionFrom, selectionTo) });
+	// 1. Emulate Emacs command selecting the region (select userEvent)
+	view.dispatch({
+		selection: EditorSelection.range(selectionFrom, selectionTo),
+		annotations: [Transaction.userEvent.of("select")],
+	});
 	selectionFrom = view.state.selection.main.from;
 	selectionTo = view.state.selection.main.to;
 	const clipboard = copiedText(view);
 
+	// 2. replaceSelection("") (delete userEvent)
 	view.dispatch({
 		changes: { from: selectionFrom, to: selectionTo, insert: "" },
 		selection: EditorSelection.cursor(selectionFrom),
 		annotations: [Transaction.userEvent.of("delete")],
 	});
 
+	// 3. disableSelection: set selection to current cursor (select userEvent)
+	const currentCursor = view.state.selection.main.head;
+	view.dispatch({
+		selection: EditorSelection.cursor(currentCursor),
+		annotations: [Transaction.userEvent.of("select")],
+	});
+
+	// 4. setCursor(originalCursor) (select userEvent)
 	const resetPos = Math.min(selectionFrom, view.state.doc.length);
 	view.dispatch({
 		selection: EditorSelection.cursor(resetPos),
+		annotations: [Transaction.userEvent.of("select")],
 	});
 
 	return { clipboard, cursor: view.state.selection.main.head };
