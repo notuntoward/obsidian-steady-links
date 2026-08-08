@@ -1208,7 +1208,7 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 	);
 
 	if (
-		suppressedResetPos !== null &&
+		suppressedResetPos != null &&
 		newSel.main.empty &&
 		!hasAnyUserEvent &&
 		newSel.main.head !== suppressedResetPos
@@ -1238,7 +1238,7 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 	const linkSpans = buildVisibleLinkSpans(hidden, state.doc);
 
 	if (
-		suppressedResetPos !== null &&
+		suppressedResetPos != null &&
 		newSel.main.empty &&
 		oldSel.main.empty &&
 		oldSel.main.head === suppressedResetPos &&
@@ -1251,7 +1251,7 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 			(span) =>
 				suppressedResetPos >= span.textFrom &&
 				suppressedResetPos <= span.textTo &&
-				(suppressedResetAnchor === null || suppressedResetAnchor === suppressedResetPos) &&
+				(suppressedResetAnchor == null || suppressedResetAnchor === suppressedResetPos) &&
 				span.lineFrom === suppressResetStartLine.from &&
 				newSel.main.head >= span.textTo &&
 				newSel.main.head <= span.to
