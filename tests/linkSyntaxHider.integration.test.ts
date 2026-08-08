@@ -3108,5 +3108,81 @@ describe("Bare wikilinks non-corrupting alias conversion on deletion", () => {
 	});
 });
 
+describe("Duplicate trailing syntax prevention on paste/yank", () => {
+	let view: EditorView;
+
+	afterEach(() => {
+		if (view) view.destroy();
+	});
+
+	it("prevents duplicate ]] when pasting/yanking back to bare wikilink", () => {
+		// Document state after Emacs 'Kill word' from cursor in the middle of "WikiNoAlias"
+		// is "[[WikiNoAlias|Wiki]]" (converted bare wikilink).
+		// Clipboard contains: "NoAlias]] adflkjadlsf  al;dsfjalskdfj [[WikiNoAlias]]"
+		// The insertion point is at the end of "Wiki" (index 18).
+		const doc = "[[WikiNoAlias|Wiki]]";
+		view = createTestView(doc, 18);
+
+		view.dispatch({
+			changes: {
+				from: 18,
+				to: 18,
+				insert: "NoAlias]] adflkjadlsf  al;dsfjalskdfj [[WikiNoAlias]]"
+			},
+			selection: EditorSelection.cursor(18 + "NoAlias]] adflkjadlsf  al;dsfjalskdfj [[WikiNoAlias]]".length - 2),
+			annotations: [Transaction.userEvent.of("input.paste")]
+		});
+
+		expect(view.state.doc.toString()).toBe(
+			"[[WikiNoAlias|WikiNoAlias]] adflkjadlsf  al;dsfjalskdfj [[WikiNoAlias]]"
+		);
+	});
+
+	it("prevents duplicate ](url) when pasting/yanking back to markdown link", () => {
+		// Document state after Emacs 'Kill word' inside markdown link:
+		// "[Markdown](Color%20picker)"
+		// Clipboard contains: " link](Color%20picker)  asdflk adsflkjasdf alsdkfjasdfl"
+		// Insertion point is at end of "Markdown" (index 9)
+		const doc = "[Markdown](Color%20picker)";
+		view = createTestView(doc, 9);
+
+		view.dispatch({
+			changes: {
+				from: 9,
+				to: 9,
+				insert: " link](Color%20picker)  asdflk adsflkjasdf alsdkfjasdfl"
+			},
+			selection: EditorSelection.cursor(9 + " link](Color%20picker)  asdflk adsflkjasdf alsdkfjasdfl".length - "](Color%20picker)".length),
+			annotations: [Transaction.userEvent.of("input.paste")]
+		});
+
+		expect(view.state.doc.toString()).toBe(
+			"[Markdown link](Color%20picker)  asdflk adsflkjasdf alsdkfjasdfl"
+		);
+	});
+
+	it("prevents duplicate ]] when pasting/yanking back to piped wikilink", () => {
+		// Document state after Emacs 'Kill word' inside piped wikilink alias:
+		// "[[WikiNoAlias|Wiki]]"
+		// Clipboard contains: "Text]] adflkjadlsf  al;dsfjalskdfj [[WikiNoAlias]]"
+		// Insertion point is at end of "Wiki" (index 18)
+		const doc = "[[WikiNoAlias|Wiki]]";
+		view = createTestView(doc, 18);
+
+		view.dispatch({
+			changes: {
+				from: 18,
+				to: 18,
+				insert: "Text]] adflkjadlsf  al;dsfjalskdfj [[WikiNoAlias]]"
+			},
+			selection: EditorSelection.cursor(18 + "Text]] adflkjadlsf  al;dsfjalskdfj [[WikiNoAlias]]".length - 2),
+			annotations: [Transaction.userEvent.of("input.paste")]
+		});
+
+		expect(view.state.doc.toString()).toBe(
+			"[[WikiNoAlias|WikiText]] adflkjadlsf  al;dsfjalskdfj [[WikiNoAlias]]"
+		);
+	});
+});
 
 
