@@ -3818,6 +3818,8 @@ const pasteDuplicateSyntaxFix = EditorState.transactionFilter.of((tr) => {
 	if (!tr.docChanged) return tr;
 	if (!tr.startState.field(syntaxHiderEnabledField, false)) return tr;
 	if (tr.effects.some((e) => e.is(rewrittenPaste))) return tr;
+	// Do not intercept standard manual keyboard typing.
+	if (tr.isUserEvent("input.type")) return tr;
 
 	const hidden = tr.startState.field(hiddenRangesField, false);
 	if (!hidden || hidden.length === 0) return tr;
@@ -3846,8 +3848,16 @@ const pasteDuplicateSyntaxFix = EditorState.transactionFilter.of((tr) => {
 		if (!trailingSyntax) continue;
 
 		// We check if the cursor is at the trailing syntax start boundary (textTo),
-		// and the pasted text contains that exact trailing syntax.
-		if (insertFrom === link.textTo && insertText.includes(trailingSyntax)) {
+		// and the pasted text contains that exact trailing syntax as a clean continuation.
+		if (insertFrom === link.textTo) {
+			const firstIdx = insertText.indexOf(trailingSyntax);
+			if (firstIdx === -1) continue;
+
+			// Verify that the prefix before the trailing syntax is a clean visible link segment
+			// (not containing structural bracket characters or newlines).
+			const prefix = insertText.substring(0, firstIdx);
+			if (prefix.includes("\n") || prefix.includes("[") || prefix.includes("]")) continue;
+
 			// Rewrite the transaction to replace the document's trailing syntax range,
 			// effectively consuming it and avoiding duplication.
 			// The original trailing syntax begins at link.textTo and ends at link.to.

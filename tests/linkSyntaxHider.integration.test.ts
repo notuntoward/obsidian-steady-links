@@ -3183,6 +3183,27 @@ describe("Duplicate trailing syntax prevention on paste/yank", () => {
 			"[[WikiNoAlias|WikiText]] adflkjadlsf  al;dsfjalskdfj [[WikiNoAlias]]"
 		);
 	});
+
+	it("does not rewrite when pasting text that does not contain trailing syntax at textTo", () => {
+		// Document is "[[WikiNoAlias|Wiki]]"
+		// Paste some plain text "Text" (without "]]") right at textTo (index 18).
+		// The trailing "]]" of the original document must NOT be replaced/removed.
+		const doc = "[[WikiNoAlias|Wiki]]";
+		view = createTestView(doc, 18);
+
+		view.dispatch({
+			changes: {
+				from: 18,
+				to: 18,
+				insert: "Text"
+			},
+			selection: EditorSelection.cursor(18 + "Text".length),
+			annotations: [Transaction.userEvent.of("input.paste")]
+		});
+
+		// The resulting document must be exactly: "[[WikiNoAlias|WikiText]]"
+		expect(view.state.doc.toString()).toBe("[[WikiNoAlias|WikiText]]");
+	});
 });
 
 
