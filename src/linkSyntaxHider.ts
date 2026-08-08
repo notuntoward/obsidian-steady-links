@@ -144,6 +144,8 @@ const setSuppressNextBoundaryInput = StateEffect.define<number | null>();
 // does not recursively rewrite its own transaction.
 const suppressSuggestAfterVisibleDelete = StateEffect.define<null>();
 
+const rewrittenPaste = StateEffect.define<null>();
+
 // Tracks whether the cursor most recently arrived at a link's textFrom
 // (visible text start) from OUTSIDE the link (i.e. from a position past
 // the link's trailing end).  This distinguishes a Home-key correction
@@ -3812,6 +3814,79 @@ const expandSelectionToLeadingSyntaxFilter = EditorState.transactionFilter.of((t
 	return tr;
 });
 
+const pasteDuplicateSyntaxFix = EditorState.transactionFilter.of((tr) => {
+	if (!tr.docChanged) return tr;
+	if (!tr.startState.field(syntaxHiderEnabledField, false)) return tr;
+	if (tr.effects.some((e) => e.is(rewrittenPaste))) return tr;
+	// Do not intercept standard manual keyboard typing.
+	if (tr.isUserEvent("input.type")) return tr;
+
+	const hidden = tr.startState.field(hiddenRangesField, false);
+	if (!hidden || hidden.length === 0) return tr;
+
+	const links = buildLinkSpans(hidden);
+	if (links.length === 0) return tr;
+
+	let insertText: string | undefined;
+	let insertFrom = -1;
+	let insertTo = -1;
+	let insertCount = 0;
+
+	tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+		insertCount += 1;
+		insertText = inserted.toString();
+		insertFrom = fromA;
+		insertTo = toA;
+	});
+
+	// We only target a single insertion (such as paste or yank).
+	if (insertCount !== 1 || !insertText || insertFrom !== insertTo) return tr;
+
+	for (const link of links) {
+		const doc = tr.startState.doc;
+		const trailingSyntax = doc.sliceString(link.textTo, link.to);
+		if (!trailingSyntax) continue;
+
+		// We check if the cursor is at the trailing syntax start boundary (textTo),
+		// and the pasted text contains that exact trailing syntax as a clean continuation.
+		if (insertFrom === link.textTo) {
+			const firstIdx = insertText.indexOf(trailingSyntax);
+			if (firstIdx === -1) continue;
+
+			// Verify that the prefix before the trailing syntax is a clean visible link segment
+			// (not containing structural bracket characters or newlines).
+			const prefix = insertText.substring(0, firstIdx);
+			if (prefix.includes("\n") || prefix.includes("[") || prefix.includes("]")) continue;
+
+			// Rewrite the transaction to replace the document's trailing syntax range,
+			// effectively consuming it and avoiding duplication.
+			// The original trailing syntax begins at link.textTo and ends at link.to.
+			const rewrittenChanges = [
+				{
+					from: insertFrom,
+					to: link.to,
+					insert: insertText,
+				}
+			];
+			const newHead = insertFrom + insertText.length;
+			const userEvent = tr.annotation(Transaction.userEvent) ?? undefined;
+
+			return tr.startState.update({
+				changes: rewrittenChanges,
+				selection: EditorSelection.cursor(newHead),
+				scrollIntoView: true,
+				userEvent,
+				effects: [
+					...tr.effects,
+					rewrittenPaste.of(null),
+				]
+			});
+		}
+	}
+
+	return tr;
+});
+
 const protectSyntaxFilter = EditorState.transactionFilter.of((tr) => {
 	if (!tr.docChanged) return tr;
 	const isPureDelete = isPureDeleteTransaction(tr);
@@ -3819,6 +3894,10 @@ const protectSyntaxFilter = EditorState.transactionFilter.of((tr) => {
 	if (!tr.startState.field(syntaxHiderEnabledField, false)) return tr;
 	if (tr.effects.some((e) => e.is(rewrittenSelectionDelete))) {
 		traceFilter("protectSyntaxFilter", tr, "PASS (rewrittenSelectionDelete)");
+		return tr;
+	}
+	if (tr.effects.some((e) => e.is(rewrittenPaste))) {
+		traceFilter("protectSyntaxFilter", tr, "PASS (rewrittenPaste)");
 		return tr;
 	}
 	if (tr.effects.some((e) => e.is(rewrittenEmptyLinkDelete))) {
@@ -4165,6 +4244,7 @@ export function createLinkSyntaxHiderExtension(wikiLinkOptions: WikiLinkHidingOp
 		Prec.highest(clampSelectionDeleteFilter),
 		Prec.highest(deleteAtLinkEndFix),
 		Prec.highest(deleteAtLinkStartFix),
+		Prec.highest(pasteDuplicateSyntaxFix),
 	];
 }
 
