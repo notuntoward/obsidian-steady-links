@@ -3206,4 +3206,341 @@ describe("Duplicate trailing syntax prevention on paste/yank", () => {
 	});
 });
 
+// ============================================================================
+// BUG GUARD: Deleting a fully-selected link
+//
+// When the user selects the visible text of a link (by mouse or keyboard)
+// and presses Backspace, Delete, or runs Emacs kill-line, the ENTIRE link
+// (including hidden syntax) must be deleted — NOT converted to an aliased
+// wikilink with one character removed.
+//
+// These bugs have regressed repeatedly because the matchesExactSingleLink
+// branch in rewriteDeleteChangeForLinks (meant for programmatic Emacs
+// delete-char) also catches genuine user selections of the full link when
+// deleteSelectionKeymap doesn't pass a userEvent.  And kill-line fails
+// because disableSelection collapses the selection to the head at textTo,
+// which the cursor corrector pushes to lineEnd, making the kill-line
+// selection empty.
+//
+// If any of these tests fail, the fixes in deleteSelectionKeymap (passing
+// "delete.selection" userEvent) or the cursorCorrector (selection-collapse
+// redirect to textFrom) have been broken.
+// ============================================================================
+
+/**
+ * Emulate the real Emacs kill-line command, including the disableSelection
+ * step that the Emacs plugin calls FIRST (before selecting to end-of-line).
+ *
+ * The existing emulateEmacsKillLine() helper skips disableSelection, so it
+ * does NOT reproduce the bug where a pre-existing selection is collapsed
+ * before kill-line operates.  This helper does.
+ */
+function emulateEmacsKillLineWithSelection(
+	view: EditorView
+): { clipboard: string; cursor: number; deleted: boolean } {
+	// Step 1: disableSelection — collapse selection to head
+	let head = view.state.selection.main.head;
+	view.dispatch({ selection: EditorSelection.cursor(head) });
+
+	// Step 2: get cursor (may have been corrected by cursor corrector)
+	head = view.state.selection.main.head;
+	const line = view.state.doc.lineAt(head);
+	const lineEnd = line.to;
+
+	if (line.text === "") {
+		return { clipboard: "", cursor: head, deleted: false };
+	}
+
+	// Step 3: select from cursor to end of line
+	view.dispatch({ selection: EditorSelection.range(head, lineEnd) });
+
+	// Step 4: getCurrentSelectionStart — if selection is empty, return
+	const selFrom = view.state.selection.main.from;
+	const selTo = view.state.selection.main.to;
+	if (selFrom === selTo) {
+		return { clipboard: "", cursor: head, deleted: false };
+	}
+
+	// Step 5: copy to clipboard
+	const clipboard = copiedText(view);
+
+	// Step 6: replaceSelection("") — no userEvent annotation
+	view.dispatch({
+		changes: { from: selFrom, to: selTo, insert: "" },
+		selection: EditorSelection.cursor(selFrom),
+	});
+
+	// Step 7: disableSelection (called at end of putSelectionInClipboard)
+	const postDeleteHead = view.state.selection.main.head;
+	view.dispatch({ selection: EditorSelection.cursor(postDeleteHead) });
+
+	// Step 8: editor.setCursor(cursor) — reset to original cursor position
+	const resetPos = Math.min(head, view.state.doc.length);
+	view.dispatch({ selection: EditorSelection.cursor(resetPos) });
+
+	return { clipboard, cursor: view.state.selection.main.head, deleted: true };
+}
+
+describe("Integration: deleting a fully-selected link", () => {
+	let view: EditorView;
+
+	afterEach(() => {
+		view?.destroy();
+		document.body.innerHTML = "";
+	});
+
+	// ── Backspace on a selected bare wikilink ──────────────────────────────
+
+	it("Backspace on a selected bare wikilink deletes the entire link", () => {
+		const doc = "[[Destination]]";
+		view = createTestView(doc, 2); // cursor at textFrom
+		// Select visible text "Destination" [2, 13) — left-to-right
+		view.dispatch({ selection: EditorSelection.single(2, 13) });
+
+		view.contentDOM.dispatchEvent(
+			new KeyboardEvent("keydown", { key: "Backspace", code: "Backspace", keyCode: 8, which: 8, bubbles: true })
+		);
+
+		expect(view.state.doc.toString()).toBe("");
+	});
+
+	it("Backspace on a selected bare wikilink (right-to-left selection) deletes the entire link", () => {
+		const doc = "[[Destination]]";
+		view = createTestView(doc, 13); // cursor at textTo
+		// Select visible text right-to-left: head at textFrom
+		view.dispatch({ selection: EditorSelection.single(13, 2) });
+
+		view.contentDOM.dispatchEvent(
+			new KeyboardEvent("keydown", { key: "Backspace", code: "Backspace", keyCode: 8, which: 8, bubbles: true })
+		);
+
+		expect(view.state.doc.toString()).toBe("");
+	});
+
+	// ── Delete on a selected bare wikilink ─────────────────────────────────
+
+	it("Delete on a selected bare wikilink deletes the entire link", () => {
+		const doc = "[[Destination]]";
+		view = createTestView(doc, 2);
+		view.dispatch({ selection: EditorSelection.single(2, 13) });
+
+		view.contentDOM.dispatchEvent(
+			new KeyboardEvent("keydown", { key: "Delete", code: "Delete", keyCode: 46, which: 46, bubbles: true })
+		);
+
+		expect(view.state.doc.toString()).toBe("");
+	});
+
+	it("Delete on a selected bare wikilink (right-to-left selection) deletes the entire link", () => {
+		const doc = "[[Destination]]";
+		view = createTestView(doc, 13);
+		view.dispatch({ selection: EditorSelection.single(13, 2) });
+
+		view.contentDOM.dispatchEvent(
+			new KeyboardEvent("keydown", { key: "Delete", code: "Delete", keyCode: 46, which: 46, bubbles: true })
+		);
+
+		expect(view.state.doc.toString()).toBe("");
+	});
+
+	// ── Backspace/Delete on a selected markdown link ───────────────────────
+
+	it("Backspace on a selected markdown link deletes the entire link", () => {
+		const doc = "[text](http://example.com)";
+		view = createTestView(doc, 1); // cursor at textFrom
+		// textFrom=1, textTo=5
+		view.dispatch({ selection: EditorSelection.single(1, 5) });
+
+		view.contentDOM.dispatchEvent(
+			new KeyboardEvent("keydown", { key: "Backspace", code: "Backspace", keyCode: 8, which: 8, bubbles: true })
+		);
+
+		expect(view.state.doc.toString()).toBe("");
+	});
+
+	it("Delete on a selected markdown link deletes the entire link", () => {
+		const doc = "[text](http://example.com)";
+		view = createTestView(doc, 1);
+		view.dispatch({ selection: EditorSelection.single(1, 5) });
+
+		view.contentDOM.dispatchEvent(
+			new KeyboardEvent("keydown", { key: "Delete", code: "Delete", keyCode: 46, which: 46, bubbles: true })
+		);
+
+		expect(view.state.doc.toString()).toBe("");
+	});
+
+	// ── Backspace/Delete on a selected aliased wikilink ────────────────────
+
+	it("Backspace on a selected aliased wikilink deletes the entire link", () => {
+		const doc = "[[Note|Alias]]";
+		view = createTestView(doc, 7); // cursor at textFrom (after "[[Note|")
+		// textFrom=7, textTo=12
+		view.dispatch({ selection: EditorSelection.single(7, 12) });
+
+		view.contentDOM.dispatchEvent(
+			new KeyboardEvent("keydown", { key: "Backspace", code: "Backspace", keyCode: 8, which: 8, bubbles: true })
+		);
+
+		expect(view.state.doc.toString()).toBe("");
+	});
+
+	// ── Backspace on a selected link with surrounding text ─────────────────
+
+	it("Backspace on a selected mid-line bare wikilink deletes only the link", () => {
+		const doc = "before [[Destination]] after";
+		view = createTestView(doc, 9); // cursor at textFrom
+		// link: from=7, textFrom=9, textTo=20, to=22
+		view.dispatch({ selection: EditorSelection.single(9, 20) });
+
+		view.contentDOM.dispatchEvent(
+			new KeyboardEvent("keydown", { key: "Backspace", code: "Backspace", keyCode: 8, which: 8, bubbles: true })
+		);
+
+		expect(view.state.doc.toString()).toBe("before  after");
+	});
+
+	// ── Emacs kill-line on a selected link ─────────────────────────────────
+
+	it("Emacs kill-line on a selected bare wikilink deletes the entire link", () => {
+		const doc = "[[Destination]]";
+		view = createTestView(doc, 2); // cursor at textFrom
+		// Select visible text left-to-right: head at textTo (13)
+		view.dispatch({ selection: EditorSelection.single(2, 13) });
+
+		const result = emulateEmacsKillLineWithSelection(view);
+
+		expect(result.deleted).toBe(true);
+		expect(view.state.doc.toString()).toBe("");
+	});
+
+	it("Emacs kill-line on a selected bare wikilink (right-to-left selection) deletes the entire link", () => {
+		const doc = "[[Destination]]";
+		view = createTestView(doc, 13);
+		// Select visible text right-to-left: head at textFrom (2)
+		view.dispatch({ selection: EditorSelection.single(13, 2) });
+
+		const result = emulateEmacsKillLineWithSelection(view);
+
+		expect(result.deleted).toBe(true);
+		expect(view.state.doc.toString()).toBe("");
+	});
+
+	it("Emacs kill-line on a selected markdown link deletes the entire link", () => {
+		const doc = "[text](http://example.com)";
+		view = createTestView(doc, 1); // cursor at textFrom
+		// textFrom=1, textTo=5, link.to=25
+		view.dispatch({ selection: EditorSelection.single(1, 5) });
+
+		const result = emulateEmacsKillLineWithSelection(view);
+
+		expect(result.deleted).toBe(true);
+		expect(view.state.doc.toString()).toBe("");
+	});
+
+	it("Emacs kill-line on a selected bare wikilink with trailing text deletes link and trailing text", () => {
+		const doc = "[[Destination]] more text";
+		view = createTestView(doc, 2); // cursor at textFrom
+		// link: from=0, textFrom=2, textTo=13, to=15, line.to=25
+		view.dispatch({ selection: EditorSelection.single(2, 13) });
+
+		const result = emulateEmacsKillLineWithSelection(view);
+
+		expect(result.deleted).toBe(true);
+		expect(view.state.doc.toString()).toBe("");
+	});
+
+	it("Emacs kill-line on a selected mid-line bare wikilink preserves prefix and deletes link + suffix", () => {
+		const doc = "prefix [[Destination]] suffix";
+		view = createTestView(doc, 9); // cursor at textFrom
+		// link: from=7, textFrom=9, textTo=20, to=22, line.to=29
+		view.dispatch({ selection: EditorSelection.single(9, 20) });
+
+		const result = emulateEmacsKillLineWithSelection(view);
+
+		expect(result.deleted).toBe(true);
+		expect(view.state.doc.toString()).toBe("prefix ");
+	});
+
+	// ── Cursor redirect on selection collapse ──────────────────────────────
+
+	it("collapsing a selection ending at textTo redirects cursor to textFrom, not lineEnd", () => {
+		const doc = "[[Destination]]";
+		view = createTestView(doc, 2);
+		// Select visible text left-to-right: head at textTo (13)
+		view.dispatch({ selection: EditorSelection.single(2, 13) });
+
+		// Simulate disableSelection: collapse to head
+		const head = view.state.selection.main.head;
+		view.dispatch({ selection: EditorSelection.cursor(head) });
+
+		// Cursor should be at textFrom (2), NOT at lineEnd (15)
+		expect(view.state.selection.main.head).toBe(2);
+	});
+
+	it("collapsing a selection ending at textTo on a markdown link redirects to textFrom", () => {
+		const doc = "[text](url)";
+		view = createTestView(doc, 1); // cursor at textFrom
+		// textFrom=1, textTo=5, link.to=11
+		view.dispatch({ selection: EditorSelection.single(1, 5) });
+
+		const head = view.state.selection.main.head;
+		view.dispatch({ selection: EditorSelection.cursor(head) });
+
+		// Cursor should be at textFrom (1), NOT at lineEnd (11)
+		expect(view.state.selection.main.head).toBe(1);
+	});
+
+	// ── Emacs delete-char still works (matchesExactSingleLink branch) ──────
+	//
+	// These tests verify that the matchesExactSingleLink branch in
+	// rewriteDeleteChangeForLinks still fires for programmatic (no-userEvent)
+	// deletes that exactly cover [link.from, link.to) — the Emacs delete-char
+	// case.  The deleteSelectionKeymap fix must NOT break this.
+
+	it("Emacs delete-char (programmatic, no userEvent) on a full-link selection still converts bare wikilink", () => {
+		const doc = "[[WikiNoAlias]]";
+		view = createTestView(doc, 0);
+
+		// Step 1: goRight jumps full link decoration [0, 15)
+		view.dispatch({
+			selection: EditorSelection.single(0, 15),
+			userEvent: "select",
+		});
+		// Step 2: replaceSelection("") — no userEvent
+		view.dispatch({
+			changes: { from: 0, to: 15, insert: "" },
+			selection: EditorSelection.cursor(0),
+		});
+
+		expect(view.state.doc.toString()).toBe("[[WikiNoAlias|ikiNoAlias]]");
+	});
+
+	// ── Partial selection still converts bare wikilink (Gmail-style) ───────
+	//
+	// These use a direct transaction dispatch (with userEvent "delete") rather
+	// than a keyboard Backspace/Delete event, because expandSelectionToLeadingSyntaxFilter
+	// expands partial visible-text selections starting at textFrom to the full
+	// link range before deleteSelectionKeymap sees them.  The direct dispatch
+	// specifies the exact change range, bypassing that expansion, and verifies
+	// that the Gmail-style partial-delete logic (convert bare wikilink to
+	// aliased + delete selected chars) still works.
+
+	it("partial selection delete of bare wikilink visible text converts to aliased wikilink", () => {
+		const doc = "[[WikiNoAlias]]";
+		view = createTestView(doc, 2); // cursor at textFrom
+		// Select "Wiki" [2, 6) — partial visible text
+		view.dispatch({ selection: EditorSelection.single(2, 6) });
+
+		// Direct dispatch with explicit change range and userEvent "delete"
+		view.dispatch({
+			changes: { from: 2, to: 6, insert: "" },
+			selection: EditorSelection.cursor(2),
+			userEvent: "delete",
+		});
+
+		expect(view.state.doc.toString()).toBe("[[WikiNoAlias|NoAlias]]");
+	});
+});
+
 

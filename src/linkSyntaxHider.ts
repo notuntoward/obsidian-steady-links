@@ -1784,8 +1784,58 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 				break;
 			}
 
-			if (allowLeadingBoundaryAdvance) {
-				head = Math.min(state.doc.length, head + 1);
+		if (allowLeadingBoundaryAdvance) {
+			head = Math.min(state.doc.length, head + 1);
+		}
+		}
+
+		// ── Selection collapse at link trailing boundary ────────────────────
+		//
+		// When an external plugin (e.g. Emacs kill-line) collapses a non-empty
+		// selection to an empty cursor, and the head lands at or past a link's
+		// trailing boundary (textTo / trailing.from / span.to / span.to+1),
+		// correctCursorPos would push the cursor past the trailing syntax to
+		// lineEnd.  This makes subsequent line-end commands (kill-line) select
+		// an empty range and silently do nothing — the link is not deleted.
+		//
+		// The cursor corrector may have already moved the head from textTo to
+		// span.to (for line-end links) or span.to+1 (for mid-line links)
+		// during the original selection creation.  We handle both cases.
+		//
+		// Instead, redirect the cursor to the link's textFrom (visible text
+		// start).  This mirrors the behavior of a right-to-left selection
+		// collapse (where the head is already at textFrom) and ensures
+		// commands like kill-line that operate from the cursor to end-of-line
+		// capture the full link.
+		//
+		// We only redirect when the old selection's anchor was within the
+		// link's leading syntax or at textFrom — this prevents redirecting
+		// when the user selected text BEFORE the link and the head happened
+		// to land at the link's end.
+		//
+		// This has been broken by AI at least 3 times.  The regression tests
+		// "deleting a selected link with Emacs kill-line" will fail if this
+		// is removed or reordered after correctCursorPos.
+		//
+		// CRITICAL: This check MUST run BEFORE correctCursorPos, because
+		// correctCursorPos moves the head further past the link, after
+		// which the link span match no longer holds.
+		const oldRange = i < oldSel.ranges.length ? oldSel.ranges[i] : oldSel.main;
+		if (!oldRange.empty && range.empty && !isPointer && !update.docChanged) {
+			const oldFrom = Math.min(oldRange.anchor, oldRange.head);
+			const oldTo = Math.max(oldRange.anchor, oldRange.head);
+			const collapseSpan = linkSpans.find(
+				(span) =>
+					head >= span.from &&
+					head <= span.to + 1 &&
+					oldFrom <= span.textFrom &&
+					oldTo >= span.textTo &&
+					oldRange.anchor >= span.from &&
+					oldRange.anchor <= span.textFrom
+			);
+			if (collapseSpan && collapseSpan.textFrom < collapseSpan.textTo) {
+				head = collapseSpan.textFrom;
+				needsAdjust = true;
 			}
 		}
 
@@ -3422,7 +3472,21 @@ const deleteSelectionKeymap = keymap.of([
 
 			if (!changesInteractWithLinks(changes, links)) return false;
 
-			const rewritten = rewriteDeleteChanges(changes, hidden, links, true, view.state.doc);
+			// Pass a non-null userEvent so rewriteDeleteChangeForLinks does NOT
+			// enter the matchesExactSingleLink branch (which is reserved for
+			// programmatic, no-userEvent deletes like Emacs delete-char).  When
+			// the user genuinely selects an entire link and presses
+			// Backspace/Delete, the entire link must be deleted — not converted
+			// to an aliased wikilink with one character removed.
+			const rewritten = rewriteDeleteChanges(
+				changes,
+				hidden,
+				links,
+				true,
+				view.state.doc,
+				"delete.selection",
+				sel.main.head
+			);
 			if (rewritten.length === 0) {
 				view.dispatch({
 					selection: EditorSelection.cursor(sel.main.from),
@@ -3463,7 +3527,19 @@ const deleteSelectionKeymap = keymap.of([
 
 			if (!changesInteractWithLinks(changes, links)) return false;
 
-			const rewritten = rewriteDeleteChanges(changes, hidden, links, true, view.state.doc);
+			// See the Backspace handler above for why a non-null userEvent is
+			// required: it prevents the matchesExactSingleLink branch from
+			// converting a user-selected full link into an aliased wikilink
+			// + single-char delete.
+			const rewritten = rewriteDeleteChanges(
+				changes,
+				hidden,
+				links,
+				true,
+				view.state.doc,
+				"delete.selection",
+				sel.main.head
+			);
 			if (rewritten.length === 0) {
 				view.dispatch({
 					selection: EditorSelection.cursor(sel.main.from),

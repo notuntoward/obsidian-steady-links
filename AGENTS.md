@@ -153,6 +153,122 @@ alsdkfjasldjf
 3. Open DevTools console — look for `[SteadyLinks corrector]` logs to trace
    the exact correction sequence
 
+## Critical: deleteSelectionKeymap must pass a userEvent to rewriteDeleteChanges
+
+The `deleteSelectionKeymap` keymap handler (Backspace/Delete with a non-empty
+selection) MUST pass a non-null `userEvent` (e.g. `"delete.selection"`) when
+calling `rewriteDeleteChanges`.  Without it, the `matchesExactSingleLink`
+branch in `rewriteDeleteChangeForLinks` fires — that branch is reserved for
+**programmatic, no-userEvent** deletes (Emacs delete-char where `goRight`
+jumps the full link decoration and `replaceSelection("")` follows).
+
+### The bug pattern
+
+When the user selects the visible text of a link (e.g. `[[Destination]]` →
+select "Destination") and presses Backspace or Delete:
+
+1. `expandSelectionRangeToFullLinks` expands `[textFrom, textTo)` to
+   `[link.from, link.to)` (the full link span).
+2. `matchesExactSingleLink` becomes true (`change.from === link.from &&
+   change.to === link.to`).
+3. If `userEvent` is null/undefined, the `matchesExactSingleLink` branch
+   fires and **converts the bare wikilink to an aliased wikilink + deletes
+   only 1 character** — instead of deleting the entire link.
+
+This has been broken by AI at least 3 times because the fix looks
+counter-intuitive (why pass a userEvent to an internal helper?).  The
+`matchesExactSingleLink` branch's `userEvent === null || userEvent ===
+undefined` guard is the ONLY thing that distinguishes a genuine user
+selection-delete from a programmatic Emacs delete-char.
+
+### How to verify
+
+The test suite includes:
+
+```
+"Backspace on a selected bare wikilink deletes the entire link"
+"Delete on a selected bare wikilink deletes the entire link"
+```
+
+These dispatch real `KeyboardEvent`s and expect the entire link to be
+deleted (empty document), NOT `[[Destination|estination]]`.
+
+The Emacs delete-char path is guarded by:
+
+```
+"Emacs delete-char (programmatic, no userEvent) on a full-link selection still converts bare wikilink"
+```
+
+This dispatches with NO `userEvent` annotation and expects the aliased
+conversion — proving the two paths are correctly distinguished.
+
+### What NOT to do
+
+- Do NOT remove the `"delete.selection"` userEvent argument from
+  `deleteSelectionKeymap`'s `rewriteDeleteChanges` calls
+- Do NOT change the `matchesExactSingleLink` branch's `userEvent === null
+  || userEvent === undefined` guard to always fire — that would break
+  Emacs delete-char
+- Do NOT assume `deleteSelectionKeymap` and `clampSelectionDeleteFilter`
+  are interchangeable — the keymap handles keypresses (user-driven), the
+  filter handles programmatic dispatches (no userEvent)
+
+## Critical: Selection-collapse redirect in cursorCorrector
+
+The `cursorCorrector` update listener contains a block that redirects the
+cursor to `textFrom` when a non-empty selection is collapsed to empty at a
+link's trailing boundary.  This block MUST run BEFORE `correctCursorPos`
+and MUST include `!update.docChanged` in its condition.
+
+### The bug pattern
+
+When the user selects the visible text of a link (e.g. `[[Destination]]` →
+select "Destination") and runs Emacs kill-line:
+
+1. Emacs `disableSelection` collapses the selection to the head.
+2. For a left-to-right selection, the head was at `textTo` (trailing.from),
+   but the cursor corrector already moved it to `span.to` or `span.to + 1`
+   during selection creation.
+3. `correctCursorPos` would leave the cursor at `span.to` / lineEnd.
+4. Emacs `getCursor()` returns lineEnd → `setSelection(lineEnd, lineEnd)` =
+   empty selection → `replaceSelection("")` does nothing.
+
+The redirect block catches this: when a non-empty selection is collapsed to
+empty, and the head is within `[span.from, span.to + 1]`, and the old
+selection's anchor was within the link's leading syntax or at `textFrom`,
+it redirects the cursor to `textFrom`.  This makes kill-line select
+`[textFrom, lineEnd]` which expands to `[link.from, link.to]` and deletes
+the entire link.
+
+### Why `!update.docChanged` is required
+
+Without `!update.docChanged`, the redirect also fires during edit-driven
+selection changes (e.g. `emulateEmacsKillLine`'s delete step where
+`oldSel` was non-empty and `newSel` is empty).  In that case
+`correctCursorPos` already handles the cursor correctly via `isEditUpdate`
+(keeping it at `textTo`), and the redirect would incorrectly move it to
+`textFrom`.  The "kill-line inside a wikilink alias" and "kill-line inside
+a markdown link" tests will fail if `!update.docChanged` is removed.
+
+### How to verify
+
+The test suite includes:
+
+```
+"collapsing a selection ending at textTo redirects cursor to textFrom, not lineEnd"
+"Emacs kill-line on a selected bare wikilink deletes the entire link"
+```
+
+### What NOT to do
+
+- Do NOT remove the `!update.docChanged` condition — edit-driven cursor
+  changes have their own handling via `isEditUpdate` in `correctCursorPos`
+- Do NOT move this block AFTER the `correctCursorPos` loop — the loop
+  moves the head past the link, after which the span match fails
+- Do NOT remove the `oldRange.anchor >= span.from && oldRange.anchor <=
+  span.textFrom` check — without it, selections that include text BEFORE
+  the link would also get redirected, breaking kill-line for those cases
+
 ## Note: worktree builds (Agent Manager) and the vault junction
 
 Steady Links also ships a pre-built `main.js` that the vault loads via a
