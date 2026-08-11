@@ -1881,18 +1881,27 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 		// CRITICAL: This check MUST run BEFORE correctCursorPos, because
 		// correctCursorPos moves the head further past the link, after
 		// which the link span match no longer holds.
+		//
+		// Only apply the redirect for single-range selections.  Multi-range
+		// selections are extremely rare in Obsidian and the redirect logic is
+		// designed for the Emacs kill-line pattern (single selection collapse).
+		// For multi-range selections, the per-range iteration in ranges.map()
+		// could lead to surprising cursor jumps if we redirected based on only
+		// one range.
 		const oldRange = i < oldSel.ranges.length ? oldSel.ranges[i] : oldSel.main;
-		const collapseSpan = findSelectionCollapseRedirectSpan(
-			oldRange,
-			range.empty,
-			head,
-			linkSpans,
-			isPointer,
-			update.docChanged
-		);
-		if (collapseSpan) {
-			head = collapseSpan.textFrom;
-			needsAdjust = true;
+		if (newSel.ranges.length === 1) {
+			const collapseSpan = findSelectionCollapseRedirectSpan(
+				oldRange,
+				range.empty,
+				head,
+				linkSpans,
+				isPointer,
+				update.docChanged
+			);
+			if (collapseSpan) {
+				head = collapseSpan.textFrom;
+				needsAdjust = true;
+			}
 		}
 
 		for (let pass = 0; pass < 3; pass++) {

@@ -76,9 +76,12 @@ function copiedText(view: EditorView): string {
  * Shared core of the Emacs kill-line emulation: select from the current
  * cursor to end of line, copy to clipboard, and delete the selection.
  *
- * Both `emulateEmacsKillLine` and `emulateEmacsKillLineWithSelection` delegate
- * the select/copy/delete steps to this helper so that future changes to
- * kill-line behavior only need to be made in one place.
+ * This function is responsible ONLY for the select/copy/delete steps.  It
+ * does NOT perform cursor-reset or disableSelection — those are handled by
+ * the wrappers (`emulateEmacsKillLine` and `emulateEmacsKillLineWithSelection`)
+ * so that future changes to cursor-reset semantics only need to be made in
+ * the wrappers, and changes to the core select/copy/delete logic only need
+ * to be made here.
  *
  * @param view The editor view
  * @param useUserEvent If true, annotate the delete with userEvent "delete"
@@ -118,6 +121,14 @@ function killLineSelectCopyDelete(
 	return { clipboard, selFrom, cursorAfterDelete: view.state.selection.main.head };
 }
 
+/**
+ * Simplified Emacs kill-line emulation (no disableSelection step).
+ *
+ * Wraps `killLineSelectCopyDelete` and adds the cursor-reset step: reset
+ * cursor to the selection start (clamped to doc length).  Used by tests
+ * that start with an empty cursor and do not need to reproduce the
+ * selection-collapse bug.
+ */
 function emulateEmacsKillLine(view: EditorView): { clipboard: string; cursor: number } {
 	const result = killLineSelectCopyDelete(view, true);
 	if (!result) return { clipboard: "", cursor: view.state.selection.main.head };
@@ -3260,14 +3271,18 @@ describe("Duplicate trailing syntax prevention on paste/yank", () => {
 // ============================================================================
 
 /**
- * Emulate the real Emacs kill-line command, including the disableSelection
- * step that the Emacs plugin calls FIRST (before selecting to end-of-line).
+ * Full Emacs kill-line emulation with disableSelection steps.
  *
- * The existing `emulateEmacsKillLine()` helper skips `disableSelection`, so
- * it does NOT reproduce the bug where a pre-existing selection is collapsed
- * before kill-line operates.  This helper does.
+ * Wraps `killLineSelectCopyDelete` and adds the disableSelection and
+ * cursor-reset steps that the real Emacs plugin performs around kill-line:
+ *   1. disableSelection (collapse selection to head)
+ *   2. kill-line core (select, copy, delete)
+ *   3. disableSelection (called at end of putSelectionInClipboard)
+ *   4. editor.setCursor(originalCursor)
  *
- * Delegates the select/copy/delete steps to `killLineSelectCopyDelete`.
+ * The existing `emulateEmacsKillLine()` helper skips the disableSelection
+ * steps, so it does NOT reproduce the bug where a pre-existing selection is
+ * collapsed before kill-line operates.  This helper does.
  */
 function emulateEmacsKillLineWithSelection(
 	view: EditorView
