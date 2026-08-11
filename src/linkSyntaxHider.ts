@@ -26,6 +26,7 @@ import {
 	RangeSetBuilder,
 	EditorState,
 	EditorSelection,
+	SelectionRange,
 	Prec,
 	StateEffect,
 	StateField,
@@ -1141,6 +1142,82 @@ function computeHiddenRangesForPositions(
 	return ranges;
 }
 
+/**
+ * When an external plugin (e.g. Emacs kill-line) collapses a non-empty
+ * selection to an empty cursor at a link's trailing boundary, find the link
+ * span whose `textFrom` the cursor should be redirected to.
+ *
+ * Returns the span to redirect to, or `null` if no redirect is needed.
+ *
+ * **CRITICAL: This MUST be called BEFORE `correctCursorPos`**, because
+ * `correctCursorPos` moves the head further past the link, after which the
+ * link span match no longer holds.
+ *
+ * This has been broken by AI at least 3 times.  The regression tests
+ * "deleting a selected link with Emacs kill-line" will fail if this logic
+ * is removed or reordered after `correctCursorPos`.
+ */
+function findSelectionCollapseRedirectSpan(
+	oldRange: SelectionRange,
+	newRangeEmpty: boolean,
+	head: number,
+	linkSpans: VisibleLinkSpan[],
+	isPointer: boolean,
+	docChanged: boolean
+): VisibleLinkSpan | null {
+	// Gate: only fire when a non-empty selection is collapsed to an empty
+	// cursor via a programmatic dispatch (not a pointer click, not an edit).
+	const isSelectionCollapse = !oldRange.empty && newRangeEmpty;
+	const isProgrammatic = !isPointer && !docChanged;
+	if (!isSelectionCollapse || !isProgrammatic) {
+		return null;
+	}
+
+	const oldFrom = Math.min(oldRange.anchor, oldRange.head);
+	const oldTo = Math.max(oldRange.anchor, oldRange.head);
+
+	for (const span of linkSpans) {
+		// Skip empty-text links (textFrom === textTo) — those have no visible
+		// text to redirect to.
+		const hasVisibleText = span.textFrom < span.textTo;
+		if (!hasVisibleText) continue;
+
+		// The head must be at or just past the link's trailing boundary.
+		// The cursor corrector may have already moved the head from textTo to:
+		//   - span.to (for line-end links, where correctCursorPos stops at
+		//     lineEnd = span.to)
+		//   - span.to + 1 (for mid-line links, where correctCursorPos advances
+		//     past the trailing syntax to the next character)
+		const headAtTrailingBoundary = head >= span.from && head <= span.to + 1;
+		if (!headAtTrailingBoundary) continue;
+
+		// The old selection must have covered the link's visible text
+		// [textFrom, textTo).  This ensures the redirect only fires for
+		// selections that included the link's visible text, not for
+		// unrelated selections whose head happened to land near the link.
+		const oldSelectionCoversVisibleText =
+			oldFrom <= span.textFrom && oldTo >= span.textTo;
+		if (!oldSelectionCoversVisibleText) continue;
+
+		// The old selection's anchor must have been within the link's leading
+		// syntax [span.from, span.textFrom].  This distinguishes:
+		//   - A selection of the link's visible text (anchor at/near textFrom,
+		//     possibly expanded to span.from by expandSelectionRangeToFullLinks)
+		//     → redirect to textFrom so kill-line captures the full link
+		//   - A selection that started BEFORE the link (anchor < span.from)
+		//     → do NOT redirect; kill-line from that anchor is legitimate
+		// Without this check, selections that include text before the link
+		// would also get redirected, breaking kill-line for those cases.
+		const anchorWithinLeadingSyntax =
+			oldRange.anchor >= span.from && oldRange.anchor <= span.textFrom;
+		if (!anchorWithinLeadingSyntax) continue;
+
+		return span;
+	}
+
+	return null;
+}
+
 const CORRECTING = "__leSyntaxCorrecting";
 const cursorCorrector = EditorView.updateListener.of((update) => {
 	if (!update.selectionSet) return;
@@ -1784,8 +1861,49 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 				break;
 			}
 
-			if (allowLeadingBoundaryAdvance) {
-				head = Math.min(state.doc.length, head + 1);
+		if (allowLeadingBoundaryAdvance) {
+			head = Math.min(state.doc.length, head + 1);
+		}
+		}
+
+		// ── Selection collapse at link trailing boundary ────────────────────
+		//
+		// When an external plugin (e.g. Emacs kill-line) collapses a non-empty
+		// selection to an empty cursor, and the head lands at or past a link's
+		// trailing boundary, correctCursorPos would push the cursor past the
+		// trailing syntax to lineEnd.  This makes subsequent line-end commands
+		// (kill-line) select an empty range and silently do nothing — the link
+		// is not deleted.
+		//
+		// Instead, redirect the cursor to the link's textFrom (visible text
+		// start).  This mirrors the behavior of a right-to-left selection
+		// collapse (where the head is already at textFrom) and ensures
+		// commands like kill-line that operate from the cursor to end-of-line
+		// capture the full link.
+		//
+		// CRITICAL: This check MUST run BEFORE correctCursorPos, because
+		// correctCursorPos moves the head further past the link, after
+		// which the link span match no longer holds.
+		//
+		// Only apply the redirect for single-range selections.  Multi-range
+		// selections are extremely rare in Obsidian and the redirect logic is
+		// designed for the Emacs kill-line pattern (single selection collapse).
+		// For multi-range selections, the per-range iteration in ranges.map()
+		// could lead to surprising cursor jumps if we redirected based on only
+		// one range.
+		const oldRange = i < oldSel.ranges.length ? oldSel.ranges[i] : oldSel.main;
+		if (newSel.ranges.length === 1) {
+			const collapseSpan = findSelectionCollapseRedirectSpan(
+				oldRange,
+				range.empty,
+				head,
+				linkSpans,
+				isPointer,
+				update.docChanged
+			);
+			if (collapseSpan) {
+				head = collapseSpan.textFrom;
+				needsAdjust = true;
 			}
 		}
 
@@ -3399,6 +3517,30 @@ function changesInteractWithLinks(changes: ChangeSpec[], links: LinkSpan[]): boo
 	return false;
 }
 
+/**
+ * Adapter for `rewriteDeleteChanges` used by `deleteSelectionKeymap`.
+ *
+ * Always passes a non-null `userEvent` ("delete.selection") and the selection
+ * head.  This is CRITICAL: without a non-null userEvent, the
+ * `matchesExactSingleLink` branch in `rewriteDeleteChangeForLinks` fires for
+ * genuine user selection deletes — converting a bare wikilink into an aliased
+ * wikilink + single-char delete instead of deleting the entire link.
+ *
+ * Centralizing this call ensures future changes cannot accidentally omit the
+ * userEvent or selHead arguments.  The `clampSelectionDeleteFilter` call site
+ * is different: it passes the transaction's actual userEvent (which may be
+ * null for programmatic deletes), so it calls `rewriteDeleteChanges` directly.
+ */
+function rewriteSelectionDeleteChanges(
+	changes: ChangeSpec[],
+	hidden: HiddenRange[],
+	links: LinkSpan[],
+	doc: EditorState["doc"],
+	selHead: number
+): ChangeSpec[] {
+	return rewriteDeleteChanges(changes, hidden, links, true, doc, "delete.selection", selHead);
+}
+
 const deleteSelectionKeymap = keymap.of([
 	{
 		key: "Backspace",
@@ -3422,7 +3564,13 @@ const deleteSelectionKeymap = keymap.of([
 
 			if (!changesInteractWithLinks(changes, links)) return false;
 
-			const rewritten = rewriteDeleteChanges(changes, hidden, links, true, view.state.doc);
+			const rewritten = rewriteSelectionDeleteChanges(
+				changes,
+				hidden,
+				links,
+				view.state.doc,
+				sel.main.head
+			);
 			if (rewritten.length === 0) {
 				view.dispatch({
 					selection: EditorSelection.cursor(sel.main.from),
@@ -3463,7 +3611,13 @@ const deleteSelectionKeymap = keymap.of([
 
 			if (!changesInteractWithLinks(changes, links)) return false;
 
-			const rewritten = rewriteDeleteChanges(changes, hidden, links, true, view.state.doc);
+			const rewritten = rewriteSelectionDeleteChanges(
+				changes,
+				hidden,
+				links,
+				view.state.doc,
+				sel.main.head
+			);
 			if (rewritten.length === 0) {
 				view.dispatch({
 					selection: EditorSelection.cursor(sel.main.from),
