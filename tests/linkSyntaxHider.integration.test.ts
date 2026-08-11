@@ -72,29 +72,61 @@ function copiedText(view: EditorView): string {
 	return filters.reduce((value, filter) => filter(value, view.state), text);
 }
 
-function emulateEmacsKillLine(view: EditorView): { clipboard: string; cursor: number } {
-	const cursor = view.state.selection.main.head;
-	const line = view.state.doc.lineAt(cursor);
-	let selectionFrom = cursor;
-	let selectionTo = line.to;
+/**
+ * Shared core of the Emacs kill-line emulation: select from the current
+ * cursor to end of line, copy to clipboard, and delete the selection.
+ *
+ * Both `emulateEmacsKillLine` and `emulateEmacsKillLineWithSelection` delegate
+ * the select/copy/delete steps to this helper so that future changes to
+ * kill-line behavior only need to be made in one place.
+ *
+ * @param view The editor view
+ * @param useUserEvent If true, annotate the delete with userEvent "delete"
+ *   (used by the simplified `emulateEmacsKillLine`).  If false, dispatch with
+ *   no userEvent (matches the real Emacs plugin's `replaceSelection("")`).
+ * @returns The clipboard text, selection start after expansion, and cursor
+ *   position after deletion — or `null` if the line is empty or the selection
+ *   collapsed to nothing (nothing to kill).
+ */
+function killLineSelectCopyDelete(
+	view: EditorView,
+	useUserEvent: boolean
+): { clipboard: string; selFrom: number; cursorAfterDelete: number } | null {
+	const head = view.state.selection.main.head;
+	const line = view.state.doc.lineAt(head);
 
-	view.dispatch({ selection: EditorSelection.range(selectionFrom, selectionTo) });
-	selectionFrom = view.state.selection.main.from;
-	selectionTo = view.state.selection.main.to;
+	if (line.text === "") return null;
+
+	// Select from cursor to end of line
+	view.dispatch({ selection: EditorSelection.range(head, line.to) });
+
+	// Re-read (expandSelectionToLeadingSyntaxFilter may have expanded the range)
+	const selFrom = view.state.selection.main.from;
+	const selTo = view.state.selection.main.to;
+	if (selFrom === selTo) return null;
+
+	// Copy to clipboard
 	const clipboard = copiedText(view);
 
+	// Delete the selection
 	view.dispatch({
-		changes: { from: selectionFrom, to: selectionTo, insert: "" },
-		selection: EditorSelection.cursor(selectionFrom),
-		annotations: [Transaction.userEvent.of("delete")],
+		changes: { from: selFrom, to: selTo, insert: "" },
+		selection: EditorSelection.cursor(selFrom),
+		...(useUserEvent ? { annotations: [Transaction.userEvent.of("delete")] } : {}),
 	});
 
-	const resetPos = Math.min(selectionFrom, view.state.doc.length);
-	view.dispatch({
-		selection: EditorSelection.cursor(resetPos),
-	});
+	return { clipboard, selFrom, cursorAfterDelete: view.state.selection.main.head };
+}
 
-	return { clipboard, cursor: view.state.selection.main.head };
+function emulateEmacsKillLine(view: EditorView): { clipboard: string; cursor: number } {
+	const result = killLineSelectCopyDelete(view, true);
+	if (!result) return { clipboard: "", cursor: view.state.selection.main.head };
+
+	// Reset cursor to selection start (clamped to doc length)
+	const resetPos = Math.min(result.selFrom, view.state.doc.length);
+	view.dispatch({ selection: EditorSelection.cursor(resetPos) });
+
+	return { clipboard: result.clipboard, cursor: view.state.selection.main.head };
 }
 
 /**
@@ -3231,54 +3263,38 @@ describe("Duplicate trailing syntax prevention on paste/yank", () => {
  * Emulate the real Emacs kill-line command, including the disableSelection
  * step that the Emacs plugin calls FIRST (before selecting to end-of-line).
  *
- * The existing emulateEmacsKillLine() helper skips disableSelection, so it
- * does NOT reproduce the bug where a pre-existing selection is collapsed
+ * The existing `emulateEmacsKillLine()` helper skips `disableSelection`, so
+ * it does NOT reproduce the bug where a pre-existing selection is collapsed
  * before kill-line operates.  This helper does.
+ *
+ * Delegates the select/copy/delete steps to `killLineSelectCopyDelete`.
  */
 function emulateEmacsKillLineWithSelection(
 	view: EditorView
 ): { clipboard: string; cursor: number; deleted: boolean } {
 	// Step 1: disableSelection — collapse selection to head
+	// (The real Emacs plugin calls this before kill-line operates)
 	let head = view.state.selection.main.head;
 	view.dispatch({ selection: EditorSelection.cursor(head) });
-
-	// Step 2: get cursor (may have been corrected by cursor corrector)
+	// Re-read head — the cursor corrector may have redirected it
 	head = view.state.selection.main.head;
-	const line = view.state.doc.lineAt(head);
-	const lineEnd = line.to;
 
-	if (line.text === "") {
-		return { clipboard: "", cursor: head, deleted: false };
+	// Step 2: kill-line core (select, copy, delete) — no userEvent, matching
+	// the real Emacs plugin's replaceSelection("") which has no annotation
+	const result = killLineSelectCopyDelete(view, false);
+	if (!result) {
+		return { clipboard: "", cursor: view.state.selection.main.head, deleted: false };
 	}
 
-	// Step 3: select from cursor to end of line
-	view.dispatch({ selection: EditorSelection.range(head, lineEnd) });
+	// Step 3: disableSelection (called at end of putSelectionInClipboard)
+	view.dispatch({ selection: EditorSelection.cursor(result.cursorAfterDelete) });
 
-	// Step 4: getCurrentSelectionStart — if selection is empty, return
-	const selFrom = view.state.selection.main.from;
-	const selTo = view.state.selection.main.to;
-	if (selFrom === selTo) {
-		return { clipboard: "", cursor: head, deleted: false };
-	}
-
-	// Step 5: copy to clipboard
-	const clipboard = copiedText(view);
-
-	// Step 6: replaceSelection("") — no userEvent annotation
-	view.dispatch({
-		changes: { from: selFrom, to: selTo, insert: "" },
-		selection: EditorSelection.cursor(selFrom),
-	});
-
-	// Step 7: disableSelection (called at end of putSelectionInClipboard)
-	const postDeleteHead = view.state.selection.main.head;
-	view.dispatch({ selection: EditorSelection.cursor(postDeleteHead) });
-
-	// Step 8: editor.setCursor(cursor) — reset to original cursor position
+	// Step 4: editor.setCursor(originalCursor) — reset to the cursor position
+	// captured after the initial disableSelection (step 1)
 	const resetPos = Math.min(head, view.state.doc.length);
 	view.dispatch({ selection: EditorSelection.cursor(resetPos) });
 
-	return { clipboard, cursor: view.state.selection.main.head, deleted: true };
+	return { clipboard: result.clipboard, cursor: view.state.selection.main.head, deleted: true };
 }
 
 describe("Integration: deleting a fully-selected link", () => {
@@ -3365,6 +3381,32 @@ describe("Integration: deleting a fully-selected link", () => {
 
 		view.contentDOM.dispatchEvent(
 			new KeyboardEvent("keydown", { key: "Delete", code: "Delete", keyCode: 46, which: 46, bubbles: true })
+		);
+
+		expect(view.state.doc.toString()).toBe("");
+	});
+
+	it("Delete on a right-to-left selected markdown link deletes the entire link", () => {
+		const doc = "[text](http://example.com)";
+		view = createTestView(doc, 1);
+		// textFrom=1, textTo=5, but with a right-to-left selection
+		view.dispatch({ selection: EditorSelection.single(5, 1) });
+
+		view.contentDOM.dispatchEvent(
+			new KeyboardEvent("keydown", { key: "Delete", code: "Delete", keyCode: 46, which: 46, bubbles: true })
+		);
+
+		expect(view.state.doc.toString()).toBe("");
+	});
+
+	it("Backspace on a right-to-left selected markdown link deletes the entire link", () => {
+		const doc = "[text](http://example.com)";
+		view = createTestView(doc, 1);
+		// textFrom=1, textTo=5, but with a right-to-left selection
+		view.dispatch({ selection: EditorSelection.single(5, 1) });
+
+		view.contentDOM.dispatchEvent(
+			new KeyboardEvent("keydown", { key: "Backspace", code: "Backspace", keyCode: 8, which: 8, bubbles: true })
 		);
 
 		expect(view.state.doc.toString()).toBe("");

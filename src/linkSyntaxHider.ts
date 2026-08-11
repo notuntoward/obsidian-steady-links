@@ -26,6 +26,7 @@ import {
 	RangeSetBuilder,
 	EditorState,
 	EditorSelection,
+	SelectionRange,
 	Prec,
 	StateEffect,
 	StateField,
@@ -1141,6 +1142,79 @@ function computeHiddenRangesForPositions(
 	return ranges;
 }
 
+/**
+ * When an external plugin (e.g. Emacs kill-line) collapses a non-empty
+ * selection to an empty cursor at a link's trailing boundary, find the link
+ * span whose `textFrom` the cursor should be redirected to.
+ *
+ * Returns the span to redirect to, or `null` if no redirect is needed.
+ *
+ * **CRITICAL: This MUST be called BEFORE `correctCursorPos`**, because
+ * `correctCursorPos` moves the head further past the link, after which the
+ * link span match no longer holds.
+ *
+ * This has been broken by AI at least 3 times.  The regression tests
+ * "deleting a selected link with Emacs kill-line" will fail if this logic
+ * is removed or reordered after `correctCursorPos`.
+ */
+function findSelectionCollapseRedirectSpan(
+	oldRange: SelectionRange,
+	newRangeEmpty: boolean,
+	head: number,
+	linkSpans: VisibleLinkSpan[],
+	isPointer: boolean,
+	docChanged: boolean
+): VisibleLinkSpan | null {
+	// Gate: only fire when a non-empty selection is collapsed to an empty
+	// cursor.  This is the "disableSelection" pattern used by external
+	// plugins (e.g. Emacs kill-line) — NOT a pointer click and NOT an
+	// edit-driven selection change (those have their own handling via
+	// isEditUpdate in correctCursorPos).
+	if (oldRange.empty || !newRangeEmpty || isPointer || docChanged) {
+		return null;
+	}
+
+	const oldFrom = Math.min(oldRange.anchor, oldRange.head);
+	const oldTo = Math.max(oldRange.anchor, oldRange.head);
+
+	for (const span of linkSpans) {
+		// Skip empty-text links (textFrom === textTo) — those have no visible
+		// text to redirect to.
+		if (span.textFrom >= span.textTo) continue;
+
+		// The new head must be at or just past the link's trailing boundary.
+		// The cursor corrector may have already moved the head from textTo to:
+		//   - span.to (for line-end links, where correctCursorPos stops at
+		//     lineEnd = span.to)
+		//   - span.to + 1 (for mid-line links, where correctCursorPos advances
+		//     past the trailing syntax to the next character)
+		// We also include span.from as a lower bound to quickly reject links
+		// the cursor is clearly not at.
+		if (head < span.from || head > span.to + 1) continue;
+
+		// The old selection must have covered the link's visible text
+		// [textFrom, textTo).  This ensures the redirect only fires for
+		// selections that included the link's visible text, not for
+		// unrelated selections whose head happened to land near the link.
+		if (oldFrom > span.textFrom || oldTo < span.textTo) continue;
+
+		// The old selection's anchor must have been within the link's leading
+		// syntax [span.from, span.textFrom].  This distinguishes:
+		//   - A selection of the link's visible text (anchor at/near textFrom,
+		//     possibly expanded to span.from by expandSelectionRangeToFullLinks)
+		//     → redirect to textFrom so kill-line captures the full link
+		//   - A selection that started BEFORE the link (anchor < span.from)
+		//     → do NOT redirect; kill-line from that anchor is legitimate
+		// Without this check, selections that include text before the link
+		// would also get redirected, breaking kill-line for those cases.
+		if (oldRange.anchor < span.from || oldRange.anchor > span.textFrom) continue;
+
+		return span;
+	}
+
+	return null;
+}
+
 const CORRECTING = "__leSyntaxCorrecting";
 const cursorCorrector = EditorView.updateListener.of((update) => {
 	if (!update.selectionSet) return;
@@ -1793,14 +1867,10 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 		//
 		// When an external plugin (e.g. Emacs kill-line) collapses a non-empty
 		// selection to an empty cursor, and the head lands at or past a link's
-		// trailing boundary (textTo / trailing.from / span.to / span.to+1),
-		// correctCursorPos would push the cursor past the trailing syntax to
-		// lineEnd.  This makes subsequent line-end commands (kill-line) select
-		// an empty range and silently do nothing — the link is not deleted.
-		//
-		// The cursor corrector may have already moved the head from textTo to
-		// span.to (for line-end links) or span.to+1 (for mid-line links)
-		// during the original selection creation.  We handle both cases.
+		// trailing boundary, correctCursorPos would push the cursor past the
+		// trailing syntax to lineEnd.  This makes subsequent line-end commands
+		// (kill-line) select an empty range and silently do nothing — the link
+		// is not deleted.
 		//
 		// Instead, redirect the cursor to the link's textFrom (visible text
 		// start).  This mirrors the behavior of a right-to-left selection
@@ -1808,35 +1878,21 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 		// commands like kill-line that operate from the cursor to end-of-line
 		// capture the full link.
 		//
-		// We only redirect when the old selection's anchor was within the
-		// link's leading syntax or at textFrom — this prevents redirecting
-		// when the user selected text BEFORE the link and the head happened
-		// to land at the link's end.
-		//
-		// This has been broken by AI at least 3 times.  The regression tests
-		// "deleting a selected link with Emacs kill-line" will fail if this
-		// is removed or reordered after correctCursorPos.
-		//
 		// CRITICAL: This check MUST run BEFORE correctCursorPos, because
 		// correctCursorPos moves the head further past the link, after
 		// which the link span match no longer holds.
 		const oldRange = i < oldSel.ranges.length ? oldSel.ranges[i] : oldSel.main;
-		if (!oldRange.empty && range.empty && !isPointer && !update.docChanged) {
-			const oldFrom = Math.min(oldRange.anchor, oldRange.head);
-			const oldTo = Math.max(oldRange.anchor, oldRange.head);
-			const collapseSpan = linkSpans.find(
-				(span) =>
-					head >= span.from &&
-					head <= span.to + 1 &&
-					oldFrom <= span.textFrom &&
-					oldTo >= span.textTo &&
-					oldRange.anchor >= span.from &&
-					oldRange.anchor <= span.textFrom
-			);
-			if (collapseSpan && collapseSpan.textFrom < collapseSpan.textTo) {
-				head = collapseSpan.textFrom;
-				needsAdjust = true;
-			}
+		const collapseSpan = findSelectionCollapseRedirectSpan(
+			oldRange,
+			range.empty,
+			head,
+			linkSpans,
+			isPointer,
+			update.docChanged
+		);
+		if (collapseSpan) {
+			head = collapseSpan.textFrom;
+			needsAdjust = true;
 		}
 
 		for (let pass = 0; pass < 3; pass++) {
