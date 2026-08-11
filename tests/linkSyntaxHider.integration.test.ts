@@ -79,9 +79,9 @@ function copiedText(view: EditorView): string {
  * This function is responsible ONLY for the select/copy/delete steps.  It
  * does NOT perform cursor-reset or disableSelection — those are handled by
  * the wrappers (`emulateEmacsKillLine` and `emulateEmacsKillLineWithSelection`)
- * so that future changes to cursor-reset semantics only need to be made in
- * the wrappers, and changes to the core select/copy/delete logic only need
- * to be made here.
+ * via the shared `resetCursorTo` helper, so that future changes to cursor-reset
+ * semantics only need to be made in `resetCursorTo`, and changes to the core
+ * select/copy/delete logic only need to be made here.
  *
  * @param view The editor view
  * @param useUserEvent If true, annotate the delete with userEvent "delete"
@@ -122,20 +122,28 @@ function killLineSelectCopyDelete(
 }
 
 /**
+ * Shared cursor-reset step used by both kill-line wrappers.
+ *
+ * Resets the cursor to `pos`, clamped to the current document length.  Both
+ * `emulateEmacsKillLine` and `emulateEmacsKillLineWithSelection` use this so
+ * that the clamping logic lives in exactly one place.
+ */
+function resetCursorTo(view: EditorView, pos: number): void {
+	view.dispatch({ selection: EditorSelection.cursor(Math.min(pos, view.state.doc.length)) });
+}
+
+/**
  * Simplified Emacs kill-line emulation (no disableSelection step).
  *
  * Wraps `killLineSelectCopyDelete` and adds the cursor-reset step: reset
- * cursor to the selection start (clamped to doc length).  Used by tests
- * that start with an empty cursor and do not need to reproduce the
- * selection-collapse bug.
+ * cursor to the selection start.  Used by tests that start with an empty
+ * cursor and do not need to reproduce the selection-collapse bug.
  */
 function emulateEmacsKillLine(view: EditorView): { clipboard: string; cursor: number } {
 	const result = killLineSelectCopyDelete(view, true);
 	if (!result) return { clipboard: "", cursor: view.state.selection.main.head };
 
-	// Reset cursor to selection start (clamped to doc length)
-	const resetPos = Math.min(result.selFrom, view.state.doc.length);
-	view.dispatch({ selection: EditorSelection.cursor(resetPos) });
+	resetCursorTo(view, result.selFrom);
 
 	return { clipboard: result.clipboard, cursor: view.state.selection.main.head };
 }
@@ -3306,8 +3314,7 @@ function emulateEmacsKillLineWithSelection(
 
 	// Step 4: editor.setCursor(originalCursor) — reset to the cursor position
 	// captured after the initial disableSelection (step 1)
-	const resetPos = Math.min(head, view.state.doc.length);
-	view.dispatch({ selection: EditorSelection.cursor(resetPos) });
+	resetCursorTo(view, head);
 
 	return { clipboard: result.clipboard, cursor: view.state.selection.main.head, deleted: true };
 }

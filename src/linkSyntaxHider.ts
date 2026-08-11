@@ -1166,11 +1166,10 @@ function findSelectionCollapseRedirectSpan(
 	docChanged: boolean
 ): VisibleLinkSpan | null {
 	// Gate: only fire when a non-empty selection is collapsed to an empty
-	// cursor.  This is the "disableSelection" pattern used by external
-	// plugins (e.g. Emacs kill-line) — NOT a pointer click and NOT an
-	// edit-driven selection change (those have their own handling via
-	// isEditUpdate in correctCursorPos).
-	if (oldRange.empty || !newRangeEmpty || isPointer || docChanged) {
+	// cursor via a programmatic dispatch (not a pointer click, not an edit).
+	const isSelectionCollapse = !oldRange.empty && newRangeEmpty;
+	const isProgrammatic = !isPointer && !docChanged;
+	if (!isSelectionCollapse || !isProgrammatic) {
 		return null;
 	}
 
@@ -1180,23 +1179,25 @@ function findSelectionCollapseRedirectSpan(
 	for (const span of linkSpans) {
 		// Skip empty-text links (textFrom === textTo) — those have no visible
 		// text to redirect to.
-		if (span.textFrom >= span.textTo) continue;
+		const hasVisibleText = span.textFrom < span.textTo;
+		if (!hasVisibleText) continue;
 
-		// The new head must be at or just past the link's trailing boundary.
+		// The head must be at or just past the link's trailing boundary.
 		// The cursor corrector may have already moved the head from textTo to:
 		//   - span.to (for line-end links, where correctCursorPos stops at
 		//     lineEnd = span.to)
 		//   - span.to + 1 (for mid-line links, where correctCursorPos advances
 		//     past the trailing syntax to the next character)
-		// We also include span.from as a lower bound to quickly reject links
-		// the cursor is clearly not at.
-		if (head < span.from || head > span.to + 1) continue;
+		const headAtTrailingBoundary = head >= span.from && head <= span.to + 1;
+		if (!headAtTrailingBoundary) continue;
 
 		// The old selection must have covered the link's visible text
 		// [textFrom, textTo).  This ensures the redirect only fires for
 		// selections that included the link's visible text, not for
 		// unrelated selections whose head happened to land near the link.
-		if (oldFrom > span.textFrom || oldTo < span.textTo) continue;
+		const oldSelectionCoversVisibleText =
+			oldFrom <= span.textFrom && oldTo >= span.textTo;
+		if (!oldSelectionCoversVisibleText) continue;
 
 		// The old selection's anchor must have been within the link's leading
 		// syntax [span.from, span.textFrom].  This distinguishes:
@@ -1207,7 +1208,9 @@ function findSelectionCollapseRedirectSpan(
 		//     → do NOT redirect; kill-line from that anchor is legitimate
 		// Without this check, selections that include text before the link
 		// would also get redirected, breaking kill-line for those cases.
-		if (oldRange.anchor < span.from || oldRange.anchor > span.textFrom) continue;
+		const anchorWithinLeadingSyntax =
+			oldRange.anchor >= span.from && oldRange.anchor <= span.textFrom;
+		if (!anchorWithinLeadingSyntax) continue;
 
 		return span;
 	}
@@ -3514,6 +3517,30 @@ function changesInteractWithLinks(changes: ChangeSpec[], links: LinkSpan[]): boo
 	return false;
 }
 
+/**
+ * Adapter for `rewriteDeleteChanges` used by `deleteSelectionKeymap`.
+ *
+ * Always passes a non-null `userEvent` ("delete.selection") and the selection
+ * head.  This is CRITICAL: without a non-null userEvent, the
+ * `matchesExactSingleLink` branch in `rewriteDeleteChangeForLinks` fires for
+ * genuine user selection deletes — converting a bare wikilink into an aliased
+ * wikilink + single-char delete instead of deleting the entire link.
+ *
+ * Centralizing this call ensures future changes cannot accidentally omit the
+ * userEvent or selHead arguments.  The `clampSelectionDeleteFilter` call site
+ * is different: it passes the transaction's actual userEvent (which may be
+ * null for programmatic deletes), so it calls `rewriteDeleteChanges` directly.
+ */
+function rewriteSelectionDeleteChanges(
+	changes: ChangeSpec[],
+	hidden: HiddenRange[],
+	links: LinkSpan[],
+	doc: EditorState["doc"],
+	selHead: number
+): ChangeSpec[] {
+	return rewriteDeleteChanges(changes, hidden, links, true, doc, "delete.selection", selHead);
+}
+
 const deleteSelectionKeymap = keymap.of([
 	{
 		key: "Backspace",
@@ -3537,19 +3564,11 @@ const deleteSelectionKeymap = keymap.of([
 
 			if (!changesInteractWithLinks(changes, links)) return false;
 
-			// Pass a non-null userEvent so rewriteDeleteChangeForLinks does NOT
-			// enter the matchesExactSingleLink branch (which is reserved for
-			// programmatic, no-userEvent deletes like Emacs delete-char).  When
-			// the user genuinely selects an entire link and presses
-			// Backspace/Delete, the entire link must be deleted — not converted
-			// to an aliased wikilink with one character removed.
-			const rewritten = rewriteDeleteChanges(
+			const rewritten = rewriteSelectionDeleteChanges(
 				changes,
 				hidden,
 				links,
-				true,
 				view.state.doc,
-				"delete.selection",
 				sel.main.head
 			);
 			if (rewritten.length === 0) {
@@ -3592,17 +3611,11 @@ const deleteSelectionKeymap = keymap.of([
 
 			if (!changesInteractWithLinks(changes, links)) return false;
 
-			// See the Backspace handler above for why a non-null userEvent is
-			// required: it prevents the matchesExactSingleLink branch from
-			// converting a user-selected full link into an aliased wikilink
-			// + single-char delete.
-			const rewritten = rewriteDeleteChanges(
+			const rewritten = rewriteSelectionDeleteChanges(
 				changes,
 				hidden,
 				links,
-				true,
 				view.state.doc,
-				"delete.selection",
 				sel.main.head
 			);
 			if (rewritten.length === 0) {
