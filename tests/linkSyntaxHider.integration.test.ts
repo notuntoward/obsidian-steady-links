@@ -449,6 +449,33 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			expect(view.state.selection.main.head).toBe(12);
 		});
 
+		it("generic select userEvent after the End-key window expires advances past trailing syntax", () => {
+			// Negative-path test for the endKeyTracker timing heuristic:
+			// when a generic "select" dispatch lands at textTo more than
+			// END_KEY_LINE_END_WINDOW_MS after the last End keydown, the move
+			// is treated as a normal right-arrow and the cursor advances past
+			// the trailing "]]" (to h.to + 1 = 15 in "see [[target]] more").
+			view = createTestView("see [[target]] more", 3);
+
+			// Record an End keydown, then advance fake time past the window.
+			vi.useFakeTimers();
+			view.contentDOM.dispatchEvent(
+				new KeyboardEvent("keydown", { key: "End", bubbles: true })
+			);
+			vi.advanceTimersByTime(301);
+
+			view.dispatch({
+				selection: EditorSelection.cursor(12, -1),
+				annotations: Transaction.userEvent.of("select"),
+			});
+
+			// Normal right-move behaviour: advance past the hidden trailing "]]"
+			// (h.to + 1 = 15 for this mid-line link).
+			expect(view.state.selection.main.head).toBe(15);
+
+			vi.useRealTimers();
+		});
+
 		it("a plain right-arrow INTO the trailing range still advances past ]] (preserved behavior)", () => {
 			view = createTestView("see [[target]] more", 11); // cursor at last visible char of alias
 

@@ -315,9 +315,15 @@ immediately after End would get stuck at `textTo`).
 The Emacs command and Shift+End carry distinct userEvents (`emacs.moveToEnd`,
 `selectLineEnd`). The bare End key dispatches with a generic `select`
 userEvent indistinguishable from arrow keys, so `cursorCorrector` also checks
-`Date.now() - lastEndKeyDownAt < 300`, where `lastEndKeyDownAt` is set by the
-`endKeyTracker` `EditorView.domEventHandlers` keydown. This mirrors the
-visible-cursor plugin's `lastKeyDownTime` approach.
+`Date.now() - lastEndKeyDown < END_KEY_LINE_END_WINDOW_MS` (300ms), where
+`lastEndKeyDown` is read from the **per-view** `lastEndKeyDownAtField`
+StateField (set by the `endKeyTracker` `EditorView.domEventHandlers`
+keydown). This mirrors the visible-cursor plugin's `lastKeyDownTime`
+approach but uses a StateField rather than a module-level variable so End
+keydowns in one editor instance cannot affect cursor correction in another.
+
+`END_KEY_LINE_END_WINDOW_MS` is a named constant — see its definition for
+rationale on the 300ms value.
 
 ### How to verify
 
@@ -340,6 +346,9 @@ They also verify the line-end-link case (where `h.to === lineEnd`).
   boundaries, so it is unreliable.
 - Do NOT remove the `endKeyTracker` domEventHandler — the bare End key has no
   distinguishable userEvent and relies on the keydown timestamp.
+- Do NOT revert `lastEndKeyDownAtField` to a module-level variable —
+  per-view scoping prevents End keydowns in one editor from affecting
+  cursor correction in another.
 
 ## Note: worktree builds (Agent Manager) and the vault junction
 

@@ -1452,15 +1452,17 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 	// Detect a line-end move (End key, Emacs "Move end of line", or Shift+End).
 	// The Emacs command and Shift+End carry distinct userEvents; the bare End
 	// key dispatches with a generic "select" userEvent, so it is recognised via
-	// the lastEndKeyDownAt timestamp (set by the endKeyTracker domEventHandler).
-	// correctCursorPos uses this to avoid advancing the cursor past a link's
-	// trailing syntax when an End command lands at a soft-wrap boundary.
+	// the lastEndKeyDownAtField timestamp (set per-view by the endKeyTracker
+	// domEventHandler).  correctCursorPos uses this to avoid advancing the
+	// cursor past a link's trailing syntax when an End command lands at a
+	// soft-wrap boundary.
+	const lastEndKeyDown = update.state.field(lastEndKeyDownAtField, false) ?? 0;
 	const isLineEndMove =
 		update.transactions.some(
 			(tr) =>
 				tr.isUserEvent("emacs.moveToEnd") ||
 				tr.isUserEvent("selectLineEnd")
-		) || Date.now() - lastEndKeyDownAt < 300;
+		) || Date.now() - lastEndKeyDown < END_KEY_LINE_END_WINDOW_MS;
 
 	if (isEmacsMoveToBeginning) {
 		debugLog("emacs.moveToBeginning detected", {
@@ -2104,18 +2106,37 @@ const suppressSuggestAfterDeleteListener = EditorView.updateListener.of((update)
 	}, 0);
 });
 
-// Timestamp of the most recent End keydown.  CM6/Obsidian's End command
-// dispatches its selection change with a generic "select" userEvent that is
-// indistinguishable from an arrow-key move, so the cursor corrector uses this
-// timestamp (mirroring the visible-cursor plugin's lastKeyDownTime approach)
-// to recognise a bare End-key line-end move and avoid advancing the cursor
-// past a link's trailing syntax on a soft-wrapped line.
-let lastEndKeyDownAt = 0;
+// Maximum time (ms) between an End keydown and the resulting line-end
+// selection dispatch for the move to still be treated as an End-key move.
+// CM6/Obsidian's End command dispatches its selection change with a generic
+// "select" userEvent (indistinguishable from an arrow-key move), so the
+// cursor corrector uses this window — measured from the End keydown recorded
+// in the per-view lastEndKeyDownAtField — to recognise a bare End-key move.
+// 300ms comfortably exceeds any observed dispatch latency (typically <10ms)
+// while being short enough that a real arrow-key press ~300ms after an End
+// keydown is treated correctly.
+const END_KEY_LINE_END_WINDOW_MS = 300;
+
+// Per-view StateField storing the timestamp of the most recent End keydown.
+// Scoped per-EditorView (not module-level) so End keydowns in one editor
+// instance cannot affect cursor correction in another.
+const setLastEndKeyDownAt = StateEffect.define<number>();
+const lastEndKeyDownAtField = StateField.define<number>({
+	create() {
+		return 0;
+	},
+	update(value, tr) {
+		for (const e of tr.effects) {
+			if (e.is(setLastEndKeyDownAt)) return e.value;
+		}
+		return value;
+	},
+});
 
 const endKeyTracker = EditorView.domEventHandlers({
-	keydown(event) {
+	keydown(event, view) {
 		if (event.key === "End") {
-			lastEndKeyDownAt = Date.now();
+			view.dispatch({ effects: [setLastEndKeyDownAt.of(Date.now())] });
 		}
 		return false;
 	},
@@ -4468,6 +4489,7 @@ export function createLinkSyntaxHiderExtension(wikiLinkOptions: WikiLinkHidingOp
 		Prec.highest(suppressSuggestAfterDeleteListener),
 		Prec.highest(boundaryInputSuppressor),
 		Prec.highest(endKeyTracker),
+		lastEndKeyDownAtField,
 		suppressSameLineCursorResetField,
 		pendingExternalSelectionExpansionField,
 		intentionalLeadingFromField,
