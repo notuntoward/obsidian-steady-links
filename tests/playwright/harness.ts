@@ -1,4 +1,4 @@
-import { EditorState, EditorSelection } from "@codemirror/state";
+import { EditorState, EditorSelection, Transaction } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { createLinkSyntaxHiderExtension, setSyntaxHiderEnabled } from "../../src/linkSyntaxHider";
 import type { SteadyLinksHarness } from "./harnessTypes";
@@ -131,6 +131,49 @@ const harness: SteadyLinksHarness = {
 			lineNumber: line.number,
 			lineText: line.text,
 		};
+	},
+	setHostWidth(px: number) {
+		const host = document.querySelector(".cm-editor-host") as HTMLElement;
+		if (host) host.style.width = px + "px";
+	},
+	dispatchEmacsMoveToEndFrom(fromPos: number) {
+		view.dispatch({
+			selection: EditorSelection.cursor(fromPos),
+			scrollIntoView: true,
+		});
+		view.focus();
+		const sel = view.state.selection.main;
+		const headCursor = EditorSelection.cursor(sel.head, sel.assoc);
+		const newRange = view.moveToLineBoundary(headCursor, true);
+		view.dispatch({
+			selection: EditorSelection.cursor(newRange.head, newRange.assoc),
+			scrollIntoView: true,
+			annotations: Transaction.userEvent.of("emacs.moveToEnd"),
+		});
+		return { head: newRange.head, assoc: newRange.assoc };
+	},
+	getCursorAssoc() {
+		const sel = view.state.selection.main;
+		return { head: sel.head, assoc: sel.assoc };
+	},
+	coordsAtPos(pos: number, assoc: number) {
+		const c = view.coordsAtPos(pos, assoc as 1 | -1);
+		if (!c) return null;
+		return { top: c.top, left: c.left };
+	},
+	deleteForwardAtCursor() {
+		const sel = view.state.selection.main;
+		const head = sel.head;
+		const deletedChar =
+			head < view.state.doc.length
+				? view.state.doc.sliceString(head, head + 1)
+				: "";
+		view.dispatch({
+			changes: { from: head, to: Math.min(head + 1, view.state.doc.length) },
+			selection: EditorSelection.cursor(head),
+			scrollIntoView: true,
+		});
+		return { deletedChar, headBefore: head };
 	},
 };
 
