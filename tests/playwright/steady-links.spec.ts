@@ -213,3 +213,83 @@ test("emacs next-line with active mark moves through blank line before a line-st
 	}
 	expect(results[results.length - 1].lineText).toBe("[[Western Climate Initiative]]");
 });
+
+test("End / emacs.moveToEnd on a soft-wrapped plain line lands on the wrap-boundary space and Delete removes that space", async ({ page }) => {
+	// Guard: on a plain soft-wrapped line (no links), Steady Links must not
+	// reposition the cursor on an End move — the cursor stays where CM6's
+	// moveToLineBoundary put it (the wrap boundary), and Delete removes the
+	// wrap-boundary character, not the first char of the next visual line.
+	const docText =
+		"Here is a long text that should definitely wrap across multiple lines of the editor to test the soft wrap boundary cursor alignment and character rendering";
+
+	await page.evaluate((text) => {
+		const harness = window.__steadyLinksHarness;
+		if (!harness) throw new Error("harness missing");
+		harness.setHostWidth(200);
+		harness.setDoc(text, 0);
+	}, docText);
+	await page.waitForTimeout(100);
+
+	const result = await page.evaluate(() => {
+		const harness = window.__steadyLinksHarness!;
+		const text = harness.getDoc();
+		let softWrapPos = -1;
+		for (let p = 1; p < text.length - 1; p += 1) {
+			const c1 = harness.coordsAtPos(p, -1);
+			const c2 = harness.coordsAtPos(p, 1);
+			if (c1 && c2 && Math.abs(c1.top - c2.top) > 5) {
+				softWrapPos = p;
+				break;
+			}
+		}
+		if (softWrapPos === -1) {
+			return { softWrapPos, move: null, cursor: null, del: null, expectedChar: "" };
+		}
+		const expectedChar = text.charAt(softWrapPos);
+		const fromPos = Math.max(0, softWrapPos - 3);
+		const move = harness.dispatchEmacsMoveToEndFrom(fromPos);
+		const cursor = harness.getCursorAssoc();
+		const del = harness.deleteForwardAtCursor();
+		return { softWrapPos, move, cursor, del, expectedChar };
+	});
+
+	expect(result.softWrapPos).not.toBe(-1);
+	// Steady Links must not reposition the cursor on an End move.
+	expect(result.cursor!.head).toBe(result.move!.head);
+	// Delete removes the wrap-boundary character, not the next visual line's first char.
+	expect(result.del!.headBefore).toBe(result.move!.head);
+	expect(result.del!.deletedChar).toBe(result.expectedChar);
+});
+
+test("End / emacs.moveToEnd on a line with a link does not advance the cursor past the link's trailing syntax", async ({ page }) => {
+	// Regression: when an End move lands the cursor at or inside a link's
+	// trailing hidden syntax (which happens on a soft-wrapped line when the
+	// visible alias text ends at the right edge), Steady Links must NOT
+	// advance the cursor past the trailing "]]". Advancing it lands the cursor
+	// on the next visual line and makes Delete remove the wrong character.
+	//
+	// This test dispatches the real emacs.moveToEnd flow and asserts Steady
+	// Links leaves the cursor exactly where moveToLineBoundary placed it.
+	const docText = "see [[target]] more text here that is long enough to maybe wrap";
+
+	await page.evaluate((text) => {
+		const harness = window.__steadyLinksHarness!;
+		harness.setHostWidth(300);
+		harness.setDoc(text, 0);
+	}, docText);
+	await page.waitForTimeout(100);
+
+	const result = await page.evaluate(() => {
+		const harness = window.__steadyLinksHarness!;
+		const text = harness.getDoc();
+		const textTo = text.indexOf("target") + "target".length; // start of trailing ]]
+		// Start the cursor a few chars before the link, then End to the line end.
+		const fromPos = Math.max(0, textTo - 6);
+		const move = harness.dispatchEmacsMoveToEndFrom(fromPos);
+		const cursor = harness.getCursorAssoc();
+		return { textTo, move, cursor };
+	});
+
+	// Steady Links must not reposition the cursor away from the End target.
+	expect(result.cursor!.head).toBe(result.move!.head);
+});

@@ -31,6 +31,36 @@ export type SteadyLinksHarness = {
 		markPos: number,
 		forward: boolean
 	): { anchor: number; head: number; lineNumber: number; lineText: string };
+	/**
+	 * Sets the editor host width (px) to force soft wrapping.
+	 */
+	setHostWidth(px: number): void;
+	/**
+	 * Faithfully replicates obsidian-emacs-text-editor's
+	 * moveToLineBoundary(editor, view, forward=true) (the "Move end of line"
+	 * command), which is equivalent to CM6's cursorLineEnd / End key on a
+	 * wrapped line: it seeds view.moveToLineBoundary with the current
+	 * head+assoc, then dispatches the returned range tagged with the
+	 * "emacs.moveToEnd" userEvent. Returns the head+assoc that
+	 * moveToLineBoundary produced.
+	 */
+	dispatchEmacsMoveToEndFrom(fromPos: number): { head: number; assoc: number };
+	/**
+	 * Returns { head, assoc } of the main selection.
+	 */
+	getCursorAssoc(): { head: number; assoc: number };
+	/**
+	 * Returns the document coordinates (viewport-relative top/left) at
+	 * (pos, assoc), or null. Used to determine which visual line a position
+	 * renders on.
+	 */
+	coordsAtPos(pos: number, assoc: number): { top: number; left: number } | null;
+	/**
+	 * Replicates CM6's deleteCharForward for a collapsed cursor not at a
+	 * logical line end: deletes the single character at the cursor head.
+	 * Returns the deleted character and the head before deletion.
+	 */
+	deleteForwardAtCursor(): { deletedChar: string; headBefore: number };
 };
 
 declare global {

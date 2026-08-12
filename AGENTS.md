@@ -269,6 +269,78 @@ The test suite includes:
   span.textFrom` check — without it, selections that include text BEFORE
   the link would also get redirected, breaking kill-line for those cases
 
+## Critical: End / line-end moves must not advance past trailing link syntax
+
+`correctCursorPos` accepts an `isLineEndMove` flag (8th parameter) that the
+`cursorCorrector` computes. When a line-end move (End key, Emacs "Move end of
+line" / `emacs.moveToEnd`, Shift+End / `selectLineEnd`) lands the cursor inside
+a link's trailing hidden range, `correctCursorPos` MUST return `null` (leave
+the selection unchanged) instead of advancing to `h.to` / `h.to + 1`.
+
+### The bug pattern
+
+On a soft-wrapped line whose visible alias text ends at the right edge, the End
+command (CM6 `moveToLineBoundary(forward)`, assoc=-1) lands the cursor at the
+link's `textTo` — the start of the hidden trailing `]]` syntax. Without the
+`isLineEndMove` guard, the trailing "moving right" branch advances the cursor
+to `h.to + 1` (past the `]]`), which visually lands on the next visual line.
+Pressing Delete then removes the first character of the next visual line
+instead of the character at the wrap boundary. This is a regression from the
+"line-ending links, stop at h.to" fix.
+
+### The correct code
+
+In the trailing `movingRight` branch of `correctCursorPos`:
+
+```typescript
+const textFrom = findTextFromForTrailing(hidden, h, doc);
+const isSingleCharInLinkAdvance =
+    textFrom !== null &&
+    oldPos >= textFrom &&
+    oldPos < h.from &&
+    Math.abs(pos - oldPos) <= 1;
+if (!isSingleCharInLinkAdvance && isLineEndMove) {
+    return null;   // keep cursor at the wrap boundary End placed it on
+}
+// ...otherwise preserve the existing advance to h.to / h.to + 1
+```
+
+A single-character right-arrow from inside the link's visible text must STILL
+advance past the trailing syntax — even right after an End keydown — so the
+`isSingleCharInLinkAdvance` exception is required (otherwise a Right press
+immediately after End would get stuck at `textTo`).
+
+### How the End key is detected
+
+The Emacs command and Shift+End carry distinct userEvents (`emacs.moveToEnd`,
+`selectLineEnd`). The bare End key dispatches with a generic `select`
+userEvent indistinguishable from arrow keys, so `cursorCorrector` also checks
+`Date.now() - lastEndKeyDownAt < 300`, where `lastEndKeyDownAt` is set by the
+`endKeyTracker` `EditorView.domEventHandlers` keydown. This mirrors the
+visible-cursor plugin's `lastKeyDownTime` approach.
+
+### How to verify
+
+The integration test suite includes:
+
+```
+"End / emacs.moveToEnd landing at a link's trailing boundary (soft-wrap regression)"
+```
+
+These cover `emacs.moveToEnd`, `selectLineEnd`, the bare End key (keydown +
+generic `select` dispatch), and the preserved single-char right-arrow advance.
+They also verify the line-end-link case (where `h.to === lineEnd`).
+
+### What NOT to do
+
+- Do NOT remove the `isLineEndMove` parameter or the `isSingleCharInLinkAdvance`
+  exception — without the exception, right-arrow-after-End breaks; without the
+  flag, the End regression returns.
+- Do NOT detect line-end moves by `assoc` alone — CM6 normalises assoc at wrap
+  boundaries, so it is unreliable.
+- Do NOT remove the `endKeyTracker` domEventHandler — the bare End key has no
+  distinguishable userEvent and relies on the keydown timestamp.
+
 ## Note: worktree builds (Agent Manager) and the vault junction
 
 Steady Links also ships a pre-built `main.js` that the vault loads via a

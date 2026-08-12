@@ -390,6 +390,92 @@ describe("Integration: cursor correction with real CM6 state", () => {
 		});
 	});
 
+	describe("End / emacs.moveToEnd landing at a link's trailing boundary (soft-wrap regression)", () => {
+		// Regression: on a soft-wrapped line, End (and the Emacs "Move end of
+		// line" command, which dispatches emacs.moveToEnd) can land the cursor
+		// at the link's textTo — the start of the hidden trailing "]]" syntax
+		// — when the visible alias text ends at the right edge of the editor.
+		//
+		// CM6's moveToLineBoundary(forward) returns assoc=-1 at that position
+		// (end of the upper visual line). correctCursorPos must NOT treat this
+		// as a right-arrow press and advance the cursor past the trailing
+		// syntax (to h.to + 1), because that lands on the next visual line and
+		// makes Delete remove the wrong character.
+		//
+		// Doc: "see [[target]] more"
+		//   leading [4,6)  textFrom=6  textTo=12  trailing [12,14)  fullEnd=14
+		it("emacs.moveToEnd landing at textTo (trailing start) stays at textTo, not advanced past ]]", () => {
+			view = createTestView("see [[target]] more", 3); // cursor before the link
+
+			// Simulate End landing at textTo=12 (the wrap boundary right after
+			// the visible alias), coming from the left (moving right).
+			view.dispatch({
+				selection: EditorSelection.cursor(12, -1),
+				annotations: Transaction.userEvent.of("emacs.moveToEnd"),
+			});
+
+			// Must stay at 12 (the wrap boundary). The bug advanced it to 15
+			// (h.to + 1 = past the trailing "]]", the "m" of "more").
+			expect(view.state.selection.main.head).toBe(12);
+		});
+
+		it("End-key (selectLineEnd) landing at textTo stays at textTo, not advanced past ]]", () => {
+			view = createTestView("see [[target]] more", 3);
+
+			view.dispatch({
+				selection: EditorSelection.cursor(12, -1),
+				annotations: Transaction.userEvent.of("selectLineEnd"),
+			});
+
+			expect(view.state.selection.main.head).toBe(12);
+		});
+
+		it("bare End key (generic select userEvent) landing at textTo stays at textTo", () => {
+			// The physical End key dispatches with a generic "select" userEvent
+			// (indistinguishable from an arrow key), so it is recognised via the
+			// endKeyTracker keydown timestamp. Simulate the real sequence: a
+			// keydown for End, then the line-end selection dispatch.
+			view = createTestView("see [[target]] more", 3);
+
+			view.contentDOM.dispatchEvent(
+				new KeyboardEvent("keydown", { key: "End", bubbles: true })
+			);
+
+			view.dispatch({
+				selection: EditorSelection.cursor(12, -1),
+				annotations: Transaction.userEvent.of("select"),
+			});
+
+			expect(view.state.selection.main.head).toBe(12);
+		});
+
+		it("a plain right-arrow INTO the trailing range still advances past ]] (preserved behavior)", () => {
+			view = createTestView("see [[target]] more", 11); // cursor at last visible char of alias
+
+			// A genuine right-arrow from inside the visible text into the
+			// trailing range must still advance past the trailing "]]" to the
+			// next character (15). This is the behavior the line-ending fix
+			// preserved and must NOT be broken by the End fix.
+			expect(dispatchSelection(view, 12, "select")).toBe(15);
+		});
+
+		it("emacs.moveToEnd landing at textTo when the link is at the logical line end stays at textTo", () => {
+			// Doc: "see [[target]]"  (link ends the line; fullEnd === lineEnd)
+			//   leading [4,6)  textFrom=6  textTo=12  trailing [12,14)  fullEnd=14=lineEnd
+			view = createTestView("see [[target]]", 3);
+
+			view.dispatch({
+				selection: EditorSelection.cursor(12, -1),
+				annotations: Transaction.userEvent.of("emacs.moveToEnd"),
+			});
+
+			// At a logical line end, the existing "stop at h.to" logic already
+			// keeps the cursor at h.to (14). Landing at textTo=12 via End must
+			// not jump backwards either — it should stay at the wrap boundary.
+			expect(view.state.selection.main.head).toBe(12);
+		});
+	});
+
 	describe("markdown link at end of line: [text](url)", () => {
 		it("selection delivered to trailing h.from skips the icon boundary into visible text", () => {
 			view = createTestView("[link text](https://x.com)", 26);

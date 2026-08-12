@@ -1019,7 +1019,8 @@ function correctCursorPos(
 	doc: EditorState["doc"],
 	isPointer: boolean = false,
 	hasGoalColumn: boolean = false,
-	isEditUpdate: boolean = false
+	isEditUpdate: boolean = false,
+	isLineEndMove: boolean = false
 ): number | null {
 	const oldLine = doc.lineAt(Math.min(oldPos, doc.length));
 	const newLine = doc.lineAt(Math.min(pos, doc.length));
@@ -1093,6 +1094,35 @@ function correctCursorPos(
 			return h.from;
 		}
 		if (movingRight) {
+			// A single right-arrow press from inside the link's visible text
+			// into the trailing hidden range must always advance past the
+			// trailing syntax (to h.to, or h.to + 1 for mid-line links) — this
+			// is the behaviour the line-ending fix preserves, and it must NOT
+			// be suppressed even right after an End keydown.
+			//
+			// A line-end move (End key, emacs "Move end of line", Shift+End)
+			// that lands inside the trailing range must NOT advance past it:
+			// on a soft-wrapped line the End command places the cursor at the
+			// wrap boundary (the start of the hidden trailing syntax), and
+			// advancing past it lands the cursor on the next visual line,
+			// which makes Delete remove the wrong character.
+			//
+			// Distinguish the two by checking whether the cursor arrived from
+			// inside the link's visible text via a single-character step.  The
+			// visible-text start (textFrom) is the `to` of the paired leading
+			// range on the same line.
+			const textFrom = findTextFromForTrailing(hidden, h, doc);
+			const isSingleCharInLinkAdvance =
+				textFrom !== null &&
+				oldPos >= textFrom &&
+				oldPos < h.from &&
+				Math.abs(pos - oldPos) <= 1;
+			if (!isSingleCharInLinkAdvance && isLineEndMove) {
+				// Line-end move landing at the trailing boundary: keep the
+				// cursor exactly where the End command placed it (the wrap
+				// boundary).  Returning null leaves the selection unchanged.
+				return null;
+			}
 			// For line-ending links, stop at the line end (h.to) rather
 			// than jumping to the next line (h.to + 1).  The user can
 			// press right again from h.to to advance normally.
@@ -1115,6 +1145,31 @@ function correctCursorPos(
 		return h.from;
 	}
 	return null;
+}
+
+/**
+ * Find the visible-text start (textFrom) for a trailing hidden range `h` by
+ * locating its paired leading range: the most recent leading range on the
+ * same line whose `to` is at or before `h.from`.  For a wikilink
+ * `[[target]]`, the leading range is `[[` and its `to` is the position right
+ * after the brackets (textFrom); the trailing range is `]]` starting at
+ * textTo.  Used by `correctCursorPos` to tell a single right-arrow from
+ * inside the link apart from an external line-end move.
+ */
+function findTextFromForTrailing(
+	hidden: HiddenRange[],
+	h: HiddenRange,
+	doc: EditorState["doc"]
+): number | null {
+	let textFrom: number | null = null;
+	const hLine = doc.lineAt(Math.min(h.from, doc.length)).number;
+	for (const l of hidden) {
+		if (l.side !== "leading") continue;
+		if (l.to > h.from) continue;
+		if (doc.lineAt(Math.min(l.from, doc.length)).number !== hLine) continue;
+		if (textFrom === null || l.to > textFrom) textFrom = l.to;
+	}
+	return textFrom;
 }
 
 function computeHiddenRangesForPositions(
@@ -1393,6 +1448,19 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 	const isEmacsMoveToBeginning = update.transactions.some(
 		(tr) => tr.annotation(Transaction.userEvent) === "emacs.moveToBeginning"
 	);
+
+	// Detect a line-end move (End key, Emacs "Move end of line", or Shift+End).
+	// The Emacs command and Shift+End carry distinct userEvents; the bare End
+	// key dispatches with a generic "select" userEvent, so it is recognised via
+	// the lastEndKeyDownAt timestamp (set by the endKeyTracker domEventHandler).
+	// correctCursorPos uses this to avoid advancing the cursor past a link's
+	// trailing syntax when an End command lands at a soft-wrap boundary.
+	const isLineEndMove =
+		update.transactions.some(
+			(tr) =>
+				tr.isUserEvent("emacs.moveToEnd") ||
+				tr.isUserEvent("selectLineEnd")
+		) || Date.now() - lastEndKeyDownAt < 300;
 
 	if (isEmacsMoveToBeginning) {
 		debugLog("emacs.moveToBeginning detected", {
@@ -1943,7 +2011,8 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 				state.doc,
 				isPointer,
 				hasGoalColumn,
-				update.docChanged
+				update.docChanged,
+				isLineEndMove
 			);
 			if (corrected === null || corrected === head) break;
 			head = corrected;
@@ -2033,6 +2102,23 @@ const suppressSuggestAfterDeleteListener = EditorView.updateListener.of((update)
 			scrollIntoView: true,
 		});
 	}, 0);
+});
+
+// Timestamp of the most recent End keydown.  CM6/Obsidian's End command
+// dispatches its selection change with a generic "select" userEvent that is
+// indistinguishable from an arrow-key move, so the cursor corrector uses this
+// timestamp (mirroring the visible-cursor plugin's lastKeyDownTime approach)
+// to recognise a bare End-key line-end move and avoid advancing the cursor
+// past a link's trailing syntax on a soft-wrapped line.
+let lastEndKeyDownAt = 0;
+
+const endKeyTracker = EditorView.domEventHandlers({
+	keydown(event) {
+		if (event.key === "End") {
+			lastEndKeyDownAt = Date.now();
+		}
+		return false;
+	},
 });
 
 const boundaryInputSuppressor = EditorView.domEventHandlers({
@@ -4381,6 +4467,7 @@ export function createLinkSyntaxHiderExtension(wikiLinkOptions: WikiLinkHidingOp
 		Prec.highest(cursorCorrector),
 		Prec.highest(suppressSuggestAfterDeleteListener),
 		Prec.highest(boundaryInputSuppressor),
+		Prec.highest(endKeyTracker),
 		suppressSameLineCursorResetField,
 		pendingExternalSelectionExpansionField,
 		intentionalLeadingFromField,
