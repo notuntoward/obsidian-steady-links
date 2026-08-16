@@ -22,7 +22,7 @@
 	"author": "Scott Otterson",
 	"license": "MIT",
 	"devDependencies": {
-		"@eslint/js": "^9.39.4",
+		"@eslint/js": "^10.0.1",
 		"@playwright/test": "^1.62.1",
 		"@types/node": "^26.1.0",
 		"@typescript-eslint/eslint-plugin": "^8.66.0",
