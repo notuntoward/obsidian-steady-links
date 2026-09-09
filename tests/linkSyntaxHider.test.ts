@@ -487,10 +487,10 @@ describe("correctCursorPos", () => {
 			{ from: 11, to: 18, side: "trailing" },
 		];
 
-		it("should go to h.to + 1 when moving right (not line-ending)", () => {
-			// h.to (18) !== line.to (23), so should return h.to+1 = 19
+		it("should go to h.to when moving right (not line-ending)", () => {
+			// Advances to h.to (18) immediately after the link syntax
 			const result = correctCursorPos(11, 10, midHidden, midDoc as any);
-			expect(result).toBe(19);
+			expect(result).toBe(18);
 		});
 	});
 

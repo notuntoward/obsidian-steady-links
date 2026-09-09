@@ -350,6 +350,51 @@ They also verify the line-end-link case (where `h.to === lineEnd`).
   per-view scoping prevents End keydowns in one editor from affecting
   cursor correction in another.
 
+## Critical: Trailing syntax exit navigation must land at h.to, not h.to + 1
+
+In `correctCursorPos` (`src/linkSyntaxHider.ts`), when the cursor enters the
+trailing hidden range (`]]` for wikilinks or `](url)` for markdown links) from
+the left (`movingRight` is true):
+
+```typescript
+// Advance to h.to (the boundary immediately after the link syntax).
+// This lands right after the link text (e.g. before any following space),
+// matching symmetric left-arrow behavior from h.to.
+return h.to;
+```
+
+### The bug pattern
+
+Previously, `correctCursorPos` returned `Math.min(doc.length, h.to + 1)` for
+mid-line links. This caused a single right-arrow press from the last character of
+a link's display text to skip the trailing syntax **and** the following space
+character, landing on the first letter of the subsequent word.
+When pressing left-arrow from that subsequent word, the cursor entered the trailing
+range and landed at `h.to` / `h.from` (before the space), creating an asymmetrical
+navigation anomaly where the space between a link and the next word was skipped
+when moving forward and could only be reached when moving backward.
+
+### Mandatory invariants
+
+1. **Always return `h.to` on trailing `movingRight` exit**:
+   Landing at `h.to` places the cursor cleanly between the link text and any
+   trailing character or space. A subsequent right-arrow press then advances past
+   the space.
+2. **Symmetric single-step navigation**:
+   - `[textFrom, textTo)` -> right-arrow -> `h.to` (after link, before space)
+   - `h.to` -> right-arrow -> `h.to + 1` (after space)
+   - `h.to + 1` -> left-arrow -> `h.to` (before space)
+   - `h.to` -> left-arrow -> inside visible link text (`h.from - 1` / `textTo`)
+3. **Applies uniformly to all link topologies and input methods**:
+   - Wikilinks and markdown links
+   - Start of line, mid-line, and end of line
+   - Arrow keys and Emacs cursor commands (`forward-char` / `backward-char` / `Ctrl-F` / `Ctrl-B`)
+
+### What NOT to do
+
+- Do NOT change `return h.to;` to `return Math.min(doc.length, h.to + 1);`.
+- Do NOT skip the space or character following `h.to` during forward navigation.
+
 ## Note: worktree builds (Agent Manager) and the vault junction
 
 Steady Links also ships a pre-built `main.js` that the vault loads via a

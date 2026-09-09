@@ -454,7 +454,8 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			// when a generic "select" dispatch lands at textTo more than
 			// END_KEY_LINE_END_WINDOW_MS after the last End keydown, the move
 			// is treated as a normal right-arrow and the cursor advances past
-			// the trailing "]]" (to h.to + 1 = 15 in "see [[target]] more").
+			// the trailing "]]" to h.to (14 in "see [[target]] more", immediately
+			// after the link and before the following space).
 			view = createTestView("see [[target]] more", 3);
 
 			// Record an End keydown, then advance fake time past the window.
@@ -470,8 +471,8 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			});
 
 			// Normal right-move behaviour: advance past the hidden trailing "]]"
-			// (h.to + 1 = 15 for this mid-line link).
-			expect(view.state.selection.main.head).toBe(15);
+			// (to h.to = 14 for this mid-line link, before the space).
+			expect(view.state.selection.main.head).toBe(14);
 
 			vi.useRealTimers();
 		});
@@ -480,10 +481,9 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			view = createTestView("see [[target]] more", 11); // cursor at last visible char of alias
 
 			// A genuine right-arrow from inside the visible text into the
-			// trailing range must still advance past the trailing "]]" to the
-			// next character (15). This is the behavior the line-ending fix
-			// preserved and must NOT be broken by the End fix.
-			expect(dispatchSelection(view, 12, "select")).toBe(15);
+			// trailing range advances past the trailing "]]" to the boundary
+			// immediately after the link (14).
+			expect(dispatchSelection(view, 12, "select")).toBe(14);
 		});
 
 		it("emacs.moveToEnd landing at textTo when the link is at the logical line end stays at textTo", () => {
@@ -1965,7 +1965,7 @@ describe("Integration: cursor correction with real CM6 state", () => {
 		it("forward-word style bounce inside a multi-word wikilink lands at the next visible word boundary", () => {
 			view = createTestView("see [[two words here]] more", 16);
 
-			expect(dispatchSelection(view, 4)).toBe(23);
+			expect(dispatchSelection(view, 4)).toBe(22);
 		});
 
 		it("paragraph jumps onto a line-start wikilink land on visible text", () => {
@@ -3752,6 +3752,161 @@ describe("Integration: deleting a fully-selected link", () => {
 		});
 
 		expect(view.state.doc.toString()).toBe("[[WikiNoAlias|NoAlias]]");
+	});
+
+	describe("trailing syntax exit navigation (arrow keys and Emacs forward/backward)", () => {
+		it("mid-line wikilink: moving right from alias end lands at h.to (before space), then next right moves past space", () => {
+			const doc = "• [[note|Link]] followed by text";
+			// Link: [[note|Link]]
+			// 'Link' is chars 9..13. 'k' is index 12.
+			// trailing ']]' is 13..15. Space is index 15. 'f' is index 16.
+			view = createTestView(doc, 12); // cursor before 'k' (index 12)
+
+			// Step 1: 1 right arrow from 'k' (12 -> 13 = h.from)
+			view.dispatch({ selection: EditorSelection.cursor(13), annotations: [Transaction.userEvent.of("select")] });
+			// Must land at h.to (15, immediately after Link, before space), NOT 16 (on 'f')
+			expect(view.state.selection.main.head).toBe(15);
+
+			// Step 2: second right arrow from h.to advances past the space to 16 ('f')
+			view.dispatch({ selection: EditorSelection.cursor(16), annotations: [Transaction.userEvent.of("select")] });
+			expect(view.state.selection.main.head).toBe(16);
+
+			// Step 3: left arrow from 16 lands at 15 (before space, after Link)
+			view.dispatch({ selection: EditorSelection.cursor(15), annotations: [Transaction.userEvent.of("select")] });
+			expect(view.state.selection.main.head).toBe(15);
+
+			// Step 4: left arrow from 15 enters the link and lands on 'k' (12 = h.from - 1)
+			view.dispatch({ selection: EditorSelection.cursor(14), annotations: [Transaction.userEvent.of("select")] });
+			expect(view.state.selection.main.head).toBe(12);
+		});
+
+		it("mid-line markdown link: moving right from display text end lands at h.to (before space), then next right moves past space", () => {
+			const doc = "• [Link](http://example.com) followed by text";
+			// [Link](http://example.com)
+			// 'Link' is 3..7. 'k' is index 6.
+			// trailing '](http://example.com)' is 7..28. Space is index 28. 'f' is index 29.
+			view = createTestView(doc, 6); // cursor before 'k' (index 6)
+
+			// Step 1: 1 right arrow from 'k' (6 -> 7 = h.from)
+			view.dispatch({ selection: EditorSelection.cursor(7), annotations: [Transaction.userEvent.of("select")] });
+			// Must land at h.to (28, immediately after link, before space)
+			expect(view.state.selection.main.head).toBe(28);
+
+			// Step 2: second right arrow from 28 advances past space to 29 ('f')
+			view.dispatch({ selection: EditorSelection.cursor(29), annotations: [Transaction.userEvent.of("select")] });
+			expect(view.state.selection.main.head).toBe(29);
+
+			// Step 3: left arrow from 29 lands at 28 (before space)
+			view.dispatch({ selection: EditorSelection.cursor(28), annotations: [Transaction.userEvent.of("select")] });
+			expect(view.state.selection.main.head).toBe(28);
+
+			// Step 4: left arrow from 28 enters the link and lands right after 'k' (textTo = 7)
+			view.dispatch({ selection: EditorSelection.cursor(27), annotations: [Transaction.userEvent.of("select")] });
+			expect(view.state.selection.main.head).toBe(7);
+
+			// Step 5: left arrow from 7 moves to before 'k' (index 6)
+			view.dispatch({ selection: EditorSelection.cursor(6), annotations: [Transaction.userEvent.of("select")] });
+			expect(view.state.selection.main.head).toBe(6);
+		});
+
+		it("line-start wikilink: moving right from alias end lands at h.to (before space)", () => {
+			const doc = "[[note|Link]] followed by text";
+			// [[note|Link]]
+			// 'Link' is 7..11. 'k' is index 10.
+			// trailing ']]' is 11..13. Space is 13. 'f' is 14.
+			view = createTestView(doc, 10); // on 'k'
+
+			// Right arrow into trailing syntax (10 -> 11 = h.from)
+			view.dispatch({ selection: EditorSelection.cursor(11), annotations: [Transaction.userEvent.of("select")] });
+			expect(view.state.selection.main.head).toBe(13); // h.to
+
+			// Next right arrow moves past space
+			view.dispatch({ selection: EditorSelection.cursor(14), annotations: [Transaction.userEvent.of("select")] });
+			expect(view.state.selection.main.head).toBe(14);
+		});
+
+		it("line-start markdown link: moving right from text end lands at h.to (before space)", () => {
+			const doc = "[Link](http://example.com) followed by text";
+			// [Link](http://example.com)
+			// 'Link' is 1..5. 'k' is index 4.
+			// trailing '](http://example.com)' is 5..26. Space is 26.
+			view = createTestView(doc, 4); // on 'k'
+
+			// Right arrow into trailing syntax (4 -> 5 = h.from)
+			view.dispatch({ selection: EditorSelection.cursor(5), annotations: [Transaction.userEvent.of("select")] });
+			expect(view.state.selection.main.head).toBe(26); // h.to
+		});
+
+		it("line-end wikilink: moving right from alias end lands at line end (h.to)", () => {
+			const doc = "Prefix [[note|Link]]";
+			// Link: [[note|Link]]
+			// 'Link' is 14..18. 'k' is 17.
+			// trailing ']]' is 18..20. lineEnd is 20.
+			view = createTestView(doc, 17); // on 'k'
+
+			view.dispatch({ selection: EditorSelection.cursor(18), annotations: [Transaction.userEvent.of("select")] });
+			expect(view.state.selection.main.head).toBe(20); // lineEnd = h.to
+		});
+
+		it("line-end markdown link: moving right from text end lands at line end (h.to)", () => {
+			const doc = "Prefix [Link](http://example.com)";
+			// [Link](http://example.com)
+			// 'Link' is 8..12. 'k' is 11.
+			// trailing '](http://example.com)' is 12..33. lineEnd is 33.
+			view = createTestView(doc, 11); // on 'k'
+
+			view.dispatch({ selection: EditorSelection.cursor(12), annotations: [Transaction.userEvent.of("select")] });
+			expect(view.state.selection.main.head).toBe(33); // lineEnd = h.to
+		});
+
+		it("Emacs cursor commands (no userEvent): forward lands at h.to and backward enters link", () => {
+			const doc = "see [[target]] more";
+			// [[target]]
+			// 'target' is 6..12. 't' is index 11.
+			// trailing ']]' is 12..14. Space is 14. 'm' is 15.
+			view = createTestView(doc, 11); // on 't'
+
+			// Emacs forward-char: moves 11 -> 12 (programmatic, no userEvent)
+			view.dispatch({ selection: EditorSelection.cursor(12) });
+			expect(view.state.selection.main.head).toBe(14); // h.to (before space)
+
+			// Emacs backward-char from h.to: moves 14 -> 13 (inside trailing)
+			view.dispatch({ selection: EditorSelection.cursor(13) });
+			expect(view.state.selection.main.head).toBe(11); // enters link, lands on 't'
+		});
+
+		it("Emacs cursor commands on markdown links: forward lands at h.to and backward enters link", () => {
+			const doc = "see [target](http://example.com) more";
+			// 'target' is 5..11. 't' is index 10.
+			// trailing '](http://example.com)' is 11..32. Space is 32. 'm' is 33.
+			view = createTestView(doc, 10); // on 't'
+
+			// Emacs forward-char: moves 10 -> 11 (into trailing)
+			view.dispatch({ selection: EditorSelection.cursor(11) });
+			expect(view.state.selection.main.head).toBe(32); // h.to (before space)
+
+			// Emacs backward-char from h.to: moves 32 -> 31 (inside trailing)
+			view.dispatch({ selection: EditorSelection.cursor(31) });
+			expect(view.state.selection.main.head).toBe(11); // lands after 'target'
+		});
+
+		it("Emacs cursor commands on line-start links: forward lands at h.to", () => {
+			const doc = "[[target]] more";
+			// 'target' is 2..8. 't' is 7. trailing ']]' is 8..10.
+			view = createTestView(doc, 7); // on 't'
+
+			view.dispatch({ selection: EditorSelection.cursor(8) });
+			expect(view.state.selection.main.head).toBe(10); // h.to (before space)
+		});
+
+		it("Emacs cursor commands on line-end links: forward lands at line end", () => {
+			const doc = "see [[target]]";
+			// 'target' is 6..12. 't' is 11. trailing ']]' is 12..14 (line end).
+			view = createTestView(doc, 11); // on 't'
+
+			view.dispatch({ selection: EditorSelection.cursor(12) });
+			expect(view.state.selection.main.head).toBe(14); // lineEnd = h.to
+		});
 	});
 });
 

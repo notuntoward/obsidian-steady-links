@@ -1096,9 +1096,9 @@ function correctCursorPos(
 		if (movingRight) {
 			// A single right-arrow press from inside the link's visible text
 			// into the trailing hidden range must always advance past the
-			// trailing syntax (to h.to, or h.to + 1 for mid-line links) — this
-			// is the behaviour the line-ending fix preserves, and it must NOT
-			// be suppressed even right after an End keydown.
+			// trailing syntax (to h.to) — this is the behaviour the line-ending
+			// fix preserves, and it must NOT be suppressed even right after an
+			// End keydown.
 			//
 			// A line-end move (End key, emacs "Move end of line", Shift+End)
 			// that lands inside the trailing range must NOT advance past it:
@@ -1123,14 +1123,10 @@ function correctCursorPos(
 				// boundary).  Returning null leaves the selection unchanged.
 				return null;
 			}
-			// For line-ending links, stop at the line end (h.to) rather
-			// than jumping to the next line (h.to + 1).  The user can
-			// press right again from h.to to advance normally.
-			const lineEnd = doc.lineAt(pos).to;
-			if (h.to === lineEnd) {
-				return h.to;
-			}
-			return Math.min(doc.length, h.to + 1);
+			// Advance to h.to (the boundary immediately after the link syntax).
+			// This lands right after the link text (e.g. before any following space),
+			// matching symmetric left-arrow behavior from h.to.
+			return h.to;
 		}
 		// Moving left through trailing range.  When entering from the
 		// right edge (oldPos === h.to), skip the trailing boundary
