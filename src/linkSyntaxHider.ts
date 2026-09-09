@@ -1870,12 +1870,20 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 		// goalColumn is set on the NEW selection (the one being dispatched),
 		// not the old one.  Check both to handle CM6's internal normalization
 		// steps where the old selection carries goalColumn forward.
+		const isEmacsVertical = update.transactions.some(
+			(tr) => tr.isUserEvent("emacs.moveDown") || tr.isUserEvent("emacs.moveUp")
+		);
+		const oldLineForVert = state.doc.lineAt(Math.min(oldHead, state.doc.length));
+		const newLineForVert = state.doc.lineAt(Math.min(head, state.doc.length));
+		const isCrossLine = oldLineForVert.number !== newLineForVert.number;
+		const cameFromBlankLine = isCrossLine && oldLineForVert.from === oldLineForVert.to;
+
 		const hasGoalColumn =
 			newSel.main.goalColumn !== undefined || oldSel.main.goalColumn !== undefined;
-		if (hasGoalColumn) {
-			const oldLine = state.doc.lineAt(Math.min(oldHead, state.doc.length));
-			const newLine = state.doc.lineAt(Math.min(head, state.doc.length));
-			const isVertical = oldLine.number !== newLine.number;
+		if (hasGoalColumn || isEmacsVertical || cameFromBlankLine) {
+			const oldLine = oldLineForVert;
+			const newLine = newLineForVert;
+			const isVertical = isCrossLine;
 
 			let allowLeadingBoundaryAdvance = false;
 			for (const span of linkSpans) {
@@ -1884,14 +1892,21 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 				// or directly at textFrom (markdown links, where the hidden
 				// [ is only 1 char and CM6's goalColumn lands just past it).
 				// Handle both cases.
+				const isLineStartLink =
+					span.leading.from === state.doc.lineAt(span.leading.from).from;
+				const landedInLeadingOrTextFrom =
+					isLineStartLink &&
+					head >= span.leading.from &&
+					head <= span.textFrom;
+
 				const landedAtLeadingFrom =
-					head === span.leading.from && head === state.doc.lineAt(head).from;
+					head === span.leading.from && isLineStartLink;
 				const landedAtTextFromVertically =
 					head === span.textFrom &&
-					span.leading.from === state.doc.lineAt(span.leading.from).from &&
+					isLineStartLink &&
 					isVertical;
 
-				if (!landedAtLeadingFrom && !landedAtTextFromVertically) continue;
+				if (!landedInLeadingOrTextFrom && !landedAtLeadingFrom && !landedAtTextFromVertically) continue;
 
 				// Vertical motion (up/down arrow) from a different line
 				// landing at or near the line-start hidden leading range.
@@ -1900,7 +1915,7 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 				// (textFrom → leading.from, no userEvent) is suppressed —
 				// without this, correctCursorPos treats the normalisation
 				// as a left-arrow and bounces to the previous line.
-				if (isVertical) {
+				if (isVertical || isEmacsVertical || cameFromBlankLine) {
 					head = span.textFrom;
 					needsAdjust = true;
 					(update.view as any).__leArrivedFromOutside = span.leading.from;

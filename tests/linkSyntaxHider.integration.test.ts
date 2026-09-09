@@ -1918,6 +1918,41 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			// MUST be at textFrom, NOT at leading.from=1
 			expect(view.state.selection.main.head).toBe(textStart);
 		});
+
+		it("navigating down from blank line without goalColumn snaps to textFrom and does not bounce", () => {
+			// Start on blank line 0
+			view = createTestView("\n[[test-notes/Note-05.md|Standalone Line Link]]\n", 0);
+			const aliasStart = view.state.doc.toString().indexOf("Standalone Line Link");
+
+			// Step 1: Cursor moves from blank line (offset 0) to column 0 of line 2 (offset 1, leading.from) without goalColumn
+			view.dispatch({ selection: EditorSelection.cursor(1) });
+			// Must snap to visible textFrom
+			expect(view.state.selection.main.head).toBe(aliasStart);
+
+			// Step 2: Obsidian normalisation textFrom -> leading.from
+			view.dispatch({ selection: EditorSelection.cursor(1) });
+			// Must be redirected to aliasStart, NOT bounce back to blank line 0
+			expect(view.state.selection.main.head).toBe(aliasStart);
+		});
+
+		it("emacs.moveDown from blank line snaps to textFrom and suppresses normalization bounce", () => {
+			// Start on blank line 0
+			view = createTestView("\n[[test-notes/Note-05.md|Standalone Line Link]]\n", 0);
+			const aliasStart = view.state.doc.toString().indexOf("Standalone Line Link");
+
+			// Step 1: Emacs moveDown from blank line
+			view.dispatch({
+				selection: EditorSelection.cursor(1),
+				annotations: Transaction.userEvent.of("emacs.moveDown"),
+			});
+			// Must snap to visible textFrom
+			expect(view.state.selection.main.head).toBe(aliasStart);
+
+			// Step 2: Obsidian normalisation textFrom -> leading.from
+			view.dispatch({ selection: EditorSelection.cursor(1) });
+			// Must stay at aliasStart, NOT bounce to 0
+			expect(view.state.selection.main.head).toBe(aliasStart);
+		});
 	});
 
 	describe("Emacs-style navigation compatibility", () => {
