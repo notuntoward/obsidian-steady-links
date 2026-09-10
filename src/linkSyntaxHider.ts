@@ -3452,24 +3452,32 @@ function rewriteDeleteChangeForLinks(
 			change.from <= link.textFrom &&
 			change.to >= link.textTo;
 
+		const isMarkdown = doc ? isMarkdownLinkSpan(doc, link as any) : false;
+		const destination = doc ? getBareWikiLinkDestination(doc, link) : null;
+		const isConvertible = destination !== null || isMarkdown;
+
 		const matchesExactSingleLink =
 			change.from === link.from && change.to === link.to;
+
+		const isDeleteChar =
+			userEvent === "emacs.deleteChar" ||
+			(userEvent === null || userEvent === undefined);
 
 		if (
 			matchesExactSingleLink &&
 			!isEmptyTextLink &&
+			isConvertible &&
 			!isKillLine &&
-			(userEvent === null || userEvent === undefined)
+			isDeleteChar
 		) {
 			// Programmatic selection deletion covering EXACTLY one full link span [link.from, link.to).
 			// This occurs when single-atom cursor navigation (like Emacs delete-char where goRight
 			// jumps across the hidden link decoration from link.from to link.to) is followed by
 			// replaceSelection("").
-			// Do NOT apply this when the selection extends to the line end (isKillLine), because
-			// Emacs kill-line is intended to kill all content from the cursor to line end.
-			// Redirect to delete the 1st visible display character (or last visible character if
-			// selection head is at link.from), converting bare wikilinks if applicable.
-			const destination = doc ? getBareWikiLinkDestination(doc, link) : null;
+			// ONLY apply this to convertible links (bare wikilinks or markdown links). For already-aliased
+			// wikilinks, a selection of the full link span is ALWAYS a whole-link/line delete (e.g. kill-line),
+			// NEVER a single-character delete.
+			// Do NOT apply this when the selection extends to the line end (isKillLine).
 			if (destination !== null) {
 				rewritten.push({
 					from: link.textFrom,
@@ -3809,6 +3817,7 @@ const clampSelectionDeleteFilter = EditorState.transactionFilter.of((tr) => {
 	const startSelFrom = tr.startState.selection.main.from;
 	const startSelTo = tr.startState.selection.main.to;
 	const isKillLine =
+		tr.isUserEvent("emacs.killLine") ||
 		pendingExpansion !== null ||
 		(startSelFrom < startSelTo &&
 			links.some(

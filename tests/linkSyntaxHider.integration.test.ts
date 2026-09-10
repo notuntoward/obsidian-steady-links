@@ -3907,6 +3907,174 @@ describe("Integration: deleting a fully-selected link", () => {
 			view.dispatch({ selection: EditorSelection.cursor(12) });
 			expect(view.state.selection.main.head).toBe(14); // lineEnd = h.to
 		});
+		it("tests kill-line with emulateEmacsKillLineWithSelection across all lines", () => {
+			const doc = `[[test-notes/Note-01.md|First Link]] with some text
+
+[[test-notes/Note-02.md|Middle Standalone Link]]
+
+[[test-notes/Note-02b.md|Middle Link With Trailing]] trailing
+
+[[BareMiddleLink]]
+
+[Markdown Alone](https://example.com)
+
+- [[test-notes/Note-03.md|List Start Link]] followed by a long sentence that soft wraps across multiple lines to test soft wrapping and lists together.
+
+- Indented bullet with [[test-notes/Note-04.md|Indented Link]]
+
+[[test-notes/Note-05.md|Standalone Line Link]]
+`;
+			const lines = doc.split("\n");
+			lines.forEach((lineText, lineIdx) => {
+				if (!lineText.includes("[")) return;
+				const lineFrom = doc.indexOf(lineText);
+
+				// Test 1: From column 0 (line start) -> deletes entire line
+				let v1 = createTestView(doc, lineFrom);
+				const res1 = emulateEmacsKillLineWithSelection(v1);
+				expect(res1.deleted).toBe(true);
+				expect(v1.state.doc.line(lineIdx + 1).text).toBe("");
+				v1.destroy();
+
+				// Test 2: From link.textFrom (1st visible char of the link)
+				const aliasIdx = lineText.indexOf("|");
+				const bareIdx = lineText.indexOf("[[");
+				const mdIdx = lineText.indexOf("[");
+				let textFrom = -1;
+				let prefixBefore = "";
+
+				if (aliasIdx !== -1) {
+					textFrom = lineFrom + aliasIdx + 1;
+					prefixBefore = lineText.slice(0, lineText.indexOf("[["));
+				} else if (bareIdx !== -1) {
+					textFrom = lineFrom + bareIdx + 2;
+					prefixBefore = lineText.slice(0, bareIdx);
+				} else if (mdIdx !== -1) {
+					textFrom = lineFrom + mdIdx + 1;
+					prefixBefore = lineText.slice(0, mdIdx);
+				}
+
+				if (textFrom !== -1) {
+					let v2 = createTestView(doc, textFrom);
+					const res2 = emulateEmacsKillLineWithSelection(v2);
+					expect(res2.deleted).toBe(true);
+					expect(v2.state.doc.line(lineIdx + 1).text).toBe(prefixBefore);
+					v2.destroy();
+				}
+			});
+		});
+
+		it("emacs.killLine userEvent cleanly deletes standalone bare wikilink from column 0", () => {
+			const doc = "[[BareLink]]";
+			view = createTestView(doc, 0);
+
+			view.dispatch({
+				selection: EditorSelection.range(0, doc.length),
+			});
+			view.dispatch({
+				changes: { from: 0, to: doc.length, insert: "" },
+				selection: EditorSelection.cursor(0),
+				annotations: Transaction.userEvent.of("emacs.killLine"),
+			});
+
+			expect(view.state.doc.toString()).toBe("");
+		});
+
+		it("emacs.killLine userEvent cleanly deletes standalone aliased wikilink from column 0", () => {
+			const doc = "[[Note|Alias]]";
+			view = createTestView(doc, 0);
+
+			view.dispatch({
+				selection: EditorSelection.range(0, doc.length),
+			});
+			view.dispatch({
+				changes: { from: 0, to: doc.length, insert: "" },
+				selection: EditorSelection.cursor(0),
+				annotations: Transaction.userEvent.of("emacs.killLine"),
+			});
+
+			expect(view.state.doc.toString()).toBe("");
+		});
+
+		it("kill-line at visible start of line-start link suppresses follow-up editor.setCursor with userEvent select", () => {
+			const doc = [
+				"[[test-notes/Note-01.md|First Link]] with some text",
+				"",
+				"Middle item [[test-notes/Note-02.md|Middle Link]] trailing",
+			].join("\n");
+
+			// Cursor sits visually on 'First Link' (textFrom = 24)
+			const textFrom = 24;
+			view = createTestView(doc, textFrom);
+
+			const line0 = view.state.doc.lineAt(textFrom);
+			// Emacs kill-line: set selection to line end
+			view.dispatch({
+				selection: EditorSelection.range(textFrom, line0.to),
+			});
+
+			// Emacs kill-line: dispatch delete with "emacs.killLine"
+			const sel = view.state.selection.main;
+			view.dispatch({
+				changes: { from: sel.from, to: sel.to, insert: "" },
+				selection: EditorSelection.cursor(sel.from),
+				annotations: Transaction.userEvent.of("emacs.killLine"),
+			});
+
+			expect(view.state.doc.line(1).text).toBe("");
+			expect(view.state.selection.main.head).toBe(0);
+
+			// Emacs kill-line: follow-up disableSelection
+			view.dispatch({
+				selection: EditorSelection.cursor(view.state.selection.main.head),
+			});
+
+			// Emacs kill-line (unpatched): follow-up editor.setCursor(originalCursor)
+			// where originalCursor was textFrom (24), dispatched without userEvent
+			view.dispatch({
+				selection: EditorSelection.cursor(textFrom),
+			});
+
+			// The cursor must remain at offset 0 (line 0) and NOT jump to Middle Link on line 2!
+			expect(view.state.selection.main.head).toBe(0);
+		});
+
+		it("arrow navigation after kill-line without setCursor is not blocked", () => {
+			const doc = "[[test-notes/Note-01.md|First Link]] with some text\nsecond line";
+			view = createTestView(doc, 24);
+			const line0 = view.state.doc.lineAt(24);
+			view.dispatch({ selection: EditorSelection.range(24, line0.to) });
+			const sel = view.state.selection.main;
+			view.dispatch({
+				changes: { from: sel.from, to: sel.to, insert: "" },
+				selection: EditorSelection.cursor(sel.from),
+				annotations: Transaction.userEvent.of("emacs.killLine"),
+			});
+			expect(view.state.selection.main.head).toBe(0);
+
+			// User moves cursor down to second line (offset 1)
+			view.dispatch({
+				selection: EditorSelection.cursor(1),
+				annotations: Transaction.userEvent.of("select"),
+			});
+			expect(view.state.selection.main.head).toBe(1);
+		});
+
+		it("emacs.deleteChar userEvent converts bare wikilink and deletes 1st char", () => {
+			const doc = "[[BareLink]]";
+			view = createTestView(doc, 0);
+
+			view.dispatch({
+				selection: EditorSelection.single(0, doc.length),
+			});
+			view.dispatch({
+				changes: { from: 0, to: doc.length, insert: "" },
+				selection: EditorSelection.cursor(0),
+				annotations: Transaction.userEvent.of("emacs.deleteChar"),
+			});
+
+			expect(view.state.doc.toString()).toBe("[[BareLink|areLink]]");
+		});
 	});
 });
 
