@@ -4075,6 +4075,41 @@ describe("Integration: deleting a fully-selected link", () => {
 
 			expect(view.state.doc.toString()).toBe("[[BareLink|areLink]]");
 		});
+
+		it("kill-line deletes entire standalone aliased wikilink from column 0 without userEvent", () => {
+			const doc = "[[test-notes/Note-05.md|Standalone Line Link]]";
+			view = createTestView(doc, 0);
+
+			const res = emulateEmacsKillLineWithSelection(view);
+			expect(res.deleted).toBe(true);
+			expect(view.state.doc.toString()).toBe("");
+		});
+
+		it("kill-line deletes entire standalone aliased wikilink from textFrom without userEvent", () => {
+			const doc = "[[test-notes/Note-05.md|Standalone Line Link]]";
+			const textFrom = doc.indexOf("Standalone");
+			view = createTestView(doc, textFrom);
+
+			const res = emulateEmacsKillLineWithSelection(view);
+			expect(res.deleted).toBe(true);
+			expect(view.state.doc.toString()).toBe("");
+		});
+
+		it("kill-line deletes entire standalone aliased wikilink from column 0 with emacs.killLine", () => {
+			const doc = "[[test-notes/Note-05.md|Standalone Line Link]]";
+			view = createTestView(doc, 0);
+
+			view.dispatch({
+				selection: EditorSelection.range(0, doc.length),
+			});
+			view.dispatch({
+				changes: { from: 0, to: doc.length, insert: "" },
+				selection: EditorSelection.cursor(0),
+				annotations: Transaction.userEvent.of("emacs.killLine"),
+			});
+
+			expect(view.state.doc.toString()).toBe("");
+		});
 	});
 });
 

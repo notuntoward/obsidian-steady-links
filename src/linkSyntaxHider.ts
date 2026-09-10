@@ -1353,6 +1353,7 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 			update.view.dispatch({
 				selection: EditorSelection.cursor(suppressedResetPos),
 				scrollIntoView: true,
+				userEvent: "select.steadyLinks",
 				effects: [
 					suppressSameLineCursorResetEffect.of(null),
 					suppressSameLineCursorResetAnchorEffect.of(null),
@@ -1401,6 +1402,7 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 				update.view.dispatch({
 					selection: EditorSelection.cursor(suppressedResetPos),
 					scrollIntoView: true,
+					userEvent: "select.steadyLinks",
 					effects: [
 						suppressSameLineCursorResetEffect.of(null),
 						suppressSameLineCursorResetAnchorEffect.of(null),
@@ -1422,6 +1424,7 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 			update.view.dispatch({
 				selection: EditorSelection.cursor(suppressedResetPos),
 				scrollIntoView: true,
+				userEvent: "select.steadyLinks",
 				effects: [
 					suppressSameLineCursorResetEffect.of(null),
 					suppressSameLineCursorResetAnchorEffect.of(null),
@@ -2083,6 +2086,18 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 		view.dispatch({
 			selection: sel,
 			scrollIntoView: true,
+			// Tag every purely-corrective dispatch from this listener with a
+			// recognizable userEvent so cooperating plugins (e.g. Visible
+			// Cursor's navCorrection) can distinguish "Steady Links just
+			// repositioned the cursor onto/off of hidden link syntax" from a
+			// genuine user-driven cursor jump they should react to. Visible
+			// Cursor already special-cases and ignores "select.steadyLinks"
+			// (see its navCorrection early-return), but Steady Links never
+			// emitted it, so the two plugins could still fight over the
+			// cursor position around hidden link syntax (most visibly with
+			// the block cursor style, whose navCorrection logic is the only
+			// one that dispatches its own corrective selection changes).
+			userEvent: "select.steadyLinks",
 			effects: effects.length > 0 ? effects : undefined,
 		});
 	} finally {
@@ -3501,6 +3516,16 @@ function rewriteDeleteChangeForLinks(
 				});
 			}
 		} else if (deletesEntireDisplay || coversEmptyLink) {
+			// Whenever the deleted range covers a link's entire visible text
+			// (deletesEntireDisplay) or its entire empty-text placeholder
+			// (coversEmptyLink), the whole link — including its hidden
+			// syntax — is removed. This applies unconditionally, regardless
+			// of which command produced the delete: kill-line, Backspace,
+			// Delete, or any other selection-delete that happens to span the
+			// full visible text. isKillLine is intentionally NOT part of this
+			// condition: deletesEntireDisplay/coversEmptyLink already imply
+			// change.from <= link.textFrom && change.to >= link.textTo, so a
+			// kill-line-only variant of this branch can never fire on its own.
 			rewritten.push({ from: link.from, to: link.to, insert: "" });
 		} else if (overlapsDisplay) {
 			// A bare wikilink's visible text is its destination. Deleting only
@@ -3813,18 +3838,26 @@ const clampSelectionDeleteFilter = EditorState.transactionFilter.of((tr) => {
 
 	if (!changesInteractWithLinks(deleteChanges, links)) return tr;
 
+	// isKillLine only needs to disambiguate ONE thing: whether a
+	// selection-delete that happens to exactly match a convertible link's
+	// full raw span [link.from, link.to) is a genuine kill-line/selection
+	// delete of that whole link (which must fully delete the link), or a
+	// single-atom programmatic delete-char (which must convert the bare
+	// link to an aliased one and remove just one character). Every other
+	// "delete the whole visible text" scenario is already handled
+	// unconditionally by deletesEntireDisplay/coversEmptyLink regardless of
+	// which command produced the delete — see the comment at that check.
+	//
+	// Both explicit signals below come directly from Steady Links itself
+	// (rather than guessing from selection shape):
+	//   - "emacs.killLine": the Emacs plugin's own userEvent tag on its
+	//     kill-line delete dispatch.
+	//   - pendingExpansion: set by expandSelectionToLeadingSyntaxFilter when
+	//     Steady Links itself just expanded the selection to include a
+	//     link's full leading syntax, which only happens for whole-link
+	//     selection operations, never for a single-atom delete-char.
 	const pendingExpansion = tr.startState.field(pendingExternalSelectionExpansionField, false);
-	const startSelFrom = tr.startState.selection.main.from;
-	const startSelTo = tr.startState.selection.main.to;
-	const isKillLine =
-		tr.isUserEvent("emacs.killLine") ||
-		pendingExpansion !== null ||
-		(startSelFrom < startSelTo &&
-			links.some(
-				(l) =>
-					startSelFrom === l.textFrom &&
-					startSelTo === tr.startState.doc.lineAt(l.from).to
-			));
+	const isKillLine = tr.isUserEvent("emacs.killLine") || pendingExpansion !== null;
 
 	// Rebuild the deletion changes. For selection deletes, preserve Gmail-style
 	// visible semantics. For non-selection multi-char deletes, keep the old
@@ -4057,7 +4090,7 @@ const expandSelectionToLeadingSyntaxFilter = EditorState.transactionFilter.of((t
 	// selection to include the full raw link text (all hidden syntax) so
 	// the clipboard and any external consumer sees the complete link.
 	for (const link of links) {
-		const startsAtLinkEdge = sel.from === link.from || sel.from === link.textFrom;
+		const startsAtLinkEdge = sel.from >= link.from && sel.from <= link.textFrom;
 		if (!startsAtLinkEdge) continue;
 		if (sel.to <= link.textFrom) continue;
 		// Do not expand single-character selection moves within visible text
