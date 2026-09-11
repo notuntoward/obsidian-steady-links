@@ -1,4 +1,4 @@
-import { App, TFile } from "obsidian";
+import { App, MarkdownRenderChild, MarkdownRenderer, TFile } from "obsidian";
 import { SuggestionItem } from "./types";
 import { isUrl } from "./utils";
 import { parseSuggestionQuery } from "./suggestionQuery";
@@ -436,6 +436,32 @@ function highlightMatches(el: HTMLElement, text: string, query: string): void {
 	}
 }
 
+function highlightRenderedMatches(root: HTMLElement, query: string): void {
+	if (!query) return;
+	const needle = query.toLowerCase();
+	const wrapFirstMatch = (parent: Node): boolean => {
+		for (const child of Array.from(parent.childNodes)) {
+			if (child.nodeType === Node.TEXT_NODE) {
+				const text = child.nodeValue ?? "";
+				const index = text.toLowerCase().indexOf(needle);
+				if (index === -1) continue;
+				const matchSpan = document.createElement("span");
+				matchSpan.className = "suggestion-highlight";
+				matchSpan.textContent = text.substring(index, index + query.length);
+				const after = (child as Text).splitText(index);
+				after.nodeValue = (after.nodeValue ?? "").substring(query.length);
+				parent.insertBefore(matchSpan, after);
+				return true;
+			}
+			if (child.nodeType === Node.ELEMENT_NODE && wrapFirstMatch(child)) {
+				return true;
+			}
+		}
+		return false;
+	};
+	wrapFirstMatch(root);
+}
+
 export function renderSuggestionItem(
 	item: SuggestionItem,
 	el: HTMLElement,
@@ -477,10 +503,13 @@ export function renderSuggestionItem(
 		}
 	} else if (item.type === "block") {
 		const blockText = item.blockText || "";
-		const displayText =
-			blockText.length > 100 ? blockText.substring(0, 100) + "..." : blockText;
-		const titleEl = content.createDiv({ cls: "suggestion-title" });
-		highlightMatches(titleEl, displayText, searchTerm);
+		const titleEl = content.createDiv({
+			cls: "suggestion-title steady-links-block-preview",
+		});
+		const sourcePath = item.file?.path ?? app.workspace.getActiveFile()?.path ?? "";
+		const renderChild = new MarkdownRenderChild(titleEl);
+		void MarkdownRenderer.render(app, blockText, titleEl, sourcePath, renderChild);
+		highlightRenderedMatches(titleEl, searchTerm);
 
 		if (item.blockId) {
 			content.createDiv({

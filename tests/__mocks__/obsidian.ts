@@ -908,6 +908,31 @@ export class MarkdownView {
 	}
 }
 
+// ============================================================================
+// MarkdownRenderer
+// ============================================================================
+
+export class MarkdownRenderChild {
+	containerEl: HTMLElement;
+
+	constructor(containerEl: HTMLElement) {
+		this.containerEl = containerEl;
+	}
+}
+
+export class MarkdownRenderer {
+	static render(
+		_app: unknown,
+		markdown: string,
+		el: HTMLElement,
+		_sourcePath: string,
+		_component: unknown
+	): Promise<void> {
+		el.textContent = markdown;
+		return Promise.resolve();
+	}
+}
+
 export class Scope {
 	keys: Array<{ modifiers: string[]; key: string; func: (e?: any) => any }> = [];
 
