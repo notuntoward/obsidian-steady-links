@@ -272,10 +272,12 @@ export class EditLinkModal extends Modal {
 				this.mdBtnEl.setAttribute("tabindex", wiki ? "-1" : "0");
 			};
 
-			this.wikiBtnEl.addEventListener("click", () => activate(true));
-			this.mdBtnEl.addEventListener("click", () => activate(false));
-			this.eventListeners.push([this.wikiBtnEl, "click", () => activate(true)]);
-			this.eventListeners.push([this.mdBtnEl, "click", () => activate(false)]);
+			const wikiClickHandler = () => activate(true);
+			const mdClickHandler = () => activate(false);
+			this.wikiBtnEl.addEventListener("click", wikiClickHandler);
+			this.mdBtnEl.addEventListener("click", mdClickHandler);
+			this.eventListeners.push([this.wikiBtnEl, "click", wikiClickHandler]);
+			this.eventListeners.push([this.mdBtnEl, "click", mdClickHandler]);
 
 			// Keyboard behaviour for each button:
 			//   Space      — cycle to the other type (mirrors embed toggle behaviour)
