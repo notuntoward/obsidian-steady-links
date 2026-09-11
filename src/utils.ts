@@ -1,4 +1,4 @@
-import { TFile, Pos } from "obsidian";
+import { TFile } from "obsidian";
 
 /**
  * Check if a destination string is valid for a WikiLink format

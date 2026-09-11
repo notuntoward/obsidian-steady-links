@@ -1,4 +1,4 @@
-import { TFile, Pos } from "obsidian";
+import { TFile } from "obsidian";
 
 /**
  * Represents a link (WikiLink or Markdown) with its meta-information.
