@@ -324,7 +324,12 @@ describe("getAllHeadings", () => {
 		expect(results).toEqual([]);
 	});
 
-	it("limits results to 50", () => {
+	it("does not cap results — stock Obsidian's own ## global-heading search has no cap either", () => {
+		// Regression guard: this function previously capped results at 50,
+		// silently dropping real headings once the vault had more than 50 —
+		// exactly the "many are missing" real-Obsidian bug report this test
+		// guards against. Stock's own SuggestManager.getGlobalHeadingSuggestions
+		// iterates every cached file with no result limit at all.
 		const file = tf({ path: "note.md" });
 		app.vault.addFile(file);
 		const headings = Array.from({ length: 60 }, (_, i) => ({
@@ -335,7 +340,24 @@ describe("getAllHeadings", () => {
 		app.metadataCache.setFileCache("note.md", { headings });
 
 		const results = getAllHeadings(app as any);
-		expect(results.length).toBeLessThanOrEqual(50);
+		expect(results.length).toBe(60);
+	});
+
+	it("returns headings across many files with no total cap", () => {
+		for (let f = 0; f < 10; f++) {
+			const path = `note${f}.md`;
+			app.vault.addFile(tf({ path }));
+			app.metadataCache.setFileCache(path, {
+				headings: Array.from({ length: 10 }, (_, i) => ({
+					heading: `note${f}-H${i}`,
+					level: 1,
+					position: {},
+				})),
+			});
+		}
+
+		const results = getAllHeadings(app as any);
+		expect(results.length).toBe(100);
 	});
 });
 

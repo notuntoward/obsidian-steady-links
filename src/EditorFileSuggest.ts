@@ -68,17 +68,31 @@ export class EditorFileSuggest extends EditorSuggest<SuggestionItem> {
 			// in the unfiltered file list), matching stock's
 			// `suggestManager.mode === "file"` gate.
 			this.scope.register(null, "#", (evt?: KeyboardEvent) => {
+				const gate = this.hasTypedPlainFileQuery();
+				debugLog("'#' keydown", {
+					isComposing: evt?.isComposing,
+					hasContext: !!this.context,
+					query: this.context?.query,
+					parsedType: this.context ? parseSuggestionQuery(this.context.query).type : undefined,
+					gate,
+				});
 				if (evt?.isComposing) return true;
-				if (!this.hasTypedPlainFileQuery()) return true;
-				debugLog("'#' pressed", { query: this.context?.query });
+				if (!gate) return true;
 				return this.consumeIfHandled(evt, () => this.completeSelection("#"));
 			});
 
 			// "^": same as "#", but switches into block-reference mode.
 			this.scope.register(null, "^", (evt?: KeyboardEvent) => {
+				const gate = this.hasTypedPlainFileQuery();
+				debugLog("'^' keydown", {
+					isComposing: evt?.isComposing,
+					hasContext: !!this.context,
+					query: this.context?.query,
+					parsedType: this.context ? parseSuggestionQuery(this.context.query).type : undefined,
+					gate,
+				});
 				if (evt?.isComposing) return true;
-				if (!this.hasTypedPlainFileQuery()) return true;
-				debugLog("'^' pressed", { query: this.context?.query });
+				if (!gate) return true;
 				return this.consumeIfHandled(evt, () => this.completeSelection("^"));
 			});
 
@@ -115,6 +129,7 @@ export class EditorFileSuggest extends EditorSuggest<SuggestionItem> {
 	 */
 	private consumeIfHandled(evt: KeyboardEvent | undefined, action: () => boolean): boolean {
 		const handled = action();
+		debugLog("consumeIfHandled result", { handled });
 		if (!handled) return true;
 		if (evt) {
 			evt.preventDefault();

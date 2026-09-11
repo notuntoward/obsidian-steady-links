@@ -292,6 +292,16 @@ export function getHeadingsInCurrentFile(app: App): SuggestionItem[] {
 	}));
 }
 
+/**
+ * Search headings across every markdown file in the vault, matching stock
+ * Obsidian's own `##` global-heading search (`SuggestManager.
+ * getGlobalHeadingSuggestions`), which iterates every cached file and
+ * returns every matching heading with no result cap. This must stay
+ * uncapped for the same reason: capping it (this function previously
+ * stopped at 50 results) silently drops real headings from a `##` search
+ * the moment the vault has more than 50 headings, which looks like most of
+ * the vault's headings have simply vanished.
+ */
 export function getAllHeadings(app: App): SuggestionItem[] {
 	const files = app.vault.getMarkdownFiles();
 	const all: SuggestionItem[] = [];
@@ -308,7 +318,7 @@ export function getAllHeadings(app: App): SuggestionItem[] {
 			});
 		}
 	}
-	return all.slice(0, 50);
+	return all;
 }
 
 export function getHeadingsInFile(fileName: string, app: App, headingQuery = ""): SuggestionItem[] {
@@ -505,12 +515,19 @@ export function renderSuggestionItem(
 		}
 	}
 
-	// Add hint at bottom of suggestion container dynamically
+	// Add hint at bottom of suggestion container dynamically. Stock
+	// Obsidian's own suggest (SuggestManager.getInstructions()) only shows
+	// the "#"/"^"/"|" mode-switch hints while the query is still a plain
+	// file search; once the query has already switched into heading/block/
+	// alias mode (e.g. "##", "#Heading", "^block"), it shows "↵ to accept"
+	// instead, since typing "#"/"^" again no longer switches anything.
+	// Match that exactly rather than always showing the file-mode hints.
 	const container = el.closest(".suggestion-container");
 	if (container) {
 		let hintEl = container.querySelector(".steady-links-hint");
-		if (!hintEl) {
-			hintEl = container.createDiv({ cls: "steady-links-hint" });
+		if (hintEl) hintEl.remove();
+		hintEl = container.createDiv({ cls: "steady-links-hint" });
+		if (parsed.type === "file") {
 			hintEl.createSpan({ text: "Type ", cls: "steady-links-hint-label" });
 			hintEl.createSpan({ text: "#", cls: "steady-links-hint-key" });
 			hintEl.createSpan({ text: " to link heading   Type ", cls: "steady-links-hint-label" });
@@ -518,6 +535,9 @@ export function renderSuggestionItem(
 			hintEl.createSpan({ text: " to link blocks   Type ", cls: "steady-links-hint-label" });
 			hintEl.createSpan({ text: "|", cls: "steady-links-hint-key" });
 			hintEl.createSpan({ text: " to change display text", cls: "steady-links-hint-label" });
+		} else {
+			hintEl.createSpan({ text: "↵", cls: "steady-links-hint-key" });
+			hintEl.createSpan({ text: " to accept", cls: "steady-links-hint-label" });
 		}
 	}
 }

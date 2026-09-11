@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
 	findMarkdownLinkSyntaxRanges,
 	findWikiLinkSyntaxRanges,
+	findShortenedWikiLinkRanges,
 	correctCursorPos,
 	listContinuation,
 	findLinkEndAtPos,
@@ -300,6 +301,93 @@ describe("findWikiLinkSyntaxRanges", () => {
 			expect(ranges).toHaveLength(2);
 			expect(ranges[0]).toEqual({ from: 0, to: 15, side: "leading" }); // "[[Note#Heading|"
 			expect(ranges[1]).toEqual({ from: 20, to: 22, side: "trailing" }); // "]]"
+		});
+
+		it("does not hide any part of an in-progress ## global-heading suggest query", () => {
+			// Regression guard for a real-Obsidian bug: with shortenHeadingLinks
+			// enabled, wikiLinkVisibleTextOffset("##", options) previously
+			// computed an offset of 1 (treating the first "#" as the marker to
+			// hide and the second "#" as real heading text to keep visible),
+			// hiding exactly the first "#" and leaving only "[[#]]" on screen
+			// while the user was still typing "[[##" — even though the
+			// underlying document text was correctly "[[##]]" the whole time.
+			const ranges = findWikiLinkSyntaxRanges("[[##]]", 0, {
+				shortenHeadingLinks: true,
+			});
+			expect(ranges).toHaveLength(0);
+		});
+
+		it("does not hide any part of an in-progress [[#heading]] suggest query", () => {
+			const ranges = findWikiLinkSyntaxRanges("[[#]]", 0, {
+				shortenHeadingLinks: true,
+			});
+			expect(ranges).toHaveLength(0);
+		});
+
+		it("does not hide any part of an in-progress [[Note#heading]] suggest query", () => {
+			const ranges = findWikiLinkSyntaxRanges("[[Note#]]", 0, {
+				shortenHeadingLinks: true,
+			});
+			expect(ranges).toHaveLength(0);
+		});
+
+		it("does not hide any part of an in-progress [[Note^block]] suggest query", () => {
+			const ranges = findWikiLinkSyntaxRanges("[[Note^]]", 0, {
+				shortenHeadingLinks: true,
+			});
+			expect(ranges).toHaveLength(0);
+		});
+	});
+
+	// ── findShortenedWikiLinkRanges: the SEPARATE, off-cursor-line variant of
+	// the shortenHeadingLinks/shortenFileLinks hiding above. This function
+	// previously lacked the same incomplete-link guard that
+	// findWikiLinkSyntaxRanges has always had, which caused the exact same
+	// "[[##]]" -> "[[#]]" regression, but on lines the cursor is NOT touching
+	// (off-cursor lines never get the raw "[[" / "]]" hiding from
+	// computeHiddenRanges, so this function is the ONLY thing controlling
+	// their shortened appearance).
+	describe("findShortenedWikiLinkRanges", () => {
+		function stateWithDoc(doc: string): EditorState {
+			return EditorState.create({ doc });
+		}
+
+		it("does not hide any part of an in-progress ## global-heading suggest query", () => {
+			const state = stateWithDoc("[[##]]");
+			const ranges = findShortenedWikiLinkRanges(state, [1], { shortenHeadingLinks: true });
+			expect(ranges).toHaveLength(0);
+		});
+
+		it("does not hide any part of an in-progress [[#heading]] suggest query", () => {
+			const state = stateWithDoc("[[#]]");
+			const ranges = findShortenedWikiLinkRanges(state, [1], { shortenHeadingLinks: true });
+			expect(ranges).toHaveLength(0);
+		});
+
+		it("does not hide any part of an in-progress [[Note#]] suggest query", () => {
+			const state = stateWithDoc("[[Note#]]");
+			const ranges = findShortenedWikiLinkRanges(state, [1], { shortenHeadingLinks: true });
+			expect(ranges).toHaveLength(0);
+		});
+
+		it("does not hide any part of an in-progress [[Note^]] suggest query", () => {
+			const state = stateWithDoc("[[Note^]]");
+			const ranges = findShortenedWikiLinkRanges(state, [1], { shortenHeadingLinks: true });
+			expect(ranges).toHaveLength(0);
+		});
+
+		it("still hides the note path and # for a completed [[2023-08-19#Outliner plugin]] reference", () => {
+			const state = stateWithDoc("[[2023-08-19#Outliner plugin]]");
+			const ranges = findShortenedWikiLinkRanges(state, [1], { shortenHeadingLinks: true });
+			expect(ranges).toHaveLength(1);
+			expect(ranges[0]).toEqual({ from: 2, to: 13, side: "leading" }); // "2023-08-19#"
+		});
+
+		it("still hides the parent folder path for a completed [[folder/Note]] reference", () => {
+			const state = stateWithDoc("[[folder/Note]]");
+			const ranges = findShortenedWikiLinkRanges(state, [1], { shortenFileLinks: true });
+			expect(ranges).toHaveLength(1);
+			expect(ranges[0]).toEqual({ from: 2, to: 9, side: "leading" }); // "folder/"
 		});
 	});
 

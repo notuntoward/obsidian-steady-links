@@ -211,6 +211,104 @@ describe("renderSuggestionItem — heading items", () => {
 });
 
 // ---------------------------------------------------------------------------
+// renderSuggestionItem — mode-aware hint bar
+//
+// Stock Obsidian's own suggest (SuggestManager.getInstructions()) only shows
+// the "#"/"^"/"|" mode-switch hints while the query is still a plain file
+// search; once the query has already switched into heading/block/alias mode
+// it shows "↵ to accept" instead. This plugin previously showed the file-mode
+// hints unconditionally, which is a visible, reported mismatch from stock
+// (e.g. showing "Type # to link heading" while already inside a "##" global
+// heading search, where typing "#" again does nothing useful).
+// ---------------------------------------------------------------------------
+
+describe("renderSuggestionItem — mode-aware hint bar", () => {
+	let app: App;
+
+	beforeEach(() => {
+		app = new App();
+	});
+
+	function renderInContainer(item: SuggestionItem, query: string): HTMLElement {
+		const container = document.createElement("div");
+		container.className = "suggestion-container";
+		const el = document.createElement("div");
+		container.appendChild(el);
+		renderSuggestionItem(item, el, query, app as any);
+		return container;
+	}
+
+	it("shows the #/^/| hints for a plain file query", () => {
+		const item: SuggestionItem = { type: "file", basename: "note", name: "note.md", extension: "md" };
+		const container = renderInContainer(item, "note");
+		const hint = container.querySelector(".steady-links-hint");
+		expect(hint?.textContent).toContain("to link heading");
+		expect(hint?.textContent).toContain("to link blocks");
+		expect(hint?.textContent).toContain("to change display text");
+		expect(hint?.textContent).not.toContain("to accept");
+	});
+
+	it("shows '↵ to accept' instead of the file-mode hints for a global heading (##) query", () => {
+		const item: SuggestionItem = { type: "heading", heading: "Intro", level: 1 };
+		const container = renderInContainer(item, "##Intro");
+		const hint = container.querySelector(".steady-links-hint");
+		expect(hint?.textContent).toContain("to accept");
+		expect(hint?.textContent).not.toContain("to link heading");
+	});
+
+	it("shows '↵ to accept' for a current-file heading (#heading) query", () => {
+		const item: SuggestionItem = { type: "heading", heading: "Intro", level: 1 };
+		const container = renderInContainer(item, "#Intro");
+		const hint = container.querySelector(".steady-links-hint");
+		expect(hint?.textContent).toContain("to accept");
+		expect(hint?.textContent).not.toContain("to link heading");
+	});
+
+	it("shows '↵ to accept' for a block (^block) query", () => {
+		const item: SuggestionItem = { type: "block", blockId: "abc123", blockText: "text" };
+		const container = renderInContainer(item, "^abc");
+		const hint = container.querySelector(".steady-links-hint");
+		expect(hint?.textContent).toContain("to accept");
+		expect(hint?.textContent).not.toContain("to link blocks");
+	});
+
+	it("shows '↵ to accept' for a display-text (file|alias) query", () => {
+		const item: SuggestionItem = { type: "alias", alias: "My Alias", basename: "note" };
+		const container = renderInContainer(item, "note|My");
+		const hint = container.querySelector(".steady-links-hint");
+		expect(hint?.textContent).toContain("to accept");
+		expect(hint?.textContent).not.toContain("to change display text");
+	});
+
+	it("updates the hint when re-rendered with a different query, rather than freezing the first mode", () => {
+		const container = document.createElement("div");
+		container.className = "suggestion-container";
+		const fileEl = document.createElement("div");
+		container.appendChild(fileEl);
+		renderSuggestionItem(
+			{ type: "file", basename: "note", name: "note.md", extension: "md" },
+			fileEl,
+			"note",
+			app as any
+		);
+		expect(container.querySelector(".steady-links-hint")?.textContent).toContain("to link heading");
+
+		const headingEl = document.createElement("div");
+		container.appendChild(headingEl);
+		renderSuggestionItem(
+			{ type: "heading", heading: "Intro", level: 1 },
+			headingEl,
+			"##Intro",
+			app as any
+		);
+		// Only one hint bar should exist, and it must reflect the latest query.
+		const hints = container.querySelectorAll(".steady-links-hint");
+		expect(hints.length).toBe(1);
+		expect(hints[0].textContent).toContain("to accept");
+	});
+});
+
+// ---------------------------------------------------------------------------
 // renderSuggestionItem — block items
 // ---------------------------------------------------------------------------
 

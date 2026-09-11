@@ -563,6 +563,26 @@ function findMarkdownLinkSyntaxRanges(lineText: string, lineFrom: number): Hidde
 	return ranges;
 }
 
+/**
+ * True for a wikilink's inner content that is empty or still an in-progress
+ * suggest query (e.g. `[[]]`, `[[#]]`, `[[##]]`, `[[Note#]]`, `[[Note^]]`) —
+ * i.e. the user has typed a trigger character (`#`/`^`) but not yet a real
+ * heading/block name after it. Both wikilink-hiding paths in this file
+ * (raw `[[`/`]]` hiding in {@link findWikiLinkSyntaxRanges}, and the
+ * separate note-path-shortening ranges in {@link findShortenedWikiLinkRanges}
+ * used by the opt-in `shortenHeadingLinks`/`shortenFileLinks` settings) must
+ * treat this content as un-hideable, or they show raw link syntax and
+ * Obsidian's native `[[` suggest autocomplete triggers correctly for it.
+ */
+function isIncompleteWikiLinkContent(innerContent: string): boolean {
+	return (
+		innerContent === "" ||
+		innerContent.trim() === "" ||
+		innerContent.endsWith("#") ||
+		innerContent.endsWith("^")
+	);
+}
+
 function findWikiLinkSyntaxRanges(
 	lineText: string,
 	lineFrom: number,
@@ -586,12 +606,7 @@ function findWikiLinkSyntaxRanges(
 
 		// Skip empty or incomplete query wiki links (e.g. `[[]]`, `[[#]]`, `[[##]]`, `[[Note#]]`)
 		// so they render with full brackets and trigger native autocomplete triggers correctly.
-		if (
-			innerContent === "" ||
-			innerContent.trim() === "" ||
-			innerContent.endsWith("#") ||
-			innerContent.endsWith("^")
-		) {
+		if (isIncompleteWikiLinkContent(innerContent)) {
 			searchIdx = closeIdx + 2;
 			continue;
 		}
@@ -743,7 +758,14 @@ function findShortenedWikiLinkRanges(
 			const innerContent = lineText.substring(innerStart, closeIdx);
 			const pipeIdx = innerContent.lastIndexOf("|");
 
-			if (pipeIdx === -1 && innerContent.trim() !== "") {
+			// Skip empty or incomplete query wiki links (e.g. `[[]]`, `[[#]]`,
+			// `[[##]]`, `[[Note#]]`) — same guard as findWikiLinkSyntaxRanges.
+			// Without it, wikiLinkVisibleTextOffset("##", {shortenHeadingLinks:
+			// true}) computes an offset of 1 (treating the first "#" as the
+			// marker to hide and the second "#" as real heading text), hiding
+			// exactly the first "#" and leaving only "[[#]]" visible while the
+			// user is still typing "[[##" into an in-progress suggest query.
+			if (pipeIdx === -1 && !isIncompleteWikiLinkContent(innerContent)) {
 				const offset = wikiLinkVisibleTextOffset(innerContent, options);
 				if (offset > 0) {
 					ranges.push({
