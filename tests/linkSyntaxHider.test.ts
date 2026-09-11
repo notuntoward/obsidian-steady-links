@@ -533,6 +533,40 @@ describe("correctCursorPos", () => {
 		});
 	});
 
+	describe("trailing range — edit-driven cursor placement (not navigation)", () => {
+		// Regression test for a real-Obsidian bug: backspacing the "#" out of
+		// an in-progress "[[Note-05#^]]" query (deleting "^" then "#", one
+		// Backspace at a time) leaves "[[Note-05]]" — a link that just became
+		// *complete* — with the cursor naturally right after "Note-05" (the
+		// new trailing range's h.from). cursorCorrector remaps the pre-edit
+		// head through the delete with forward association specifically so
+		// it lines up with the post-edit head, which makes `pos >= oldPos`
+		// (movingRight) evaluate true here even though the user only
+		// backspaced in place — nothing navigated rightward. Without the
+		// isEditUpdate guard, this pushed the cursor past the newly-hidden
+		// "]]", which made the in-editor `[[` suggest see the cursor as
+		// outside the link and close (and a subsequent "^" keystroke land
+		// outside the link as plain text instead of completing it).
+		const doc = makeDoc("[[Note-05]]");
+		const hidden: HiddenRange[] = [
+			{ from: 0, to: 2, side: "leading" },
+			{ from: 9, to: 11, side: "trailing" },
+		];
+
+		it("does not advance past the trailing boundary when an edit lands the cursor there", () => {
+			const result = correctCursorPos(9, 9, hidden, doc as any, false, false, true);
+			expect(result).toBe(null);
+		});
+
+		it("still advances past the trailing boundary for a genuine right-arrow press (not an edit)", () => {
+			// Same position, but isEditUpdate is false (the default) and
+			// oldPos reflects real single-step navigation from inside the
+			// link text — this must still advance to h.to as before.
+			const result = correctCursorPos(9, 8, hidden, doc as any);
+			expect(result).toBe(11);
+		});
+	});
+
 	describe("trailing range — pointer (click)", () => {
 		it("should go to h.from when clicking inside trailing range", () => {
 			const result = correctCursorPos(15, 0, mdHidden, mdDoc as any, true);

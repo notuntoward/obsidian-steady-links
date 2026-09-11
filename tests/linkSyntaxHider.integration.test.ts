@@ -3087,6 +3087,57 @@ describe("Integration: DOM copy event focus handling", () => {
 		expect(view.state.selection.main.head).toBe(doc.indexOf("#") + 2);
 	});
 
+	it("backspacing '#' out of an in-progress '[[Note-05#^]]' query keeps the cursor inside the link, not past ']]'", () => {
+		// Regression test for a real-Obsidian bug reproduced via console
+		// logging: after Tab-completing "[[Note-05" and typing "#" then "^"
+		// (an in-progress heading-then-block suggest query, "[[Note-05#^]]"),
+		// pressing Backspace twice (removing "^" then "#") leaves
+		// "[[Note-05]]" — a link that just became *complete*. The cursor
+		// naturally lands right after "Note-05" (index 9), which is exactly
+		// h.from of the freshly-formed trailing "]]" hidden range.
+		//
+		// cursorCorrector remaps the pre-edit head through each Backspace's
+		// delete with forward association so it lines up with the new head,
+		// which made `movingRight` evaluate true for this second Backspace
+		// even though the user only deleted a character in place — nothing
+		// navigated rightward. That incorrectly pushed the cursor past the
+		// newly-hidden "]]" (to index 11), which in real Obsidian made the
+		// in-editor `[[` suggest see the cursor as outside the link and
+		// close, and the next typed "^" land outside the link as plain text
+		// ("[[Note-05]]^") instead of completing it to "[[Note-05^]]".
+		const doc = "[[Note-05#^]]";
+		const caretIdx = doc.indexOf("^"); // 10
+		view = createTestView(doc, caretIdx + 1); // cursor right after "^", at 11
+
+		// Backspace: delete "^" (index 10), leaving "[[Note-05#]]".
+		view.dispatch({
+			changes: { from: caretIdx, to: caretIdx + 1, insert: "" },
+			userEvent: "delete.backward",
+		});
+		expect(view.state.doc.toString()).toBe("[[Note-05#]]");
+		expect(view.state.selection.main.head).toBe(10);
+
+		// Backspace again: delete "#" (index 9), leaving "[[Note-05]]" — now
+		// a complete link. The cursor must stay right after "Note-05" (9),
+		// NOT get pushed past "]]" (11).
+		const hashIdx = view.state.doc.toString().indexOf("#");
+		view.dispatch({
+			changes: { from: hashIdx, to: hashIdx + 1, insert: "" },
+			userEvent: "delete.backward",
+		});
+		expect(view.state.doc.toString()).toBe("[[Note-05]]");
+		expect(view.state.selection.main.head).toBe(9);
+
+		// Retyping "^" must land inside the link ("[[Note-05^]]"), not
+		// outside it as plain text after "]]" ("[[Note-05]]^").
+		const insertPos = view.state.selection.main.head;
+		view.dispatch({
+			changes: { from: insertPos, to: insertPos, insert: "^" },
+			userEvent: "input.type",
+		});
+		expect(view.state.doc.toString()).toBe("[[Note-05^]]");
+	});
+
 	it("emacs.moveToBeginning on a list item with a link snaps to textFrom on first press", () => {
 		const doc = "- [ ] [[Note-01]]";
 		// Start cursor at the end of the line (index 17)

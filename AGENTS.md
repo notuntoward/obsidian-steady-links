@@ -498,6 +498,75 @@ when moving forward and could only be reached when moving backward.
 - Do NOT change `return h.to;` to `return Math.min(doc.length, h.to + 1);`.
 - Do NOT skip the space or character following `h.to` during forward navigation.
 
+## Critical: the trailing-boundary `movingRight` exit must not fire for edit-driven cursor placement
+
+The `movingRight` branch inside the trailing-range case of `correctCursorPos`
+(the same branch documented in the section above) MUST return `null`
+immediately when `isEditUpdate` (the `docChanged` flag passed in from
+`cursorCorrector`) is `true`, before it ever considers advancing to `h.to`:
+
+```typescript
+if (movingRight) {
+    if (isEditUpdate) {
+        return null;
+    }
+    // ...existing single-char-advance / line-end-move logic...
+}
+```
+
+### The bug pattern
+
+`cursorCorrector` remaps the pre-edit head through the transaction's changes
+with **forward association** (`update.changes.mapPos(oldHead, 1)`) so that,
+for a genuine edit, the remapped `oldPos` lines up with the post-edit `pos`.
+That is exactly what makes `movingRight` (`pos >= oldPos`) evaluate `true`
+for a plain in-place edit — not just for real rightward navigation.
+
+Backspacing the `#` out of an in-progress heading-then-block query like
+`[[Note-05#^]]` (deleting `^`, then `#`, one Backspace at a time) leaves
+`[[Note-05]]` — a link that just became *complete* for the first time — with
+the cursor naturally sitting right after `Note-05`, which is exactly `h.from`
+of the **freshly-formed** trailing `]]` hidden range. Without the
+`isEditUpdate` guard, `correctCursorPos` treated this the same as a real
+right-arrow press advancing out of the link's visible text, pushing the
+cursor past `]]` to `h.to`. In real Obsidian this made the in-editor `[[`
+suggest's `onTrigger` see the cursor as outside the link and close the
+popup, and the next keystroke (retyping `^`) landed outside the link as
+plain text (`[[Note-05]]^`) instead of completing it (`[[Note-05^]]`).
+
+This is the same class of bug as the `editor.transaction` atomicity section
+above (an edit-driven cursor position getting "corrected" as if it were
+navigation) but on the opposite side: that one was triggered by this
+plugin's own `EditorFileSuggest` completion; this one is triggered by a
+plain user Backspace that this plugin's own `linkSyntaxHider.ts` reacts to.
+
+### How to verify
+
+```
+"does not advance past the trailing boundary when an edit lands the cursor there"
+"still advances past the trailing boundary for a genuine right-arrow press (not an edit)"
+```
+
+in `tests/linkSyntaxHider.test.ts` test the guard directly against
+`correctCursorPos`. The full real-world sequence (Backspace, Backspace,
+retype `^`) is reproduced end-to-end in `tests/linkSyntaxHider.integration.test.ts`:
+
+```
+"backspacing '#' out of an in-progress '[[Note-05#^]]' query keeps the cursor inside the link, not past ']]'"
+```
+
+### What NOT to do
+
+- Do NOT remove the `isEditUpdate` check or move it after the
+  `isSingleCharInLinkAdvance` / `isLineEndMove` logic — arrow-key navigation
+  never sets `isEditUpdate`, so adding the check first cannot affect genuine
+  navigation; it only suppresses the incorrect edit-driven case.
+- Do NOT try to "fix" this by changing `cursorCorrector`'s
+  `update.changes.mapPos(oldHead, 1)` association instead — that forward
+  association is relied on elsewhere to keep `oldHead` meaningful after an
+  edit; the fix belongs in `correctCursorPos`, which is the one place that
+  actually decides whether a boundary crossing is worth correcting.
+
 ## Critical: EditorFileSuggest completions must set text and cursor atomically via editor.transaction
 
 `EditorFileSuggest.completeSelection()` (Tab/`#`/`^` in-editor `[[` completion)

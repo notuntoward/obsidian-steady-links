@@ -1127,6 +1127,23 @@ function correctCursorPos(
 			return h.from;
 		}
 		if (movingRight) {
+			// An edit (not navigation) that lands the cursor exactly at the
+			// trailing boundary must NOT advance past "]]". `oldPos` is
+			// remapped through the document change with forward association
+			// (see `update.changes.mapPos(oldHead, 1)` in cursorCorrector) so
+			// that it lines up with the new position — which means a
+			// Backspace that turns an in-progress link into a complete one
+			// (e.g. deleting the "#" out of "[[Note#^]]", leaving
+			// "[[Note]]" with the cursor right after "Note") makes
+			// `movingRight` true here even though nothing actually moved
+			// rightward from the user's perspective. Without this guard, the
+			// cursor gets pushed past the newly-hidden "]]", which makes the
+			// in-editor `[[` suggest see the cursor as outside the link and
+			// close — even though the user likely intends to keep typing
+			// right there (e.g. retyping "^" for a block reference).
+			if (isEditUpdate) {
+				return null;
+			}
 			// A single right-arrow press from inside the link's visible text
 			// into the trailing hidden range must always advance past the
 			// trailing syntax (to h.to) — this is the behaviour the line-ending
@@ -2314,6 +2331,12 @@ const deleteInLinkTextKeymap = keymap.of([
 			const head = sel.main.head;
 			const hidden = computeHiddenRanges(view.state);
 			const links = buildVisibleLinkSpans(hidden, view.state.doc);
+			debugLog("deleteInLinkTextKeymap Backspace", {
+				head,
+				doc: view.state.doc.toString(),
+				hiddenCount: hidden.length,
+				links: links.map((l) => ({ textFrom: l.textFrom, textTo: l.textTo, trailTo: l.trailing.to })),
+			});
 
 			for (const link of links) {
 				const textFrom = link.textFrom;
