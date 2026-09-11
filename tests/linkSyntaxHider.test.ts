@@ -558,6 +558,20 @@ describe("correctCursorPos", () => {
 			expect(result).toBe(null);
 		});
 
+		it("does not advance past the trailing boundary for a stationary no-edit update (Obsidian link-resolve debounce)", () => {
+			// Regression test for note-name completion oscillation: after the user
+			// finishes typing a note name that resolves to a real vault file,
+			// Obsidian dispatches a background metadata/decoration refresh with
+			// docChanged=false and no userEvent, cursor unchanged at h.from (textTo).
+			// Before the fix, `pos >= oldPos` evaluated true for pos===oldPos,
+			// falsely treating the stationary cursor as moving right and ejecting
+			// it past "]]" to h.to — causing the block cursor to oscillate between
+			// textFrom and textTo during note-name completion.
+			// isEditUpdate is false (no docChanged), pos === oldPos === h.from.
+			const result = correctCursorPos(9, 9, hidden, doc as any, false, false, false);
+			expect(result).toBe(null);
+		});
+
 		it("still advances past the trailing boundary for a genuine right-arrow press (not an edit)", () => {
 			// Same position, but isEditUpdate is false (the default) and
 			// oldPos reflects real single-step navigation from inside the

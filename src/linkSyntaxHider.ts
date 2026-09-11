@@ -1127,6 +1127,24 @@ function correctCursorPos(
 			return h.from;
 		}
 		if (movingRight) {
+			// A stationary cursor (pos === oldPos) at the trailing boundary
+			// h.from (= textTo, the position right before "]]" / "](url)") is
+			// already at a valid visible cursor stop and must not be advanced
+			// past the hidden syntax. `movingRight` is true here because the
+			// check is `pos >= oldPos`, but equal positions do not represent
+			// rightward navigation — they represent a no-movement update, e.g.
+			// Obsidian's link-resolution debounce: after the user finishes
+			// typing a note name that matches a real vault file, Obsidian
+			// dispatches a background metadata/decoration refresh with
+			// docChanged=false and no userEvent, cursor unchanged at h.from.
+			// Without this guard, that refresh falsely triggers the trailing-
+			// boundary advance to h.to, causing the block cursor to oscillate
+			// between textFrom and textTo during note-name completion (the
+			// visible symptom was the block cursor flicking to the start of
+			// the link text and back on every Obsidian link-resolve debounce).
+			if (pos === oldPos) {
+				return null;
+			}
 			// An edit (not navigation) that lands the cursor exactly at the
 			// trailing boundary must NOT advance past "]]". `oldPos` is
 			// remapped through the document change with forward association
