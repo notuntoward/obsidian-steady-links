@@ -484,17 +484,33 @@ export default class SteadyLinksPlugin extends Plugin {
 		// First, try to detect link at current cursor position using the editor API
 		let existingLink = detectLinkAtCursor(line, cursor.ch);
 
-		// If not found at cursor, try to find any link on the current line
-		// by iterating through potential positions (cursor might be pushed out)
+		// If not found exactly at the cursor, the cursor may have been pushed
+		// outside the link's raw range by a few characters (e.g. by Steady
+		// Links' own hidden-syntax cursor correction landing just off the
+		// link boundary). Search outward from the cursor, nearest position
+		// first, but keep the search BOUNDED:
+		//   - detectLinkAtCursor rescans the whole line on every call, so an
+		//     unbounded outward search is O(line length²) in the worst case
+		//     (a long line with no link near the cursor).
+		//   - An unbounded search can also walk all the way to a completely
+		//     unrelated link elsewhere on the same line and act on THAT one,
+		//     instead of correctly doing nothing when the cursor isn't
+		//     actually near any link.
+		// A "pushed out" cursor is only ever off by the width of a small
+		// number of hidden syntax characters, never by an arbitrarily large
+		// distance, so a small fixed cap is both safe and sufficient.
+		const MAX_PUSHED_OUT_CURSOR_SEARCH = 5;
 		if (!existingLink) {
-			// Try positions around the cursor
-			for (let offset = -5; offset <= 5; offset++) {
-				const testPos = cursor.ch + offset;
-				if (testPos >= 0 && testPos <= line.length) {
-					existingLink = detectLinkAtCursor(line, testPos);
-					if (existingLink) {
-						break;
-					}
+			for (let offset = 1; offset <= MAX_PUSHED_OUT_CURSOR_SEARCH; offset++) {
+				const before = cursor.ch - offset;
+				if (before >= 0) {
+					existingLink = detectLinkAtCursor(line, before);
+					if (existingLink) break;
+				}
+				const after = cursor.ch + offset;
+				if (after <= line.length) {
+					existingLink = detectLinkAtCursor(line, after);
+					if (existingLink) break;
 				}
 			}
 		}
