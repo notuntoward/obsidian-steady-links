@@ -522,6 +522,71 @@ export function renderSuggestionItem(
 	}
 }
 
+/**
+ * Compute the link destination (and, where applicable, a starting alias
+ * text) for a chosen suggestion item.
+ *
+ * This is the single shared implementation of the item-type branching that
+ * both `FileSuggest` (used inside the Edit Link modal's destination field)
+ * and `EditorFileSuggest` (used for in-editor `[[` autocomplete) previously
+ * duplicated verbatim in their own `selectSuggestion` methods. Assigns a
+ * new block ID to `item` (via `addBlockIdToFile`) as a side effect when a
+ * block-reference item doesn't already have one, exactly as the original
+ * duplicated code did.
+ *
+ * @param includeNewLinkTextForPlainFile Only `FileSuggest` wants a plain
+ *   (non-heading/block/alias) file suggestion to also pre-fill a starting
+ *   alias text (for its separate "Link Text" field); `EditorFileSuggest`
+ *   inserts directly into the document and intentionally leaves plain file
+ *   links alias-less, so it passes `false` here. This preserves each
+ *   caller's exact prior behavior.
+ */
+export async function computeSelectedLinkValue(
+	item: SuggestionItem,
+	app: App,
+	includeNewLinkTextForPlainFile: boolean
+): Promise<{ linkValue: string; newLinkText: string | null }> {
+	let linkValue: string;
+	let newLinkText: string | null = null;
+
+	if (item.type === "heading") {
+		const currentFile = app.workspace.getActiveFile();
+		if (item.file && (!currentFile || item.file.path !== currentFile.path)) {
+			linkValue = `${item.file.basename}#${item.heading}`;
+		} else {
+			linkValue = `#${item.heading}`;
+		}
+	} else if (item.type === "block") {
+		if (!item.blockId && item.file && item.position) {
+			const newBlockId = generateBlockId();
+			await addBlockIdToFile(item.file, app, item.position, newBlockId);
+			item.blockId = newBlockId;
+		}
+
+		const currentFile = app.workspace.getActiveFile();
+		if (item.file && (!currentFile || item.file.path !== currentFile.path)) {
+			linkValue = `${item.file.basename}#^${item.blockId}`;
+		} else {
+			linkValue = `#^${item.blockId}`;
+		}
+	} else if (item.type === "alias") {
+		linkValue = item.file
+			? (item.file.extension === "md" ? (item.file.basename || "") : (item.file.name || ""))
+			: (item.alias || "");
+		newLinkText = item.alias || "";
+	} else {
+		if (item.extension === "md") {
+			linkValue = item.basename || "";
+			if (includeNewLinkTextForPlainFile) newLinkText = item.basename || "";
+		} else {
+			linkValue = item.name || "";
+			if (includeNewLinkTextForPlainFile) newLinkText = item.name || "";
+		}
+	}
+
+	return { linkValue, newLinkText };
+}
+
 export function getCompletionText(item: SuggestionItem, query: string): string {
 	if (item.type === "heading") {
 		if (query.includes("#") && !query.startsWith("#") && !query.startsWith("##")) {
@@ -557,18 +622,104 @@ export function getCompletionText(item: SuggestionItem, query: string): string {
 	return item.name || "";
 }
 
-export function flashSuggestContainer(customContainer?: HTMLElement) {
-	let container = customContainer;
-	if (!container) {
-		const containers = document.querySelectorAll(".suggestion-container");
-		for (let i = 0; i < containers.length; i++) {
-			const c = containers[i];
-			if (!c.classList.contains("is-hidden") && (c as HTMLElement).style.display !== "none") {
-				container = c as HTMLElement;
-				break;
+/**
+ * Find the currently visible Obsidian suggestion popup container, if any.
+ *
+ * Obsidian keeps one `.suggestion-container` per registered suggest in the
+ * DOM at all times, hiding inactive ones via the `is-hidden` class or an
+ * inline `display: none`. This is the single, shared place that knows both
+ * of those hidden-state markers — every call site that needs to find or
+ * check for the active suggestion popup should go through this function
+ * rather than re-scanning `document.querySelectorAll(".suggestion-container")`
+ * with its own copy of the visibility check, so a future Obsidian change to
+ * how popups are hidden only needs to be updated here.
+ */
+export function findVisibleSuggestionContainer(): HTMLElement | null {
+	if (typeof document === "undefined") return null;
+	const containers = document.querySelectorAll(".suggestion-container");
+	for (let i = 0; i < containers.length; i++) {
+		const container = containers[i] as HTMLElement;
+		if (!container.classList.contains("is-hidden") && container.style.display !== "none") {
+			return container;
+		}
+	}
+	return null;
+}
+
+/**
+ * Resolve the item the user currently has highlighted in an `AbstractInputSuggest`
+ * or `EditorSuggest` popup.
+ *
+ * Obsidian does not expose a stable public API for "the currently selected
+ * suggestion" on either base class, so this reads several undocumented
+ * internal property names (`values`/`suggestions`/`suggestions.values` for
+ * the item list, `selectedId`/`suggestions.selectedId` for the highlighted
+ * index) with a DOM-scraping fallback (`.suggestion-item.is-selected`) if
+ * none of those are present. Centralizing this here means only one place
+ * needs to be updated if a future Obsidian version renames these internals,
+ * instead of two independent copies drifting out of sync.
+ *
+ * @param instance The suggest instance (`this` from the caller) — typed as
+ *   `unknown` since the properties being read are undocumented internals of
+ *   whichever Obsidian suggest base class is calling this.
+ * @param lastSuggestions The caller's own tracked copy of the last rendered
+ *   suggestion list, used first before falling back to Obsidian's internals.
+ */
+export function getSelectedSuggestionItem<T>(
+	instance: unknown,
+	lastSuggestions: T[]
+): T | undefined {
+	const internal = instance as {
+		values?: unknown;
+		suggestions?: { values?: unknown; selectedId?: number };
+		selectedId?: number;
+	};
+
+	let items: T[] = lastSuggestions;
+	if (!items || items.length === 0) {
+		let candidate: unknown = internal.values ?? internal.suggestions;
+		if (!Array.isArray(candidate)) {
+			candidate = internal.suggestions?.values;
+		}
+		if (Array.isArray(candidate)) {
+			items = candidate as T[];
+		}
+	}
+
+	if (!items || items.length === 0) return undefined;
+
+	let selectedId: number | undefined = internal.selectedId;
+	if (selectedId === undefined) {
+		selectedId = internal.suggestions?.selectedId;
+	}
+
+	if (selectedId === undefined) {
+		const container = findVisibleSuggestionContainer();
+		if (container) {
+			const selectedEl = container.querySelector(".suggestion-item.is-selected");
+			if (selectedEl) {
+				const allItems = Array.from(container.querySelectorAll(".suggestion-item"));
+				const idx = allItems.indexOf(selectedEl);
+				if (idx !== -1) {
+					selectedId = idx;
+				}
 			}
 		}
 	}
+
+	if (selectedId === undefined && items.length > 0) {
+		selectedId = 0;
+	}
+
+	if (selectedId !== undefined && items[selectedId]) {
+		return items[selectedId];
+	}
+
+	return undefined;
+}
+
+export function flashSuggestContainer(customContainer?: HTMLElement) {
+	const container = customContainer ?? findVisibleSuggestionContainer() ?? undefined;
 	if (container) {
 		container.classList.remove("is-flashing");
 		void (container as any).offsetWidth; // trigger reflow to restart animation

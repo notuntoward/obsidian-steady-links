@@ -13,8 +13,9 @@ import {
 	renderSuggestionItem,
 	getCompletionText,
 	flashSuggestContainer,
-	generateBlockId,
-	addBlockIdToFile
+	findVisibleSuggestionContainer,
+	getSelectedSuggestionItem,
+	computeSelectedLinkValue
 } from "./suggestionLogic";
 
 import { getFileAliasesForFile } from "./suggestionLogic";
@@ -45,21 +46,15 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 					evt.preventDefault();
 					evt.stopPropagation();
 				}
-				const item = this.getSelectedSuggestionItem();
+				const item = getSelectedSuggestionItem(this, this.lastSuggestions);
 				if (!item) return true;
 
 				const completionText = getCompletionText(item, this.inputEl.value);
 
 				if (this.inputEl.value.trim().toLowerCase() === completionText.trim().toLowerCase()) {
 					// Flash completion window to show it is already fully completed
-					const containers = document.querySelectorAll(".suggestion-container");
-					for (let i = 0; i < containers.length; i++) {
-						const container = containers[i];
-						if (!container.classList.contains("is-hidden") && (container as HTMLElement).style.display !== "none") {
-							flashSuggestContainer(container as HTMLElement);
-							break;
-						}
-					}
+					const container = findVisibleSuggestionContainer();
+					if (container) flashSuggestContainer(container);
 					return false; // consume event
 				} else {
 					this.inputEl.value = completionText;
@@ -71,54 +66,6 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 			});
 
 		}
-	}
-
-	private getSelectedSuggestionItem(): SuggestionItem | undefined {
-		let items = this.lastSuggestions;
-		if (!items || items.length === 0) {
-			let v = (this as any).values || (this as any).suggestions;
-			if (!Array.isArray(v)) {
-				v = (this as any).suggestions?.values;
-			}
-			if (Array.isArray(v)) {
-				items = v;
-			}
-		}
-
-		if (!items || items.length === 0) return undefined;
-
-		let selectedId: number | undefined = (this as any).selectedId;
-		if (selectedId === undefined) {
-			selectedId = (this as any).suggestions?.selectedId;
-		}
-
-		if (selectedId === undefined) {
-			const containers = document.querySelectorAll(".suggestion-container");
-			for (let i = 0; i < containers.length; i++) {
-				const container = containers[i] as HTMLElement;
-				if (!container.classList.contains("is-hidden") && container.style.display !== "none") {
-					const selectedEl = container.querySelector(".suggestion-item.is-selected");
-					if (selectedEl) {
-						const allItems = Array.from(container.querySelectorAll(".suggestion-item"));
-						const idx = allItems.indexOf(selectedEl);
-						if (idx !== -1) {
-							selectedId = idx;
-							break;
-						}
-					}
-				}
-			}
-		}
-
-		if (selectedId === undefined && items.length > 0) {
-			selectedId = 0;
-		}
-
-		if (selectedId !== undefined && items[selectedId]) {
-			return items[selectedId];
-		}
-
-		return undefined;
 	}
 
 	async getSuggestions(query: string): Promise<SuggestionItem[]> {
@@ -228,43 +175,7 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 	}
 
 	async selectSuggestion(item: SuggestionItem, evt?: MouseEvent | KeyboardEvent): Promise<void> {
-		let linkValue: string;
-		let newLinkText: string | null = null;
-
-		if (item.type === "heading") {
-			const currentFile = this.app.workspace.getActiveFile();
-			if (item.file && (!currentFile || item.file.path !== currentFile.path)) {
-				linkValue = `${item.file.basename}#${item.heading}`;
-			} else {
-				linkValue = `#${item.heading}`;
-			}
-		} else if (item.type === "block") {
-			if (!item.blockId && item.file && item.position) {
-				const newBlockId = generateBlockId();
-				await addBlockIdToFile(item.file, this.app, item.position, newBlockId);
-				item.blockId = newBlockId;
-			}
-
-			const currentFile = this.app.workspace.getActiveFile();
-			if (item.file && (!currentFile || item.file.path !== currentFile.path)) {
-				linkValue = `${item.file.basename}#^${item.blockId}`;
-			} else {
-				linkValue = `#^${item.blockId}`;
-			}
-		} else if (item.type === "alias") {
-			linkValue = item.file
-				? (item.file.extension === "md" ? (item.file.basename || "") : (item.file.name || ""))
-				: (item.alias || "");
-			newLinkText = item.alias || "";
-		} else {
-			if (item.extension === "md") {
-				linkValue = item.basename || "";
-				newLinkText = item.basename || "";
-			} else {
-				linkValue = item.name || "";
-				newLinkText = item.name || "";
-			}
-		}
+		const { linkValue, newLinkText } = await computeSelectedLinkValue(item, this.app, true);
 
 		this.inputEl.value = linkValue;
 		this.modal.handleDestInput();
@@ -305,14 +216,7 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 	}
 
 	get isSuggestOpen(): boolean {
-		const containers = document.querySelectorAll(".suggestion-container");
-		for (let i = 0; i < containers.length; i++) {
-			const container = containers[i];
-			if (!container.classList.contains("is-hidden") && (container as HTMLElement).style.display !== "none") {
-				return true;
-			}
-		}
-		return false;
+		return findVisibleSuggestionContainer() !== null;
 	}
 
 	selectCurrentSuggestion(): void {

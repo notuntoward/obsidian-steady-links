@@ -34,6 +34,7 @@ import {
 	ChangeSet,
 } from "@codemirror/state";
 import { wikiLinkVisibleTextOffset, type WikiLinkHidingOptions } from "./utils";
+import { findVisibleSuggestionContainer } from "./suggestionLogic";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -2528,15 +2529,7 @@ function handleHomeKey(view: EditorView, extend: boolean): boolean {
 }
 
 function isAnySuggestOpen(): boolean {
-	if (typeof document === "undefined") return false;
-	const containers = document.querySelectorAll(".suggestion-container");
-	for (let i = 0; i < containers.length; i++) {
-		const container = containers[i] as HTMLElement;
-		if (!container.classList.contains("is-hidden") && container.style.display !== "none") {
-			return true;
-		}
-	}
-	return false;
+	return findVisibleSuggestionContainer() !== null;
 }
 
 const enterAtLinkEndKeymap = keymap.of([

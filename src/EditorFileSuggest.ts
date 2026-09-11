@@ -5,8 +5,8 @@ import {
 	renderSuggestionItem,
 	getCompletionText,
 	flashSuggestContainer,
-	generateBlockId,
-	addBlockIdToFile
+	getSelectedSuggestionItem,
+	computeSelectedLinkValue
 } from "./suggestionLogic";
 import type SteadyLinksPlugin from "./main";
 
@@ -27,7 +27,7 @@ export class EditorFileSuggest extends EditorSuggest<SuggestionItem> {
 				const context = this.context;
 				if (!context) return true;
 
-				const item = this.getSelectedSuggestionItem();
+				const item = getSelectedSuggestionItem(this, this.lastSuggestions);
 				if (!item) return true;
 
 				const completionText = getCompletionText(item, context.query);
@@ -58,54 +58,6 @@ export class EditorFileSuggest extends EditorSuggest<SuggestionItem> {
 			});
 
 		}
-	}
-
-	private getSelectedSuggestionItem(): SuggestionItem | undefined {
-		let items = this.lastSuggestions;
-		if (!items || items.length === 0) {
-			let v = (this as any).values || (this as any).suggestions;
-			if (!Array.isArray(v)) {
-				v = (this as any).suggestions?.values;
-			}
-			if (Array.isArray(v)) {
-				items = v;
-			}
-		}
-
-		if (!items || items.length === 0) return undefined;
-
-		let selectedId: number | undefined = (this as any).selectedId;
-		if (selectedId === undefined) {
-			selectedId = (this as any).suggestions?.selectedId;
-		}
-
-		if (selectedId === undefined) {
-			const containers = document.querySelectorAll(".suggestion-container");
-			for (let i = 0; i < containers.length; i++) {
-				const container = containers[i] as HTMLElement;
-				if (!container.classList.contains("is-hidden") && container.style.display !== "none") {
-					const selectedEl = container.querySelector(".suggestion-item.is-selected");
-					if (selectedEl) {
-						const allItems = Array.from(container.querySelectorAll(".suggestion-item"));
-						const idx = allItems.indexOf(selectedEl);
-						if (idx !== -1) {
-							selectedId = idx;
-							break;
-						}
-					}
-				}
-			}
-		}
-
-		if (selectedId === undefined && items.length > 0) {
-			selectedId = 0;
-		}
-
-		if (selectedId !== undefined && items[selectedId]) {
-			return items[selectedId];
-		}
-
-		return undefined;
 	}
 
 	onTrigger(cursor: EditorPosition, editor: Editor, file: TFile): EditorSuggestTriggerInfo | null {
@@ -147,41 +99,7 @@ export class EditorFileSuggest extends EditorSuggest<SuggestionItem> {
 		const context = this.context;
 		if (!context) return;
 
-		let linkValue: string;
-		let newLinkText: string | null = null;
-
-		if (item.type === "heading") {
-			const currentFile = this.app.workspace.getActiveFile();
-			if (item.file && (!currentFile || item.file.path !== currentFile.path)) {
-				linkValue = `${item.file.basename}#${item.heading}`;
-			} else {
-				linkValue = `#${item.heading}`;
-			}
-		} else if (item.type === "block") {
-			if (!item.blockId && item.file && item.position) {
-				const newBlockId = generateBlockId();
-				await addBlockIdToFile(item.file, this.app, item.position, newBlockId);
-				item.blockId = newBlockId;
-			}
-
-			const currentFile = this.app.workspace.getActiveFile();
-			if (item.file && (!currentFile || item.file.path !== currentFile.path)) {
-				linkValue = `${item.file.basename}#^${item.blockId}`;
-			} else {
-				linkValue = `#^${item.blockId}`;
-			}
-		} else if (item.type === "alias") {
-			linkValue = item.file
-				? (item.file.extension === "md" ? (item.file.basename || "") : (item.file.name || ""))
-				: (item.alias || "");
-			newLinkText = item.alias || "";
-		} else {
-			if (item.extension === "md") {
-				linkValue = item.basename || "";
-			} else {
-				linkValue = item.name || "";
-			}
-		}
+		const { linkValue, newLinkText } = await computeSelectedLinkValue(item, this.app, false);
 
 		const editor = context.editor;
 		const startPos = { line: context.start.line, ch: context.start.ch - 2 }; // include the "[["
