@@ -568,6 +568,7 @@ export class PluginSettingTab {
 	app: App;
 	plugin: Plugin;
 	containerEl: HTMLElement;
+	settingItems: unknown[] = [];
 
 	constructor(app: App, plugin: Plugin) {
 		this.app = app;
@@ -575,6 +576,11 @@ export class PluginSettingTab {
 		this.containerEl = document.createElement("div");
 	}
 
+	getSettingDefinitions(): unknown[] { return []; }
+	getControlValue(_key: string): unknown { return (this.plugin as any)?.settings?.[_key]; }
+	async setControlValue(_key: string, _value: unknown): Promise<void> {}
+	update(): void {}
+	refreshDomState(): void {}
 	display(): void {}
 	hide(): void {}
 }
