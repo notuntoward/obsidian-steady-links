@@ -1,5 +1,108 @@
 # Agent Instructions for obsidian-steady-links
 
+## Critical: cursorCorrector's own dispatches must carry userEvent "select.steadyLinks"
+
+Every purely-corrective selection dispatch made BY `cursorCorrector` itself
+(the ones that reposition the cursor onto/off of hidden link syntax, and the
+"suppress same-line cursor reset" dispatches) MUST include
+`userEvent: "select.steadyLinks"` in the dispatch spec.
+
+### Why this exists
+
+Cooperating third-party plugins — specifically Visible Cursor
+(`obsidian-visible-cursor`), whose block-cursor `navCorrection` listener is
+the only logic in that plugin that dispatches its own corrective selection
+changes — explicitly ignore transactions tagged `"select.steadyLinks"` (see
+its `navCorrection`, which early-returns on `t.isUserEvent("select.pointer")
+|| t.isUserEvent("select.steadyLinks") || t.isUserEvent("select.programmatic")`).
+
+Without this tag, Steady Links' own corrective dispatch (which normally
+carries NO userEvent, since it's not itself a "user" action) is
+indistinguishable from a genuine large/cross-line cursor jump that Visible
+Cursor's `navCorrection` should react to. That let the two plugins fight over
+the cursor position — most visibly with the block cursor style — which caused
+a real, hard-to-reproduce bug: Emacs kill-line on a line-start wikilink at
+end of document leaving a stray one-character alias like `[[dest|S]]` instead
+of deleting the whole link, because the real CM6 selection had drifted one
+character into the alias by the time kill-line read it.
+
+This tag was added once already and then silently missing (the emitting side
+was never actually wired up even though Visible Cursor already had matching
+code to ignore it) — verify with
+`git log -S"select.steadyLinks" -- src/linkSyntaxHider.ts` that it is still
+present before assuming it's redundant or safe to drop.
+
+### What NOT to do
+
+- Do NOT remove `userEvent: "select.steadyLinks"` from any of
+  `cursorCorrector`'s own `view.dispatch(...)` / `update.view.dispatch(...)`
+  calls, including the three "suppress same-line cursor reset" call sites and
+  the main end-of-listener correction dispatch.
+- Do NOT assume this tag is dead just because Steady Links' own code doesn't
+  check for it anywhere (it deliberately isn't checked here — it exists
+  purely for OTHER plugins to check, most notably Visible Cursor).
+- Do NOT add this tag to dispatches that ARE genuine user-initiated
+  navigation already carrying a real semantic userEvent (e.g. the Home key
+  handler's `userEvent: "select"`) — only add it to dispatches that exist
+  purely to correct/reposition the cursor in reaction to a previous update.
+
+### How to verify
+
+The integration test "cursorCorrector's vertical-motion correction dispatch
+carries userEvent select.steadyLinks" in
+`tests/linkSyntaxHider.integration.test.ts` asserts this tag directly by
+capturing `tr.annotation(Transaction.userEvent)` on the dispatched
+transaction. If this test is missing or modified to stop checking the exact
+string `"select.steadyLinks"`, the cross-plugin contract can silently break
+again with no local test failure to catch it.
+
+## Critical: Prefer explicit signals over selection-shape heuristics for cross-command intent (e.g. "was this kill-line?")
+
+`isKillLine` in `clampSelectionDeleteFilter` (and threaded through
+`rewriteDeleteChanges` / `rewriteDeleteChangeForLinks`) was previously
+computed by guessing from selection shape: matching a link whose
+`textFrom`/line-end happened to align with the transaction's starting
+selection. This heuristic was fragile and, on inspection, entirely inert —
+every test that appeared to depend on it actually passed because
+`deletesEntireDisplay`/`coversEmptyLink` (which apply regardless of which
+command produced the delete) already covered the same cases.
+
+`isKillLine` is now computed from exactly two explicit signals:
+
+```ts
+const pendingExpansion = tr.startState.field(pendingExternalSelectionExpansionField, false);
+const isKillLine = tr.isUserEvent("emacs.killLine") || pendingExpansion !== null;
+```
+
+- `tr.isUserEvent("emacs.killLine")` — the Emacs Text Editor plugin's own
+  userEvent tag on its kill-line delete dispatch (an explicit, real signal
+  from that plugin).
+- `pendingExpansion !== null` — set by `expandSelectionToLeadingSyntaxFilter`
+  when Steady Links ITSELF just expanded the selection to include a link's
+  full leading syntax, which only happens for whole-link selection
+  operations, never for a single-atom delete-char.
+
+### What NOT to do
+
+- Do NOT reintroduce a `links.some((l) => ...)` selection-shape heuristic to
+  `isKillLine` (or any similarly-named "guess what command did this" flag)
+  without first proving, with a concrete failing test, that the two explicit
+  signals above are insufficient. AI has repeatedly reached for
+  position-matching heuristics here, and every one added so far turned out to
+  be dead weight that only added confusing, unreachable branches (see the
+  removed `(isKillLine && change.from <= link.textFrom && change.to >=
+  link.textTo)` disjunct in `rewriteDeleteChangeForLinks`, which was always
+  subsumed by `deletesEntireDisplay`/`coversEmptyLink`).
+- Do NOT add a new heuristic branch to `rewriteDeleteChangeForLinks`'s
+  `deletesEntireDisplay || coversEmptyLink` check without first verifying,
+  algebraically or with a failing test, that it isn't already implied by
+  `change.from <= link.textFrom && change.to >= link.textTo` (which is what
+  `deletesEntireDisplay` already reduces to whenever it's relevant).
+- If a genuinely new cross-command signal is needed, add an explicit
+  StateField/StateEffect (mirroring `pendingExternalSelectionExpansionField`)
+  that Steady Links itself sets when it performs the relevant expansion or
+  action, rather than trying to infer intent from raw selection coordinates.
+
 ## Critical: Cursor correction ordering in linkSyntaxHider.ts
 
 The `cursorCorrector` update listener in `src/linkSyntaxHider.ts` contains
