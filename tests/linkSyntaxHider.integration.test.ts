@@ -16,7 +16,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { MarkdownView, App } from "obsidian";
 import SteadyLinksPlugin from "../src/main";
 import { EditorView } from "@codemirror/view";
-import { EditorState, EditorSelection, Transaction } from "@codemirror/state";
+import { EditorState, EditorSelection, StateEffect, Transaction } from "@codemirror/state";
 import {
 	createHiddenSyntaxAnchor,
 	createLinkSyntaxHiderExtension,
@@ -1547,6 +1547,38 @@ describe("Integration: cursor correction with real CM6 state", () => {
 
 			const result = dispatchVerticalMotion(view, 1, 0);
 			expect(result).toBe(2);
+		});
+
+		// ────────────────────────────────────────────────────────────────
+		// BUG GUARD: cursorCorrector's own corrective dispatch MUST carry
+		// userEvent "select.steadyLinks".
+		//
+		// Cooperating plugins (e.g. Visible Cursor's block-cursor
+		// navCorrection) explicitly ignore transactions tagged
+		// "select.steadyLinks" so they don't re-dispatch their own
+		// corrective selection change on top of this one. Without this tag,
+		// the corrective dispatch is indistinguishable from a genuine
+		// external cursor jump, and the two plugins can fight over the
+		// cursor position (most visibly with Visible Cursor's block cursor
+		// style, whose navCorrection is the only logic that dispatches its
+		// own corrective selection changes). This has regressed before —
+		// always verify this tag is present on every corrective dispatch
+		// cursorCorrector produces, not just on the ones covered here.
+		// ────────────────────────────────────────────────────────────────
+		it("cursorCorrector's vertical-motion correction dispatch carries userEvent select.steadyLinks", () => {
+			view = createTestView("above\n[[target]]", 3);
+
+			const userEvents: (string | undefined)[] = [];
+			const captureExtension = EditorView.updateListener.of((update) => {
+				for (const tr of update.transactions) {
+					userEvents.push(tr.annotation(Transaction.userEvent));
+				}
+			});
+			view.dispatch({ effects: StateEffect.appendConfig.of(captureExtension) });
+
+			dispatchVerticalMotion(view, 6, 3);
+
+			expect(userEvents).toContain("select.steadyLinks");
 		});
 
 		it("down-arrow back from the line above returns to link start, not link end, for a line-start wikilink", () => {
