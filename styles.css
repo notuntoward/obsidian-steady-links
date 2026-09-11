@@ -306,8 +306,3 @@ body.le-keep-links-steady .cm-cursor {
 	100% { opacity: 1; }
 }
 
-.suggestion-item .steady-links-block-preview {
-	max-height: 4.5em;
-	overflow: hidden;
-}
-

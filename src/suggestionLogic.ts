@@ -1,4 +1,4 @@
-import { App, MarkdownRenderChild, MarkdownRenderer, TFile } from "obsidian";
+import { App, TFile } from "obsidian";
 import { SuggestionItem } from "./types";
 import { isUrl } from "./utils";
 import { parseSuggestionQuery } from "./suggestionQuery";
@@ -360,45 +360,126 @@ export function findFile(fileName: string, app: App): TFile | undefined {
 	);
 }
 
-export async function getAllBlocksInFile(file: TFile, app: App, blockQuery = ""): Promise<SuggestionItem[]> {
+interface ExternalBlockNode {
+	id?: string | null;
+	position: { start: { line: number }; end: { line: number } };
+}
+
+interface ExternalBlockEntry {
+	display: string;
+	node: ExternalBlockNode;
+}
+
+interface ExternalBlockCache {
+	getForFile(
+		token: { isCancelled(): boolean },
+		file: TFile
+	): Promise<{ blocks: ExternalBlockEntry[] } | null>;
+}
+
+const warnedMissingBlockCache = new WeakSet<object>();
+
+function warnMissingBlockCache(metadataCache: object): void {
+	if (warnedMissingBlockCache.has(metadataCache)) return;
+	warnedMissingBlockCache.add(metadataCache);
+	console.warn(
+		"[Steady Links] Obsidian's metadataCache.blockCache is unavailable; falling back to public metadataCache sections for block suggestions, so previews may differ from Obsidian's native suggestions."
+	);
+}
+
+function getBlockCache(app: App): ExternalBlockCache | null {
+	const metadataCache = app.metadataCache as unknown as { blockCache?: ExternalBlockCache };
+	if (!metadataCache.blockCache) {
+		warnMissingBlockCache(metadataCache);
+		return null;
+	}
+	return metadataCache.blockCache;
+}
+
+function mapBlockCacheEntries(
+	blocks: ExternalBlockEntry[],
+	file: TFile,
+	blockQuery: string
+): SuggestionItem[] {
+	const query = blockQuery.toLowerCase();
+	const results: SuggestionItem[] = [];
+
+	for (const entry of blocks) {
+		const blockId = typeof entry.node.id === "string" ? entry.node.id : null;
+		if (
+			query &&
+			!entry.display.toLowerCase().includes(query) &&
+			!(blockId && blockId.toLowerCase().includes(query))
+		) {
+			continue;
+		}
+
+		results.push({
+			type: "block",
+			blockId,
+			blockText: entry.display,
+			file,
+			position: {
+				start: { line: entry.node.position.start.line - 1, col: 0 },
+				end: { line: entry.node.position.end.line - 1, col: 0 },
+			},
+		});
+	}
+
+	return results;
+}
+
+async function getAllBlocksFromSections(
+	file: TFile,
+	app: App,
+	blockQuery: string
+): Promise<SuggestionItem[]> {
 	const cache = app.metadataCache.getFileCache(file);
-	if (!cache) return [];
+	if (!cache?.sections) return [];
 
 	const content = await app.vault.cachedRead(file);
 	const lines = content.split("\n");
 	const results: SuggestionItem[] = [];
 
-	if (cache.sections) {
-		for (const section of cache.sections) {
-			if (["paragraph", "list", "blockquote", "code"].includes(section.type)) {
-				const startLine = section.position.start.line;
-				const endLine = section.position.end.line;
-				const blockText = lines.slice(startLine, endLine + 1).join("\n");
-				const blockIdMatch = blockText.match(/\^([a-zA-Z0-9-]+)\s*$/);
-				const blockId = blockIdMatch ? blockIdMatch[1] : null;
-				const displayText = blockId
-					? blockText.replace(/\s*\^[a-zA-Z0-9-]+\s*$/, "")
-					: blockText;
-
-				if (blockQuery) {
-					const q = blockQuery.toLowerCase();
-					const matchesId = blockId && blockId.toLowerCase().includes(q);
-					const matchesText = displayText.toLowerCase().includes(q);
-					if (!matchesId && !matchesText) continue;
-				}
-
-				results.push({
-					type: "block",
-					blockId,
-					blockText: displayText.trim(),
-					file,
-					position: section.position,
-				});
-			}
+	for (const section of cache.sections) {
+		if (!["paragraph", "list", "blockquote", "code", "heading"].includes(section.type)) {
+			continue;
 		}
+		const blockText = lines
+			.slice(section.position.start.line, section.position.end.line + 1)
+			.join("\n");
+		const blockIdMatch = blockText.match(/\^([a-zA-Z0-9-]+)\s*$/);
+		const blockId = blockIdMatch ? blockIdMatch[1] : null;
+		const displayText = blockId ? blockText.replace(/\s*\^[a-zA-Z0-9-]+\s*$/, "") : blockText;
+
+		if (blockQuery) {
+			const q = blockQuery.toLowerCase();
+			const matchesId = blockId && blockId.toLowerCase().includes(q);
+			const matchesText = displayText.toLowerCase().includes(q);
+			if (!matchesId && !matchesText) continue;
+		}
+
+		results.push({
+			type: "block",
+			blockId,
+			blockText: displayText.trim(),
+			file,
+			position: section.position,
+		});
 	}
 
 	return results;
+}
+
+export async function getAllBlocksInFile(file: TFile, app: App, blockQuery = ""): Promise<SuggestionItem[]> {
+	const blockCache = getBlockCache(app);
+	if (blockCache) {
+		const cached = await blockCache.getForFile({ isCancelled: () => false }, file);
+		if (cached) {
+			return mapBlockCacheEntries(cached.blocks, file, blockQuery);
+		}
+	}
+	return getAllBlocksFromSections(file, app, blockQuery);
 }
 
 export function generateBlockId(): string {
@@ -434,32 +515,6 @@ function highlightMatches(el: HTMLElement, text: string, query: string): void {
 	} else {
 		el.createSpan({ text });
 	}
-}
-
-function highlightRenderedMatches(root: HTMLElement, query: string): void {
-	if (!query) return;
-	const needle = query.toLowerCase();
-	const wrapFirstMatch = (parent: Node): boolean => {
-		for (const child of Array.from(parent.childNodes)) {
-			if (child.nodeType === Node.TEXT_NODE) {
-				const text = child.nodeValue ?? "";
-				const index = text.toLowerCase().indexOf(needle);
-				if (index === -1) continue;
-				const matchSpan = document.createElement("span");
-				matchSpan.className = "suggestion-highlight";
-				matchSpan.textContent = text.substring(index, index + query.length);
-				const after = (child as Text).splitText(index);
-				after.nodeValue = (after.nodeValue ?? "").substring(query.length);
-				parent.insertBefore(matchSpan, after);
-				return true;
-			}
-			if (child.nodeType === Node.ELEMENT_NODE && wrapFirstMatch(child)) {
-				return true;
-			}
-		}
-		return false;
-	};
-	wrapFirstMatch(root);
 }
 
 export function renderSuggestionItem(
@@ -502,14 +557,8 @@ export function renderSuggestionItem(
 			}
 		}
 	} else if (item.type === "block") {
-		const blockText = item.blockText || "";
-		const titleEl = content.createDiv({
-			cls: "suggestion-title steady-links-block-preview",
-		});
-		const sourcePath = item.file?.path ?? app.workspace.getActiveFile()?.path ?? "";
-		const renderChild = new MarkdownRenderChild(titleEl);
-		void MarkdownRenderer.render(app, blockText, titleEl, sourcePath, renderChild);
-		highlightRenderedMatches(titleEl, searchTerm);
+		const titleEl = content.createDiv({ cls: "suggestion-title" });
+		highlightMatches(titleEl, item.blockText || "", searchTerm);
 
 		if (item.blockId) {
 			content.createDiv({

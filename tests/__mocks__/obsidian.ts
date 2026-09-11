@@ -53,8 +53,33 @@ export interface CachedMetadata {
 	embeds?: Array<{ link: string; position: any }>;
 }
 
+export interface MockBlockNode {
+	id?: string | null;
+	position: { start: { line: number }; end: { line: number } };
+}
+
+export interface MockBlockEntry {
+	display: string;
+	node: MockBlockNode;
+}
+
+export interface MockBlockCache {
+	getForFile(
+		token: { isCancelled(): boolean },
+		file: TFile
+	): Promise<{ blocks: MockBlockEntry[] } | null>;
+}
+
 export class MetadataCache {
 	private fileCache: Map<string, CachedMetadata> = new Map();
+	private blockCacheByPath: Map<string, MockBlockEntry[]> = new Map();
+
+	blockCache: MockBlockCache | undefined = {
+		getForFile: async (_token, file) => {
+			const blocks = this.blockCacheByPath.get(file.path);
+			return blocks ? { blocks } : null;
+		},
+	};
 
 	getFileCache(file: TFile): CachedMetadata | null {
 		return this.fileCache.get(file.path) || null;
@@ -65,8 +90,17 @@ export class MetadataCache {
 		this.fileCache.set(path, cache);
 	}
 
+	setBlockCache(path: string, blocks: MockBlockEntry[]): void {
+		this.blockCacheByPath.set(path, blocks);
+	}
+
+	disableBlockCache(): void {
+		this.blockCache = undefined;
+	}
+
 	clear(): void {
 		this.fileCache.clear();
+		this.blockCacheByPath.clear();
 	}
 }
 
@@ -905,31 +939,6 @@ export class MarkdownView {
 
 	getMode(): "source" | "preview" | "live" {
 		return "source";
-	}
-}
-
-// ============================================================================
-// MarkdownRenderer
-// ============================================================================
-
-export class MarkdownRenderChild {
-	containerEl: HTMLElement;
-
-	constructor(containerEl: HTMLElement) {
-		this.containerEl = containerEl;
-	}
-}
-
-export class MarkdownRenderer {
-	static render(
-		_app: unknown,
-		markdown: string,
-		el: HTMLElement,
-		_sourcePath: string,
-		_component: unknown
-	): Promise<void> {
-		el.textContent = markdown;
-		return Promise.resolve();
 	}
 }
 

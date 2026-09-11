@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
 	getFiles,
 	getFileAliases,
@@ -479,14 +479,107 @@ describe("getAllBlocksInFile", () => {
 		expect(results).toEqual([]);
 	});
 
-	it("returns empty array when no sections", async () => {
+	it("returns empty array when the block cache has no entry", async () => {
 		const file = tf({ path: "note.md" });
-		app.metadataCache.setFileCache("note.md", {});
+		app.metadataCache.setBlockCache("note.md", []);
 		const results = await getAllBlocksInFile(file, app as any);
 		expect(results).toEqual([]);
 	});
 
-	it("extracts blocks with block IDs", async () => {
+	it("extracts blocks with block IDs and converts node lines to editor lines", async () => {
+		const file = tf({ path: "note.md" });
+		app.metadataCache.setBlockCache("note.md", [
+			{
+				display: "Paragraph text",
+				node: { id: "abc123", position: { start: { line: 1 }, end: { line: 1 } } },
+			},
+		]);
+
+		const results = await getAllBlocksInFile(file, app as any);
+		expect(results).toHaveLength(1);
+		expect(results[0].type).toBe("block");
+		expect(results[0].blockId).toBe("abc123");
+		expect(results[0].blockText).toBe("Paragraph text");
+		expect(results[0].position).toEqual({
+			start: { line: 0, col: 0 },
+			end: { line: 0, col: 0 },
+		});
+	});
+
+	it("extracts blocks without block IDs", async () => {
+		const file = tf({ path: "note.md" });
+		app.metadataCache.setBlockCache("note.md", [
+			{
+				display: "Plain paragraph",
+				node: { position: { start: { line: 1 }, end: { line: 1 } } },
+			},
+		]);
+
+		const results = await getAllBlocksInFile(file, app as any);
+		expect(results).toHaveLength(1);
+		expect(results[0].blockId).toBeNull();
+		expect(results[0].blockText).toBe("Plain paragraph");
+	});
+
+	it("filters blocks by query matching block text", async () => {
+		const file = tf({ path: "note.md" });
+		app.metadataCache.setBlockCache("note.md", [
+			{ display: "First paragraph", node: { position: { start: { line: 1 }, end: { line: 1 } } } },
+			{ display: "Second paragraph", node: { position: { start: { line: 3 }, end: { line: 3 } } } },
+		]);
+
+		const results = await getAllBlocksInFile(file, app as any, "Second");
+		expect(results).toHaveLength(1);
+		expect(results[0].blockText).toBe("Second paragraph");
+	});
+
+	it("filters blocks by query matching block ID", async () => {
+		const file = tf({ path: "note.md" });
+		app.metadataCache.setBlockCache("note.md", [
+			{ display: "Paragraph", node: { id: "abc123", position: { start: { line: 1 }, end: { line: 1 } } } },
+			{ display: "Other", node: { id: "def456", position: { start: { line: 3 }, end: { line: 3 } } } },
+		]);
+
+		const results = await getAllBlocksInFile(file, app as any, "def456");
+		expect(results).toHaveLength(1);
+		expect(results[0].blockId).toBe("def456");
+	});
+
+	it("includes each list item as its own block", async () => {
+		const file = tf({ path: "note.md" });
+		app.metadataCache.setBlockCache("note.md", [
+			{ display: "Item 1", node: { position: { start: { line: 1 }, end: { line: 1 } } } },
+			{ display: "Item 2", node: { id: "listblock", position: { start: { line: 2 }, end: { line: 2 } } } },
+		]);
+
+		const results = await getAllBlocksInFile(file, app as any);
+		expect(results).toHaveLength(2);
+		expect(results[1].blockId).toBe("listblock");
+	});
+
+	it("handles code blocks", async () => {
+		const file = tf({ path: "note.md" });
+		app.metadataCache.setBlockCache("note.md", [
+			{ display: "code block", node: { id: "codeid", position: { start: { line: 1 }, end: { line: 3 } } } },
+		]);
+
+		const results = await getAllBlocksInFile(file, app as any);
+		expect(results).toHaveLength(1);
+		expect(results[0].blockId).toBe("codeid");
+	});
+
+	it("includes headings using the heading prefix from the block cache", async () => {
+		const file = tf({ path: "note.md" });
+		app.metadataCache.setBlockCache("note.md", [
+			{ display: "# Heading", node: { position: { start: { line: 1 }, end: { line: 1 } } } },
+		]);
+
+		const results = await getAllBlocksInFile(file, app as any);
+		expect(results).toHaveLength(1);
+		expect(results[0].blockText).toBe("# Heading");
+	});
+
+	it("falls back to metadataCache sections when block cache is unavailable", async () => {
 		const file = tf({ path: "note.md" });
 		app.vault.addFile(file, "Paragraph text ^abc123");
 		app.metadataCache.setFileCache("note.md", {
@@ -500,146 +593,49 @@ describe("getAllBlocksInFile", () => {
 				},
 			],
 		});
+		app.metadataCache.disableBlockCache();
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
 		const results = await getAllBlocksInFile(file, app as any);
 		expect(results).toHaveLength(1);
-		expect(results[0].type).toBe("block");
 		expect(results[0].blockId).toBe("abc123");
 		expect(results[0].blockText).toBe("Paragraph text");
+		warnSpy.mockRestore();
 	});
 
-	it("extracts blocks without block IDs", async () => {
+	it("includes headings in the section fallback", async () => {
 		const file = tf({ path: "note.md" });
-		app.vault.addFile(file, "Plain paragraph");
-		app.metadataCache.setFileCache("note.md", {
-			sections: [
-				{
-					type: "paragraph",
-					position: {
-						start: { line: 0, col: 0, offset: 0 },
-						end: { line: 0, col: 15, offset: 15 },
-					},
-				},
-			],
-		});
-
-		const results = await getAllBlocksInFile(file, app as any);
-		expect(results).toHaveLength(1);
-		expect(results[0].blockId).toBeNull();
-		expect(results[0].blockText).toBe("Plain paragraph");
-	});
-
-	it("filters blocks by query matching block text", async () => {
-		const file = tf({ path: "note.md" });
-		app.vault.addFile(file, "First paragraph\n\nSecond paragraph");
-		app.metadataCache.setFileCache("note.md", {
-			sections: [
-				{
-					type: "paragraph",
-					position: {
-						start: { line: 0, col: 0, offset: 0 },
-						end: { line: 0, col: 16, offset: 16 },
-					},
-				},
-				{
-					type: "paragraph",
-					position: {
-						start: { line: 2, col: 0, offset: 18 },
-						end: { line: 2, col: 17, offset: 35 },
-					},
-				},
-			],
-		});
-
-		const results = await getAllBlocksInFile(file, app as any, "Second");
-		expect(results).toHaveLength(1);
-		expect(results[0].blockText).toBe("Second paragraph");
-	});
-
-	it("filters blocks by query matching block ID", async () => {
-		const file = tf({ path: "note.md" });
-		app.vault.addFile(file, "Paragraph ^abc123\n\nOther ^def456");
-		app.metadataCache.setFileCache("note.md", {
-			sections: [
-				{
-					type: "paragraph",
-					position: {
-						start: { line: 0, col: 0, offset: 0 },
-						end: { line: 0, col: 17, offset: 17 },
-					},
-				},
-				{
-					type: "paragraph",
-					position: {
-						start: { line: 2, col: 0, offset: 19 },
-						end: { line: 2, col: 13, offset: 32 },
-					},
-				},
-			],
-		});
-
-		const results = await getAllBlocksInFile(file, app as any, "def456");
-		expect(results).toHaveLength(1);
-		expect(results[0].blockId).toBe("def456");
-	});
-
-	it("handles list sections", async () => {
-		const file = tf({ path: "note.md" });
-		app.vault.addFile(file, "- Item 1\n- Item 2 ^listblock");
-		app.metadataCache.setFileCache("note.md", {
-			sections: [
-				{
-					type: "list",
-					position: {
-						start: { line: 0, col: 0, offset: 0 },
-						end: { line: 1, col: 16, offset: 28 },
-					},
-				},
-			],
-		});
-
-		const results = await getAllBlocksInFile(file, app as any);
-		expect(results).toHaveLength(1);
-		expect(results[0].blockId).toBe("listblock");
-	});
-
-	it("handles code sections", async () => {
-		const file = tf({ path: "note.md" });
-		app.vault.addFile(file, "```\ncode block\n``` ^codeid");
-		app.metadataCache.setFileCache("note.md", {
-			sections: [
-				{
-					type: "code",
-					position: {
-						start: { line: 0, col: 0, offset: 0 },
-						end: { line: 2, col: 11, offset: 26 },
-					},
-				},
-			],
-		});
-
-		const results = await getAllBlocksInFile(file, app as any);
-		expect(results).toHaveLength(1);
-		expect(results[0].blockId).toBe("codeid");
-	});
-
-	it("skips non-block section types", async () => {
-		const file = tf({ path: "note.md" });
-		app.vault.addFile(file, "# Heading");
+		app.vault.addFile(file, "# TODO");
 		app.metadataCache.setFileCache("note.md", {
 			sections: [
 				{
 					type: "heading",
 					position: {
 						start: { line: 0, col: 0, offset: 0 },
-						end: { line: 0, col: 9, offset: 9 },
+						end: { line: 0, col: 6, offset: 6 },
 					},
 				},
 			],
 		});
+		app.metadataCache.disableBlockCache();
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
 		const results = await getAllBlocksInFile(file, app as any);
-		expect(results).toEqual([]);
+		expect(results).toHaveLength(1);
+		expect(results[0].blockText).toBe("# TODO");
+		warnSpy.mockRestore();
+	});
+
+	it("warns once per app when block cache is unavailable", async () => {
+		const file = tf({ path: "note.md" });
+		app.metadataCache.disableBlockCache();
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+		await getAllBlocksInFile(file, app as any);
+		await getAllBlocksInFile(file, app as any);
+
+		expect(warnSpy).toHaveBeenCalledTimes(1);
+		warnSpy.mockRestore();
 	});
 });
 
@@ -744,19 +740,11 @@ describe("getSuggestionItems", () => {
 
 	it("routes current block query", async () => {
 		const file = tf({ path: "note.md" });
-		app.vault.addFile(file, "Text ^block1");
+		app.vault.addFile(file);
 		app.workspace.setActiveFile(file);
-		app.metadataCache.setFileCache("note.md", {
-			sections: [
-				{
-					type: "paragraph",
-					position: {
-						start: { line: 0, col: 0, offset: 0 },
-						end: { line: 0, col: 12, offset: 12 },
-					},
-				},
-			],
-		});
+		app.metadataCache.setBlockCache("note.md", [
+			{ display: "Text", node: { id: "block1", position: { start: { line: 1 }, end: { line: 1 } } } },
+		]);
 
 		const results = await getSuggestionItems("#^block1", app as any, true);
 		expect(results).toHaveLength(1);
@@ -778,18 +766,10 @@ describe("getSuggestionItems", () => {
 
 	it("routes file block query", async () => {
 		const file = tf({ path: "mynote.md" });
-		app.vault.addFile(file, "Text ^block1");
-		app.metadataCache.setFileCache("mynote.md", {
-			sections: [
-				{
-					type: "paragraph",
-					position: {
-						start: { line: 0, col: 0, offset: 0 },
-						end: { line: 0, col: 12, offset: 12 },
-					},
-				},
-			],
-		});
+		app.vault.addFile(file);
+		app.metadataCache.setBlockCache("mynote.md", [
+			{ display: "Text", node: { id: "block1", position: { start: { line: 1 }, end: { line: 1 } } } },
+		]);
 
 		const results = await getSuggestionItems("mynote#^block1", app as any, true);
 		expect(results).toHaveLength(1);

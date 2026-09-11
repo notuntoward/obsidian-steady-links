@@ -10,7 +10,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { renderSuggestionItem, flashSuggestContainer } from "../src/suggestionLogic";
-import { App, MarkdownRenderChild, MarkdownRenderer, TFile } from "./__mocks__/obsidian";
+import { App, TFile } from "./__mocks__/obsidian";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function tf(overrides: ConstructorParameters<typeof TFile>[0]): any {
@@ -341,7 +341,7 @@ describe("renderSuggestionItem — block items", () => {
 		expect(el.textContent).toContain("^abc123");
 	});
 
-	it("renders the full block markdown and marks it for visual clamping", () => {
+	it("renders the full block text without truncation", () => {
 		const el = document.createElement("div");
 		const longText = "x".repeat(150);
 		const item: SuggestionItem = {
@@ -349,16 +349,11 @@ describe("renderSuggestionItem — block items", () => {
 			blockId: null,
 			blockText: longText,
 		};
-		const spy = vi.spyOn(MarkdownRenderer, "render");
 		renderSuggestionItem(item, el, "", app as any);
-		expect(spy.mock.calls[0][1]).toBe(longText);
-		expect(
-			el.querySelector(".suggestion-title")?.classList.contains("steady-links-block-preview")
-		).toBe(true);
-		spy.mockRestore();
+		expect(el.textContent).toContain(longText);
 	});
 
-	it("highlights the matched query text in the rendered block preview", () => {
+	it("highlights the matched query text in the block preview", () => {
 		const el = document.createElement("div");
 		const item: SuggestionItem = {
 			type: "block",
@@ -367,21 +362,6 @@ describe("renderSuggestionItem — block items", () => {
 		};
 		renderSuggestionItem(item, el, "^block", app as any);
 		expect(el.querySelector(".suggestion-highlight")?.textContent).toBe("block");
-	});
-
-	it("delegates block preview rendering to Obsidian's MarkdownRenderer", () => {
-		const el = document.createElement("div");
-		const item: SuggestionItem = {
-			type: "block",
-			blockId: null,
-			blockText: "Some [[Link|alias]] content",
-		};
-		const spy = vi.spyOn(MarkdownRenderer, "render");
-		renderSuggestionItem(item, el, "^abc", app as any);
-		expect(spy).toHaveBeenCalledTimes(1);
-		expect(spy.mock.calls[0][1]).toBe("Some [[Link|alias]] content");
-		expect(spy.mock.calls[0][4]).toBeInstanceOf(MarkdownRenderChild);
-		spy.mockRestore();
 	});
 });
 
