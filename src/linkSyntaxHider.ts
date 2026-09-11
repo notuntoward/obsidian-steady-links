@@ -33,6 +33,7 @@ import {
 	Transaction,
 	ChangeSet,
 } from "@codemirror/state";
+import { editorInfoField, MarkdownView } from "obsidian";
 import { wikiLinkVisibleTextOffset, type WikiLinkHidingOptions } from "./utils";
 import { findVisibleSuggestionContainer } from "./suggestionLogic";
 
@@ -409,18 +410,27 @@ function isLivePreview(view: EditorView): boolean {
 }
 
 function getModeForView(view: EditorView): "source" | "preview" | "live" | null {
-	const app = (window as any).app;
+	// Obsidian community plugin guidelines discourage reaching for the
+	// global `window.app` singleton in favor of a properly scoped `App`
+	// reference. A bare CM6 `EditorView` extension has no `this.app` to use,
+	// but the public `editorInfoField` StateField gives us the exact same
+	// `App` instance (via the editor's associated `MarkdownFileInfo`)
+	// without touching `window` or requiring an `any` cast.
+	const app = view.state.field(editorInfoField, false)?.app;
 	if (!app?.workspace?.getLeavesOfType) return null;
 	const leaves = app.workspace.getLeavesOfType("markdown");
 	for (const leaf of leaves) {
-		const markdownView = leaf?.view as any;
-		const contentEl: HTMLElement | undefined =
-			markdownView?.contentEl ?? markdownView?.containerEl;
-		if (!contentEl) continue;
+		if (!(leaf.view instanceof MarkdownView)) continue;
+		const markdownView = leaf.view;
+		const contentEl: HTMLElement = markdownView.contentEl ?? markdownView.containerEl;
 		if (!contentEl.contains(view.dom)) continue;
-		const mode = markdownView?.getMode?.();
+		// getMode()'s declared type is 'source' | 'preview', but Obsidian's
+		// actual runtime value distinguishes live-preview editing from
+		// source-mode editing here too; compare against the broader set of
+		// values this function has always recognized.
+		const mode = markdownView.getMode() as string;
 		if (mode === "source" || mode === "preview" || mode === "live") {
-			return mode;
+			return mode as "source" | "preview" | "live";
 		}
 	}
 	return null;

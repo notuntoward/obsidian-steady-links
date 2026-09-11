@@ -287,6 +287,8 @@ export interface EditorState {
 
 export class Editor {
 	private state: EditorState;
+	/** Records the `origin` passed to the most recent replaceRange() call, for test assertions. */
+	lastReplaceRangeOrigin: string | undefined;
 
 	constructor(initialState?: Partial<EditorState>) {
 		this.state = {
@@ -358,8 +360,10 @@ export class Editor {
 	replaceRange(
 		text: string,
 		from: { line: number; ch: number },
-		to?: { line: number; ch: number }
+		to?: { line: number; ch: number },
+		origin?: string
 	): void {
+		this.lastReplaceRangeOrigin = origin;
 		const toPos = to ?? from;
 
 		if (from.line === toPos.line) {
@@ -382,6 +386,37 @@ export class Editor {
 		if (!this.state.selection) return;
 		const { from, to } = this.state.selection;
 		this.replaceRange(text, from, to);
+	}
+
+	/**
+	 * Minimal mock of Obsidian's public `Editor.transaction(tx, origin?)`,
+	 * which applies a set of changes and the resulting selection atomically
+	 * in one dispatch. Only supports what this plugin actually uses: a
+	 * single change plus a resulting cursor/selection.
+	 */
+	transaction(
+		tx: {
+			changes?: Array<{
+				from: { line: number; ch: number };
+				to?: { line: number; ch: number };
+				text: string;
+			}>;
+			selection?: { from: { line: number; ch: number }; to?: { line: number; ch: number } };
+		},
+		origin?: string
+	): void {
+		if (tx.changes) {
+			for (const change of tx.changes) {
+				this.replaceRange(change.text, change.from, change.to, origin);
+			}
+		}
+		if (tx.selection) {
+			if (tx.selection.to) {
+				this.setSelection(tx.selection.from, tx.selection.to);
+			} else {
+				this.setCursor(tx.selection.from);
+			}
+		}
 	}
 
 	// Test helper methods

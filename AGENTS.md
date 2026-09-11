@@ -498,6 +498,262 @@ when moving forward and could only be reached when moving backward.
 - Do NOT change `return h.to;` to `return Math.min(doc.length, h.to + 1);`.
 - Do NOT skip the space or character following `h.to` during forward navigation.
 
+## Critical: EditorFileSuggest completions must set text and cursor atomically via editor.transaction
+
+`EditorFileSuggest.completeSelection()` (Tab/`#`/`^` in-editor `[[` completion)
+and `buildFullLinkReplacement()` (shared by `selectSuggestion` and
+`createUnresolvedLink`) MUST apply their document edit and the resulting
+cursor/selection in a single `editor.transaction({ changes, selection },
+origin?)` call. NEVER split this into a separate `editor.replaceRange(...)`
+followed by a later `editor.setCursor(...)` / `editor.setSelection(...)`.
+
+### The bug pattern
+
+This plugin's own cursor-corrector (`cursorCorrector` in `linkSyntaxHider.ts`)
+explicitly skips its trailing-syntax-boundary correction logic for
+doc-changing transactions (see the `!update.docChanged` guards documented
+elsewhere in this file) so that normal typing is never interfered with. A
+*separate*, later, pure-selection dispatch (no doc change) has no such
+protection: the corrector treats it exactly like arrow-key navigation
+landing on a boundary.
+
+Tab-completing a query into a real file name (e.g. `[[not` -> `[[Note-05`)
+turns the completed text into a freshly-recognized hidden wikilink, and the
+completion's target cursor position sits exactly on that link's
+`textTo`/trailing-boundary (right before the now-hidden `]]`). If the cursor
+is placed there via a *separate* `setCursor()` call after the edit, the
+corrector "corrects" it forward past the `]]` on the very next update. The
+next `onTrigger` check then (correctly) sees the cursor as outside the link
+and closes the suggest popup — even though the completion itself worked.
+This is exactly the real-Obsidian regression that motivated this section:
+Tab appeared to "exit" the `[[` suggest instead of keeping it open for
+`#`/`^` continuation, and every unit test still passed because the test
+mock's `Editor` doesn't simulate the cursor-corrector at all — only a test
+that asserts `editor.transaction(...)` was called (rather than only
+asserting final editor state) can catch a regression back to two separate
+dispatches.
+
+### The correct code
+
+```typescript
+editor.transaction(
+    {
+        changes: [{ from: context.start, to: context.end, text: completionText }],
+        selection: { from: newCursor },
+    },
+    AUTOCOMPLETE_USER_EVENT // "input.type" — see the section below
+);
+```
+
+This mirrors stock Obsidian's own built-in `[[` suggest, whose
+`selectSuggestion` uses `editor.transaction({ changes, selection },
+"input.autocomplete")` for precisely this reason.
+
+### How to verify
+
+The test suite includes dedicated regression-guard tests that spy on
+`editor.transaction` and assert it is called exactly once with both
+`changes` and `selection` present in the same call:
+
+```
+"applies the completion text and the resulting cursor atomically via editor.transaction, never a separate setCursor call"
+"applies the full link insertion and cursor atomically via editor.transaction"
+"applies the full link insertion and the resulting cursor atomically via editor.transaction"
+```
+
+in `tests/EditorFileSuggest.test.ts`. These tests fail if the implementation
+reverts to `editor.replaceRange(...)` + `editor.setCursor(...)` as two
+separate calls, even though every other assertion in that file (which only
+checks the final line text / cursor position) would still pass, since the
+test mock's `Editor.transaction()` simply delegates to the same
+`replaceRange`/`setCursor` internally and cannot itself detect the
+real-Obsidian corrector-interference bug.
+
+### What NOT to do
+
+- Do NOT reintroduce `editor.replaceRange(text, from, to, origin)` followed
+  by a separate `editor.setCursor(pos)` / `editor.setSelection(from, to)` in
+  `completeSelection` or `buildFullLinkReplacement` — even though this looks
+  behaviorally identical and passes naive "does the final text/cursor match"
+  tests, it reintroduces the popup-closes-after-Tab bug in real Obsidian.
+- Do NOT "fix" a future report of this same symptom by re-adding a
+  `suggestions.update()` call or similar private-internals poke; the actual
+  cause was the split dispatch, not a missing refresh call.
+- Do NOT remove the `editor.transaction` spy assertions from the tests named
+  above on the grounds that they duplicate the "final state" assertions
+  already in the same test — they intentionally test a different thing
+  (dispatch shape, not just outcome) that the final-state assertions cannot
+  catch.
+
+## Critical: EditorFileSuggest completions must retrigger via `this.trigger()`, not rely on Obsidian's own debounced re-trigger
+
+After `completeSelection()` edits the document (Tab/`#`/`^`), it must call
+`this.trigger(editor, file, true)` itself, synchronously, via the private
+`retriggerSuggest()` helper — do not remove this call or assume Obsidian's
+own editor update listener will notice the edit and reopen the popup on its
+own.
+
+### Why this exists
+
+`trigger()` is the inherited (but not `obsidian.d.ts`-documented) method the
+base `EditorSuggest` class already uses internally to run
+`onTrigger`/`getSuggestions`/render on every keystroke; Obsidian's own editor
+update listener calls it after a debounced delay and only forces a redisplay
+when its own internal "was this typing?" heuristic (based on the
+transaction's `userEvent` classification) says so. That heuristic was not
+reliable enough in practice to keep the popup open after a Tab completion —
+see the git history / PR description for this fix for the concrete
+real-Obsidian console-log evidence that motivated bypassing it. Calling
+`this.trigger(...)` ourselves, immediately and unconditionally
+(`forceShow=true`), removes the dependency on that undocumented timing
+entirely.
+
+`retriggerSuggest()` accesses `this.trigger` via a narrow, explicitly-typed
+`unknown` cast (not `any`) and defensively checks
+`typeof trigger === "function"` before calling it, so that if a future
+Obsidian version renames or removes this internal method, the suggest simply
+stops force-refreshing (falls back to whatever Obsidian's own debounced
+re-trigger still does) instead of throwing.
+
+### What NOT to do
+
+- Do NOT delete the `retriggerSuggest()` call from `completeSelection` on the
+  assumption that tagging the edit's `origin` correctly is sufficient by
+  itself to keep the popup open — it is not (see the git history for this
+  file for the specific evidence).
+- Do NOT widen the `as unknown as { trigger?: ... }` cast to a plain `as any`
+  — the narrow, explicit shape is what makes the `typeof trigger ===
+  "function"` guard meaningful type-checked code rather than a silent no-op.
+
+## Critical: EditorFileSuggest completion edits must be tagged "input.type", not a bespoke userEvent
+
+`completeSelection`'s `editor.transaction(...)` call must tag its
+`AUTOCOMPLETE_USER_EVENT` origin as exactly `"input.type"` — not
+`"input.autocomplete"` or any other custom string, even though stock
+Obsidian's own suggest uses `"input.autocomplete"` for its equivalent edit.
+
+### Why this exists
+
+Several of this plugin's own CM6 `EditorState.transactionFilter`s in
+`linkSyntaxHider.ts` (e.g. `pasteDuplicateSyntaxFix`) explicitly check
+`tr.isUserEvent("input.type")` to distinguish genuine keyboard typing from
+other kinds of edits (paste, programmatic replacement, etc.) and skip their
+special-case rewriting logic specifically for real typing. CodeMirror's
+`isUserEvent(event)` matches an exact string OR a dot-prefixed subtype (e.g.
+`"input.type.compose"` matches `isUserEvent("input.type")`), but a sibling
+tag like `"input.autocomplete"` matches the broader `isUserEvent("input")`
+checks elsewhere in the same file WITHOUT matching the narrower
+`isUserEvent("input.type")` checks — meaning a custom tag routes our
+completion edit through different logic than genuine typing hits, in a file
+already documented above as fragile and repeatedly broken by AI edits.
+
+### What NOT to do
+
+- Do NOT change `AUTOCOMPLETE_USER_EVENT` to `"input.autocomplete"` (matching
+  stock Obsidian) or to `undefined` (no tag) — either one can route the edit
+  through different `linkSyntaxHider.ts` filter branches than genuine
+  typing, in ways that are easy to get wrong and hard to notice without a
+  live-Obsidian repro.
+- If you need to add a NEW `isUserEvent(...)`-based filter to
+  `linkSyntaxHider.ts` in the future, check whether it should treat
+  `"input.type"` specially, and if so, confirm this plugin's own
+  `AUTOCOMPLETE_USER_EVENT` edits are handled the same way real typing is.
+
+## Critical: `#`/`^` in-editor `[[` completion must require a non-empty, already-typed file query
+
+`EditorFileSuggest`'s `#`/`^` key handlers must gate on
+`hasTypedPlainFileQuery()`, which requires the current query to be
+**non-empty** in addition to being a plain file search (not already a
+heading/block/alias query). Do not gate on the plain-file-search check
+alone.
+
+### Why this exists
+
+Immediately after typing bare `[[` (before typing any file name), the query
+is empty and the suggest shows the unfiltered file list with some file
+pre-highlighted (normal listbox behavior — the first/most-recent item is
+always highlighted by default). Without the non-empty check, pressing `#` or
+`^` at that point would complete-select whatever happens to be highlighted
+in that unfiltered list and link to it — silently picking an unrelated note
+the user never chose, just because they pressed `#` before typing a file
+name. With the non-empty check, `#`/`^` on an empty query instead fall
+through to normal typing, which `parseSuggestionQuery` already interprets as
+"search headings/blocks of the *current* file" — the actually useful,
+expected behavior for typing `[[#` or `[[^` with nothing else typed.
+
+### How to verify
+
+```
+"does not complete-select the top suggestion on an untouched, empty query"
+```
+
+appears in both the `'#'` and `'^'` key handler describe blocks in
+`tests/EditorFileSuggest.test.ts`.
+
+### What NOT to do
+
+- Do NOT simplify `hasTypedPlainFileQuery` back to just
+  `parseSuggestionQuery(context.query).type === "file"` without the
+  `context.query.trim() === ""` guard — an empty query also parses as type
+  `"file"` (that's the type `getSuggestionItems` uses for the unfiltered file
+  list), so removing the guard silently reintroduces the auto-select bug.
+
+## Note: avoid the global `window.app`; prefer a threaded-through `App` reference
+
+Obsidian's plugin guidelines call for using `this.app` (the `App` instance
+your `Plugin` subclass already has) rather than reaching for the global
+`window.app` singleton, since it isn't guaranteed to be present or stable and
+bypasses whatever `App` instance is actually relevant to the code running.
+
+Bare CM6-level code (a `ViewPlugin`, a module-level helper called from one,
+etc.) has no `this.app` to use, since it isn't a method on the plugin class.
+Prefer accessing the `App` through a public Obsidian `StateField` that
+already threads it through the `EditorView`'s state, such as
+`editorInfoField` (`view.state.field(editorInfoField, false)?.app`), over
+`(window as any).app`. See `getModeForView()` in `linkSyntaxHider.ts` for the
+pattern — it needs the app only to enumerate `workspace.getLeavesOfType`, and
+gets it via `editorInfoField` rather than the global.
+
+### What NOT to do
+
+- Do NOT add a new `(window as any).app` (or any other global-`app`) access
+  point to this codebase. If a CM6-level function genuinely needs an `App`
+  reference and no `EditorView`/`Transaction` is available to pull one from
+  via `editorInfoField`, thread the `App` in explicitly (a closure
+  parameter, a `StateField` this plugin controls, etc.) instead.
+
+## Critical: debug-logging flags (`*_DEBUG`) must default to `false`
+
+This repo has more than one gated `console.log` debug helper used to
+diagnose hard-to-reproduce real-Obsidian issues (`EDITOR_SUGGEST_DEBUG` in
+`EditorFileSuggest.ts`, `STEADY_LINKS_DEBUG` in `linkSyntaxHider.ts`). It is
+fine, and sometimes necessary, to flip one of these to `true` temporarily
+while diagnosing a live bug with the user — but it MUST be flipped back to
+`false` before the change is considered done. Obsidian's community plugin
+review guidelines require plugins not to log to the console during normal
+operation; leaving a debug flag on ships console spam to every user.
+
+### How to verify
+
+`tests/compliance.debugFlags.test.ts` statically scans every `src/*.ts` file
+for any `const ..._DEBUG... = <boolean>` declaration and fails the build if
+any of them are `true`. This is a repo-wide guard, not specific to any one
+flag — it also catches any new debug flag added in the future, as long as
+its name contains `DEBUG`.
+
+### What NOT to do
+
+- Do NOT leave a `*_DEBUG` flag set to `true` as the final state of a change,
+  even if the user asked for the extra logging while actively debugging an
+  issue together — flip it back to `false` once the issue is confirmed fixed.
+- Do NOT name a new debug flag in a way that avoids containing `DEBUG` purely
+  to dodge the compliance scan — name it accurately; the scan is a safety
+  net, not the actual policy.
+- Do NOT delete the gated `debugLog`/logging helpers themselves just because
+  they're currently disabled — they are useful, low-noise, opt-in
+  instrumentation for diagnosing future real-Obsidian-only issues that don't
+  reproduce in the unit test mocks.
+
 ## Note: worktree builds (Agent Manager) and the vault junction
 
 Steady Links also ships a pre-built `main.js` that the vault loads via a

@@ -196,6 +196,37 @@ describe("EditorFileSuggest.selectSuggestion — file items", () => {
 		await suggest.selectSuggestion(item, {} as any);
 		expect(editor.getLine(0)).toBe("[[mynote]]");
 	});
+
+	it("applies the full link insertion and the resulting cursor atomically via editor.transaction", async () => {
+		// Regression guard: buildFullLinkReplacement (shared by
+		// selectSuggestion and createUnresolvedLink) must set the change and
+		// the resulting selection in one editor.transaction() call. A
+		// separate, later setCursor()/setSelection() call risks the same
+		// cursor-corrector interference documented on completeSelection's
+		// equivalent guard test, even though today's plain-file target
+		// position happens to land outside any hidden syntax range.
+		editor.setLines(["[[myn"]);
+		setContext("myn", 2, 5);
+
+		const targetFile = tf({ path: "mynote.md" });
+		const item: SuggestionItem = {
+			type: "file",
+			file: targetFile as any,
+			basename: "mynote",
+			name: "mynote.md",
+			extension: "md",
+		};
+
+		const transactionSpy = vi.spyOn(editor, "transaction");
+
+		await suggest.selectSuggestion(item, {} as any);
+
+		expect(transactionSpy).toHaveBeenCalledTimes(1);
+		expect(transactionSpy).toHaveBeenCalledWith({
+			changes: [{ from: { line: 0, ch: 0 }, to: { line: 0, ch: 5 }, text: "[[mynote]]" }],
+			selection: { from: { line: 0, ch: "[[mynote]]".length } },
+		});
+	});
 });
 
 // ============================================================================
@@ -494,5 +525,444 @@ describe("EditorFileSuggest.getSuggestions", () => {
 
 		const results = await suggest.getSuggestions(context as any);
 		expect(results.some((r) => r.type === "file")).toBe(true);
+	});
+});
+
+// ============================================================================
+// Tab / "#" / "^" / Shift+Enter scope key handlers
+//
+// These mirror stock Obsidian's own `[[` suggest: Tab completes the
+// highlighted suggestion but keeps the popup open (via Editor.replaceRange's
+// public `origin` parameter, not any private suggest internals); "#"/"^" do
+// the same while also switching into heading/block mode; Shift+Enter creates
+// an unresolved link to the literally-typed query.
+// ============================================================================
+
+function getScopeHandler(suggest: EditorFileSuggest, key: string, modifiers: string[] | null = null) {
+	const keys = (suggest as any).scope.keys as Array<{
+		modifiers: string[] | null;
+		key: string;
+		func: (evt?: any) => boolean | undefined;
+	}>;
+	const handler = keys.find(
+		(k) => k.key === key && JSON.stringify(k.modifiers) === JSON.stringify(modifiers)
+	);
+	if (!handler) throw new Error(`No scope handler registered for key "${key}"`);
+	return handler.func;
+}
+
+function setSelectedSuggestionDom(): void {
+	document.body.innerHTML = "";
+	const container = document.createElement("div");
+	container.className = "suggestion-container";
+	const other = document.createElement("div");
+	other.className = "suggestion-item";
+	const selected = document.createElement("div");
+	selected.className = "suggestion-item is-selected";
+	container.appendChild(other);
+	container.appendChild(selected);
+	document.body.appendChild(container);
+}
+
+describe("EditorFileSuggest Tab key handler", () => {
+	let app: App;
+	let editor: Editor;
+	let file: TFile;
+	let suggest: EditorFileSuggest;
+
+	beforeEach(() => {
+		app = new App();
+		editor = new Editor();
+		file = tf({ path: "note.md" });
+		suggest = makeSuggest(app);
+	});
+
+	function setContext(query: string, startCh: number, endCh: number, line = 0) {
+		(suggest as any).context = {
+			editor: editor as any,
+			file,
+			start: { line, ch: startCh },
+			end: { line, ch: endCh },
+			query,
+		};
+	}
+
+	it("completes the highlighted item in place using the input.type origin (indistinguishable from real typing)", () => {
+		editor.setLines(["[[myn"]);
+		setContext("myn", 2, 5);
+		const item: SuggestionItem = {
+			type: "file",
+			basename: "mynote",
+			name: "mynote.md",
+			extension: "md",
+		};
+		(suggest as any).lastSuggestions = [item];
+		setSelectedSuggestionDom();
+
+		const handler = getScopeHandler(suggest, "Tab");
+		const result = handler({ preventDefault: () => {}, stopPropagation: () => {} });
+
+		expect(result).toBe(false); // consumed
+		expect(editor.getLine(0)).toBe("[[mynote");
+		expect(editor.getCursor().ch).toBe(8);
+		// Tagged as real typing so this plugin's own linkSyntaxHider CM6
+		// filters treat it identically to genuine keystrokes.
+		expect(editor.lastReplaceRangeOrigin).toBe("input.type");
+		// The popup must stay open: the context is updated in place, not cleared.
+		expect((suggest as any).context).not.toBeNull();
+		expect((suggest as any).context.query).toBe("mynote");
+	});
+
+	it("applies the completion text and the resulting cursor atomically via editor.transaction, never a separate setCursor call", () => {
+		// Regression guard for a real-Obsidian bug: this plugin's OWN
+		// cursor-corrector (linkSyntaxHider.ts) explicitly skips correcting
+		// the cursor for doc-changing transactions (`!update.docChanged`
+		// guards), but does NOT skip a separate, later pure-selection
+		// dispatch. A prior implementation called `editor.replaceRange(...)`
+		// followed by a separate `editor.setCursor(...)` call; the corrector
+		// treated that second, selection-only dispatch as arrow-key-style
+		// navigation landing on the freshly-completed link's hidden trailing
+		// "]]" boundary and "corrected" the cursor forward past it — which
+		// made the very next `onTrigger` check report "outside the link" and
+		// close the popup. Setting the change AND the resulting selection in
+		// ONE `editor.transaction({changes, selection}, origin)` call (like
+		// stock Obsidian's own suggest does) keeps the selection update
+		// under the same docChanged guard as the edit itself.
+		//
+		// If this test starts failing because `completeSelection` was
+		// rewritten to call `editor.replaceRange()` + `editor.setCursor()`
+		// separately again, that reintroduces this exact bug even though
+		// every other assertion in this file (which only checks final
+		// editor state) would still pass.
+		editor.setLines(["[[myn"]);
+		setContext("myn", 2, 5);
+		const item: SuggestionItem = {
+			type: "file",
+			basename: "mynote",
+			name: "mynote.md",
+			extension: "md",
+		};
+		(suggest as any).lastSuggestions = [item];
+		setSelectedSuggestionDom();
+
+		const transactionSpy = vi.spyOn(editor, "transaction");
+
+		const handler = getScopeHandler(suggest, "Tab");
+		handler({ preventDefault: () => {}, stopPropagation: () => {} });
+
+		// If completeSelection reverts to two separate dispatches, this spy
+		// either isn't called at all, or is called without the selection
+		// bundled into the same call — either way this assertion fails.
+		expect(transactionSpy).toHaveBeenCalledTimes(1);
+		expect(transactionSpy).toHaveBeenCalledWith(
+			{
+				changes: [{ from: { line: 0, ch: 2 }, to: { line: 0, ch: 5 }, text: "mynote" }],
+				selection: { from: { line: 0, ch: 8 } },
+			},
+			"input.type"
+		);
+	});
+
+	it("directly calls the inherited trigger() to force the popup to refresh, rather than waiting on Obsidian's own debounced re-trigger", () => {
+		// This is the actual fix for the real-Obsidian regression where the
+		// popup closed after Tab: relying on Editor.replaceRange's `origin`
+		// param alone to get Obsidian's editor update listener to notice the
+		// edit and re-open the popup on its own schedule was NOT reliable in
+		// practice. Calling this.trigger(...) ourselves, synchronously and
+		// unconditionally (forceShow=true), is what actually keeps it open.
+		editor.setLines(["[[myn"]);
+		setContext("myn", 2, 5);
+		const item: SuggestionItem = {
+			type: "file",
+			basename: "mynote",
+			name: "mynote.md",
+			extension: "md",
+		};
+		(suggest as any).lastSuggestions = [item];
+		setSelectedSuggestionDom();
+
+		const triggerSpy = vi.fn().mockReturnValue(true);
+		(suggest as any).trigger = triggerSpy;
+
+		const handler = getScopeHandler(suggest, "Tab");
+		handler({ preventDefault: () => {}, stopPropagation: () => {} });
+
+		expect(triggerSpy).toHaveBeenCalledTimes(1);
+		expect(triggerSpy).toHaveBeenCalledWith(editor, file, true);
+	});
+
+	it("flashes instead of editing when the query already matches the completion", () => {
+		editor.setLines(["[[mynote"]);
+		setContext("mynote", 2, 8);
+		const item: SuggestionItem = {
+			type: "file",
+			basename: "mynote",
+			name: "mynote.md",
+			extension: "md",
+		};
+		(suggest as any).lastSuggestions = [item];
+		setSelectedSuggestionDom();
+
+		const handler = getScopeHandler(suggest, "Tab");
+		const result = handler({ preventDefault: () => {}, stopPropagation: () => {} });
+
+		expect(result).toBe(false);
+		expect(editor.getLine(0)).toBe("[[mynote"); // unchanged
+	});
+
+	it("does not consume the key when there is no active suggest context", () => {
+		const handler = getScopeHandler(suggest, "Tab");
+		const result = handler({ preventDefault: () => {}, stopPropagation: () => {} });
+		expect(result).toBe(true); // not consumed, falls through to default Tab behavior
+	});
+});
+
+describe("EditorFileSuggest '#' key handler", () => {
+	let app: App;
+	let editor: Editor;
+	let file: TFile;
+	let suggest: EditorFileSuggest;
+
+	beforeEach(() => {
+		app = new App();
+		editor = new Editor();
+		file = tf({ path: "note.md" });
+		suggest = makeSuggest(app);
+	});
+
+	function setContext(query: string, startCh: number, endCh: number, line = 0) {
+		(suggest as any).context = {
+			editor: editor as any,
+			file,
+			start: { line, ch: startCh },
+			end: { line, ch: endCh },
+			query,
+		};
+	}
+
+	it("completes the file and switches into heading mode while the query is a plain file search", () => {
+		editor.setLines(["[[myn"]);
+		setContext("myn", 2, 5);
+		const item: SuggestionItem = {
+			type: "file",
+			basename: "mynote",
+			name: "mynote.md",
+			extension: "md",
+		};
+		(suggest as any).lastSuggestions = [item];
+		setSelectedSuggestionDom();
+
+		const handler = getScopeHandler(suggest, "#");
+		const result = handler({ preventDefault: () => {}, stopPropagation: () => {} });
+
+		expect(result).toBe(false);
+		expect(editor.getLine(0)).toBe("[[mynote#");
+		expect(editor.lastReplaceRangeOrigin).toBe("input.type");
+		expect((suggest as any).context.query).toBe("mynote#");
+	});
+
+	it("does not intercept once the query is already a heading/block/alias search", () => {
+		editor.setLines(["[[mynote#Intro"]);
+		setContext("mynote#Intro", 2, 14);
+		(suggest as any).lastSuggestions = [];
+
+		const handler = getScopeHandler(suggest, "#");
+		const result = handler({ preventDefault: () => {}, stopPropagation: () => {} });
+
+		expect(result).toBe(true); // not consumed — "#" types normally
+		expect(editor.getLine(0)).toBe("[[mynote#Intro"); // unchanged by the handler
+	});
+
+	it("does not swallow the keystroke when the query is plain-file but nothing is highlighted", () => {
+		// Query is still a plain file search (passes the mode gate), but there
+		// is no highlighted suggestion to complete (e.g. an empty result list).
+		// The "#" must be left to type normally, not silently disappear.
+		editor.setLines(["[[zzz"]);
+		setContext("zzz", 2, 5);
+		(suggest as any).lastSuggestions = [];
+		document.body.innerHTML = "";
+
+		const preventDefault = vi.fn();
+		const stopPropagation = vi.fn();
+		const handler = getScopeHandler(suggest, "#");
+		const result = handler({ preventDefault, stopPropagation });
+
+		expect(result).toBe(true); // not consumed — falls through to normal typing
+		expect(preventDefault).not.toHaveBeenCalled();
+		expect(stopPropagation).not.toHaveBeenCalled();
+		expect(editor.getLine(0)).toBe("[[zzz"); // unchanged by the handler
+	});
+
+	it("does not complete-select the top suggestion on an untouched, empty query", () => {
+		// Before the user has typed anything after "[[", the query is empty
+		// and the suggest is showing the unfiltered file list. Pressing "#"
+		// here must type "#" normally (searching headings in the *current*
+		// file) rather than silently picking whatever happens to be first in
+		// that unfiltered list and linking to it.
+		editor.setLines(["[["]);
+		setContext("", 2, 2);
+		const item: SuggestionItem = {
+			type: "file",
+			basename: "some-unrelated-file",
+			name: "some-unrelated-file.md",
+			extension: "md",
+		};
+		(suggest as any).lastSuggestions = [item];
+		setSelectedSuggestionDom();
+
+		const preventDefault = vi.fn();
+		const stopPropagation = vi.fn();
+		const handler = getScopeHandler(suggest, "#");
+		const result = handler({ preventDefault, stopPropagation });
+
+		expect(result).toBe(true); // not consumed — "#" types normally
+		expect(preventDefault).not.toHaveBeenCalled();
+		expect(stopPropagation).not.toHaveBeenCalled();
+		expect(editor.getLine(0)).toBe("[["); // unchanged — no file was auto-selected
+	});
+});
+
+describe("EditorFileSuggest '^' key handler", () => {
+	let app: App;
+	let editor: Editor;
+	let file: TFile;
+	let suggest: EditorFileSuggest;
+
+	beforeEach(() => {
+		app = new App();
+		editor = new Editor();
+		file = tf({ path: "note.md" });
+		suggest = makeSuggest(app);
+	});
+
+	function setContext(query: string, startCh: number, endCh: number, line = 0) {
+		(suggest as any).context = {
+			editor: editor as any,
+			file,
+			start: { line, ch: startCh },
+			end: { line, ch: endCh },
+			query,
+		};
+	}
+
+	it("completes the file and switches into block mode while the query is a plain file search", () => {
+		editor.setLines(["[[myn"]);
+		setContext("myn", 2, 5);
+		const item: SuggestionItem = {
+			type: "file",
+			basename: "mynote",
+			name: "mynote.md",
+			extension: "md",
+		};
+		(suggest as any).lastSuggestions = [item];
+		setSelectedSuggestionDom();
+
+		const handler = getScopeHandler(suggest, "^");
+		const result = handler({ preventDefault: () => {}, stopPropagation: () => {} });
+
+		expect(result).toBe(false);
+		expect(editor.getLine(0)).toBe("[[mynote^");
+		expect(editor.lastReplaceRangeOrigin).toBe("input.type");
+	});
+
+	it("does not complete-select the top suggestion on an untouched, empty query", () => {
+		editor.setLines(["[["]);
+		setContext("", 2, 2);
+		const item: SuggestionItem = {
+			type: "file",
+			basename: "some-unrelated-file",
+			name: "some-unrelated-file.md",
+			extension: "md",
+		};
+		(suggest as any).lastSuggestions = [item];
+		setSelectedSuggestionDom();
+
+		const preventDefault = vi.fn();
+		const handler = getScopeHandler(suggest, "^");
+		const result = handler({ preventDefault, stopPropagation: vi.fn() });
+
+		expect(result).toBe(true); // not consumed — "^" types normally
+		expect(preventDefault).not.toHaveBeenCalled();
+		expect(editor.getLine(0)).toBe("[["); // unchanged — no file was auto-selected
+	});
+});
+
+describe("EditorFileSuggest Shift+Enter key handler", () => {
+	let app: App;
+	let editor: Editor;
+	let file: TFile;
+	let suggest: EditorFileSuggest;
+
+	beforeEach(() => {
+		app = new App();
+		editor = new Editor();
+		file = tf({ path: "note.md" });
+		suggest = makeSuggest(app);
+	});
+
+	function setContext(query: string, startCh: number, endCh: number, line = 0) {
+		(suggest as any).context = {
+			editor: editor as any,
+			file,
+			start: { line, ch: startCh },
+			end: { line, ch: endCh },
+			query,
+		};
+	}
+
+	it("creates an unresolved link to the literally-typed query", () => {
+		editor.setLines(["[[does not exist"]);
+		setContext("does not exist", 2, 17);
+
+		const handler = getScopeHandler(suggest, "Enter", ["Shift"]);
+		const result = handler({ preventDefault: () => {}, stopPropagation: () => {} });
+
+		expect(result).toBe(false);
+		expect(editor.getLine(0)).toBe("[[does not exist]]");
+		expect(editor.getCursor().ch).toBe("[[does not exist]]".length);
+	});
+
+	it("consumes an auto-paired ']]' instead of duplicating it", () => {
+		editor.setLines(["[[does not exist]]"]);
+		setContext("does not exist", 2, 16);
+
+		const handler = getScopeHandler(suggest, "Enter", ["Shift"]);
+		handler({ preventDefault: () => {}, stopPropagation: () => {} });
+
+		expect(editor.getLine(0)).toBe("[[does not exist]]");
+	});
+
+	it("applies the full link insertion and cursor atomically via editor.transaction", () => {
+		// Same regression class as completeSelection's atomic-transaction
+		// guard above: buildFullLinkReplacement (shared by this handler and
+		// selectSuggestion) must set the change and the resulting cursor in
+		// one editor.transaction() call, not a separate setCursor() call.
+		editor.setLines(["[[does not exist"]);
+		setContext("does not exist", 2, 17);
+
+		const transactionSpy = vi.spyOn(editor, "transaction");
+
+		const handler = getScopeHandler(suggest, "Enter", ["Shift"]);
+		handler({ preventDefault: () => {}, stopPropagation: () => {} });
+
+		expect(transactionSpy).toHaveBeenCalledTimes(1);
+		expect(transactionSpy).toHaveBeenCalledWith({
+			changes: [{ from: { line: 0, ch: 0 }, to: { line: 0, ch: 17 }, text: "[[does not exist]]" }],
+			selection: { from: { line: 0, ch: "[[does not exist]]".length } },
+		});
+	});
+
+	it("is a no-op on an empty query instead of inserting an empty link", () => {
+		editor.setLines(["[[]]"]);
+		setContext("", 2, 2);
+
+		const preventDefault = vi.fn();
+		const stopPropagation = vi.fn();
+		const handler = getScopeHandler(suggest, "Enter", ["Shift"]);
+		const result = handler({ preventDefault, stopPropagation });
+
+		expect(result).toBe(true); // not consumed
+		expect(preventDefault).not.toHaveBeenCalled();
+		expect(editor.getLine(0)).toBe("[[]]"); // unchanged
 	});
 });

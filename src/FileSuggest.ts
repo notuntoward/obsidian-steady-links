@@ -11,7 +11,7 @@ import {
 	getAllBlocksInFile,
 	findFile,
 	renderSuggestionItem,
-	getCompletionText,
+	resolveCompletion,
 	flashSuggestContainer,
 	findVisibleSuggestionContainer,
 	getSelectedSuggestionItem,
@@ -42,27 +42,30 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 		if (this.scope) {
 			// Register TAB key to complete the prefix/basename and not close suggest
 			this.scope.register(null, "Tab", (evt?: KeyboardEvent) => {
+				if (evt?.isComposing) return true;
+
+				const item = getSelectedSuggestionItem(this, this.lastSuggestions);
+				if (!item) return true;
+
 				if (evt) {
 					evt.preventDefault();
 					evt.stopPropagation();
 				}
-				const item = getSelectedSuggestionItem(this, this.lastSuggestions);
-				if (!item) return true;
 
-				const completionText = getCompletionText(item, this.inputEl.value);
+				const { completionText, alreadyComplete } = resolveCompletion(item, this.inputEl.value);
 
-				if (this.inputEl.value.trim().toLowerCase() === completionText.trim().toLowerCase()) {
+				if (alreadyComplete) {
 					// Flash completion window to show it is already fully completed
 					const container = findVisibleSuggestionContainer();
 					if (container) flashSuggestContainer(container);
 					return false; // consume event
-				} else {
-					this.inputEl.value = completionText;
-					this.modal.handleDestInput();
-					// Refresh suggestion window to match the new value
-					this.inputEl.dispatchEvent(new Event("input"));
-					return false; // consume event
 				}
+
+				this.inputEl.value = completionText;
+				this.modal.handleDestInput();
+				// Refresh suggestion window to match the new value
+				this.inputEl.dispatchEvent(new Event("input"));
+				return false; // consume event
 			});
 
 		}

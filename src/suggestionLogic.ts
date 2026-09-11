@@ -623,6 +623,28 @@ export function getCompletionText(item: SuggestionItem, query: string): string {
 }
 
 /**
+ * Resolve what a Tab-completion keypress should do with the currently
+ * highlighted suggestion against the current text: the completion text to
+ * write, and whether the text already exactly matches it (in which case the
+ * caller should just flash the popup instead of editing anything).
+ *
+ * This centralizes the "resolve selected item -> getCompletionText -> compare
+ * case-insensitively, trimmed" sequence that both `FileSuggest` (completing
+ * the Edit Link modal's destination `<input>`) and `EditorFileSuggest`
+ * (completing the in-editor `[[` query) need identically; only what each
+ * caller does with the result (write to an `<input>` vs. `Editor.replaceRange`)
+ * differs, and stays in each class.
+ */
+export function resolveCompletion(
+	item: SuggestionItem,
+	currentText: string
+): { completionText: string; alreadyComplete: boolean } {
+	const completionText = getCompletionText(item, currentText);
+	const alreadyComplete = currentText.trim().toLowerCase() === completionText.trim().toLowerCase();
+	return { completionText, alreadyComplete };
+}
+
+/**
  * Find the currently visible Obsidian suggestion popup container, if any.
  *
  * Obsidian keeps one `.suggestion-container` per registered suggest in the
