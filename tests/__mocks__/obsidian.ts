@@ -611,11 +611,15 @@ export class Modal {
 
 	open(): void {
 		this._open = true;
+		document.body.appendChild(this.containerEl);
 		this.onOpen();
 	}
 
 	close(): void {
 		this._open = false;
+		if (this.containerEl.parentElement) {
+			this.containerEl.parentElement.removeChild(this.containerEl);
+		}
 		this.onClose();
 	}
 
@@ -758,22 +762,44 @@ export class TextComponent {
 export class ToggleComponent {
 	toggleEl: HTMLElement;
 	private value = false;
+	private disabled = false;
 	private onChangeCb?: (value: boolean) => void;
 
 	constructor(container: HTMLElement) {
-		this.toggleEl = document.createElement("div");
+		this.toggleEl = document.createElement("label");
 		this.toggleEl.className = "checkbox-container";
-		container.appendChild(this.toggleEl);
-		this.toggleEl.addEventListener("click", () => {
-			this.value = !this.value;
-			this.toggleEl.classList.toggle("is-enabled", this.value);
-			this.onChangeCb?.(this.value);
+		this.toggleEl.setAttribute("tabindex", "0");
+
+		const input = document.createElement("input");
+		input.type = "checkbox";
+		input.setAttribute("tabindex", "-1");
+		this.toggleEl.appendChild(input);
+
+		this.toggleEl.addEventListener("change", () => this.onClick());
+		this.toggleEl.addEventListener("keydown", (e: KeyboardEvent) => {
+			if (e.key === " " || e.key === "Enter") {
+				e.preventDefault();
+				this.onClick();
+			}
 		});
+
+		container.appendChild(this.toggleEl);
+	}
+
+	onClick(): void {
+		if (!this.disabled) {
+			this.setValue(!this.value);
+		}
 	}
 
 	setValue(value: boolean): this {
-		this.value = value;
-		this.toggleEl.classList.toggle("is-enabled", value);
+		if (this.value !== value) {
+			this.value = value;
+			this.toggleEl.classList.toggle("is-enabled", value);
+			const input = this.toggleEl.querySelector("input");
+			if (input) input.checked = value;
+			this.onChangeCb?.(value);
+		}
 		return this;
 	}
 
@@ -787,6 +813,7 @@ export class ToggleComponent {
 	}
 
 	setDisabled(disabled: boolean): this {
+		this.disabled = disabled;
 		this.toggleEl.classList.toggle("is-disabled", disabled);
 		return this;
 	}

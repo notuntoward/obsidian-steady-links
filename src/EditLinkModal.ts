@@ -49,9 +49,9 @@ export class EditLinkModal extends Modal {
 
 	/**
 	 * Track event listeners for explicit cleanup on close.
-	 * Array of tuples: [element, event type, handler function]
+	 * Array of tuples: [element, event type, handler function, useCapture?]
 	 */
-	private eventListeners: Array<[HTMLElement, string, EventListener]> = [];
+	private eventListeners: Array<[HTMLElement, string, EventListener, boolean?]> = [];
 
 	constructor(
 		app: App,
@@ -324,25 +324,35 @@ export class EditLinkModal extends Modal {
 
 				toggle.toggleEl.setAttribute("tabindex", "0");
 				const embedToggleKeydownHandler = (e: KeyboardEvent) => {
-					// Only toggle with Space, let Enter propagate to submit
+					// Toggle with Space; let Enter submit the modal without toggling the embed state.
+					// We use capture: true so this handler runs before Obsidian's built-in
+					// ToggleComponent keydown handler on toggleEl, preventing double-toggle on Space
+					// and accidental toggle on Enter.
 					if (e.key === " " || e.key === "Spacebar") {
 						e.preventDefault();
+						e.stopImmediatePropagation();
 						const currentValue = toggle.getValue();
 						toggle.setValue(!currentValue);
 						embedSetting.setDesc(
 							!currentValue ? "Link contents shown in note" : "Link shown in note"
 						);
 						this.updateUIState(); // Update warnings when embed state changes
+					} else if (e.key === "Enter") {
+						e.preventDefault();
+						e.stopImmediatePropagation();
+						this.submit();
 					}
 				};
 				toggle.toggleEl.addEventListener(
 					"keydown",
-					embedToggleKeydownHandler as EventListener
+					embedToggleKeydownHandler as EventListener,
+					true
 				);
 				this.eventListeners.push([
 					toggle.toggleEl,
 					"keydown",
 					embedToggleKeydownHandler as EventListener,
+					true,
 				]);
 			});
 		embedSetting.settingEl.addClass("link-embed-checkbox");
@@ -760,8 +770,8 @@ export class EditLinkModal extends Modal {
 
 	onClose() {
 		// Explicitly remove all event listeners for proper cleanup
-		for (const [element, eventType, handler] of this.eventListeners) {
-			element.removeEventListener(eventType, handler);
+		for (const [element, eventType, handler, useCapture] of this.eventListeners) {
+			element.removeEventListener(eventType, handler, useCapture);
 		}
 		this.eventListeners = [];
 
