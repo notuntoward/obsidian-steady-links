@@ -40,6 +40,10 @@ const DEFAULT_SETTINGS: PluginSettings = {
 };
 
 export default class SteadyLinksPlugin extends Plugin {
+	setDebug(enabled: boolean = true) {
+		(window as any).__STEADY_LINKS_DEBUG = enabled;
+		console.log(`[SteadyLinks] Debug logging ${enabled ? "enabled" : "disabled"}`);
+	}
 	settings!: PluginSettings;
 	private editorFileSuggest!: EditorFileSuggest;
 
@@ -55,21 +59,33 @@ export default class SteadyLinksPlugin extends Plugin {
 		cursorPos: { line: number; ch: number }
 	): void {
 		const restore = () => {
-			const cm6View = (editor as any).cm as EditorView | undefined;
-			if (!cm6View) {
-				editor.setCursor(cursorPos);
-				return;
+			try {
+				const cm6View = (editor as any).cm as EditorView | undefined;
+				if (!cm6View) {
+					editor.setCursor(cursorPos);
+					return;
+				}
+
+				const doc = cm6View.state.doc;
+				if (doc.lines < 1) return;
+				const targetLine = Math.max(1, Math.min(doc.lines, cursorPos.line + 1));
+				const line = doc.line(targetLine);
+				const targetCh = Math.max(0, Math.min(line.length, cursorPos.ch));
+				const head = Math.max(line.from, Math.min(line.to, line.from + targetCh));
+
+				cm6View.focus();
+				try {
+					editor.setCursor({ line: targetLine - 1, ch: targetCh });
+				} catch (e) {
+					console.warn("[SteadyLinks] editor.setCursor fallback failed:", e);
+				}
+				cm6View.dispatch({
+					selection: EditorSelection.cursor(head),
+					scrollIntoView: true,
+				});
+			} catch (err) {
+				console.error("[SteadyLinks] Error restoring cursor after modal close:", err, cursorPos);
 			}
-
-			const line = cm6View.state.doc.line(cursorPos.line + 1);
-			const head = Math.max(line.from, Math.min(line.to, line.from + cursorPos.ch));
-
-			cm6View.focus();
-			editor.setCursor(cursorPos);
-			cm6View.dispatch({
-				selection: EditorSelection.cursor(head),
-				scrollIntoView: true,
-			});
 		};
 
 		window.setTimeout(() => {

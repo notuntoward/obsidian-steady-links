@@ -72,8 +72,16 @@ interface ChangeSpec {
 
 const STEADY_LINKS_DEBUG = false;
 
+function isSteadyLinksDebug(): boolean {
+	if (STEADY_LINKS_DEBUG) return true;
+	if (typeof window !== "undefined" && ((window as any).__STEADY_LINKS_DEBUG || (window as any).STEADY_LINKS_DEBUG)) {
+		return true;
+	}
+	return false;
+}
+
 function debugLog(label: string, details: Record<string, unknown>): void {
-	if (!STEADY_LINKS_DEBUG || typeof console === "undefined") return;
+	if (!isSteadyLinksDebug() || typeof console === "undefined") return;
 	console.log(`[SteadyLinks debug] ${label}`, details);
 }
 
@@ -83,7 +91,7 @@ function traceFilter(
 	action: string,
 	extra?: Record<string, unknown>
 ): void {
-	if (!STEADY_LINKS_DEBUG || typeof console === "undefined") return;
+	if (!isSteadyLinksDebug() || typeof console === "undefined") return;
 	const changes: { from: number; to: number; insert: string }[] = [];
 	tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
 		changes.push({ from: fromA, to: toA, insert: inserted.toString().substring(0, 30) });
@@ -2196,6 +2204,7 @@ const suppressSuggestAfterDeleteListener = EditorView.updateListener.of((update)
 		update.view.dispatch({
 			selection: EditorSelection.cursor(targetPos),
 			scrollIntoView: true,
+			userEvent: "select.steadyLinks",
 		});
 	}, 0);
 });
