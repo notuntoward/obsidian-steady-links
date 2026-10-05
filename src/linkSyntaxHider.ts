@@ -347,7 +347,70 @@ const suppressNextBoundaryInputField = StateField.define<number | null>({
 	},
 });
 
+/**
+ * Position of the `[[` of a wikilink the user is *actively composing* (just
+ * typed `[[`, cursor still inside the query area). While composing, the link
+ * is an in-progress suggestion query, not an established link, so Backspace /
+ * Delete must reach Obsidian untouched: converting `[[steadd]]` into
+ * `[[steadd|stead]]` locks the destination and kills the suggest popup.
+ * Cleared when `[[` is destroyed, the cursor leaves the query area, or
+ * `setActiveComposingWikiLink.of(null)` is dispatched.
+ */
+const setActiveComposingWikiLink = StateEffect.define<number | null>();
+
+function composingQueryEnd(doc: EditorState["doc"], from: number): number {
+	const line = doc.lineAt(from);
+	const idx = line.text.indexOf("]]", from + 2 - line.from);
+	return idx === -1 ? line.to : line.from + idx;
+}
+
+const activeComposingWikiLinkField = StateField.define<number | null>({
+	create() {
+		return null;
+	},
+	update(value, tr) {
+		for (const effect of tr.effects) {
+			if (effect.is(setActiveComposingWikiLink)) value = effect.value;
+		}
+		if (value !== null && tr.docChanged) value = tr.changes.mapPos(value, -1);
+
+		const sel = tr.newSelection.main;
+		if (
+			tr.docChanged &&
+			tr.isUserEvent("input") &&
+			sel.empty &&
+			sel.head >= 2 &&
+			tr.newDoc.sliceString(sel.head - 2, sel.head) === "[["
+		) {
+			value = sel.head - 2;
+		}
+
+		if (value === null) return null;
+		if (value + 2 > tr.newDoc.length || tr.newDoc.sliceString(value, value + 2) !== "[[") return null;
+		if (tr.docChanged || tr.selection) {
+			if (!sel.empty) return null;
+			if (sel.head < value + 2 || sel.head > composingQueryEnd(tr.newDoc, value)) return null;
+		}
+		return value;
+	},
+});
+
+/** True when the cursor is inside the query area of a wikilink being composed. */
+function isComposingAtCursor(state: EditorState): boolean {
+	const from = state.field(activeComposingWikiLinkField, false);
+	if (from === null || from === undefined) return false;
+	const sel = state.selection.main;
+	return sel.empty && sel.head >= from + 2 && sel.head <= composingQueryEnd(state.doc, from);
+}
+
+/** True when `link` is the wikilink currently being composed. */
+function isComposingWikiLink(state: EditorState, link: { leading: { to: number } }): boolean {
+	const from = state.field(activeComposingWikiLinkField, false);
+	return from !== null && from !== undefined && link.leading.to - 2 === from && isComposingAtCursor(state);
+}
+
 const suppressSameLineCursorResetEffect = StateEffect.define<number | null>();
+
 
 const suppressSameLineCursorResetAnchorEffect = StateEffect.define<number | null>();
 
@@ -648,6 +711,19 @@ function findWikiLinkSyntaxRanges(
 	return ranges;
 }
 
+/**
+ * Remove the hidden ranges of the wikilink currently being composed. While the
+ * user is still typing a `[[` query the brackets stay visible (like stock
+ * Obsidian), so Left/Right, Emacs backspace-char/word, etc. all operate on
+ * plain text and Obsidian's suggest popup keeps updating.
+ */
+function dropComposingRanges(state: EditorState, ranges: HiddenRange[]): HiddenRange[] {
+	const from = state.field(activeComposingWikiLinkField, false);
+	if (from === null || from === undefined || !isComposingAtCursor(state)) return ranges;
+	const end = composingQueryEnd(state.doc, from);
+	return ranges.filter((r) => !(r.from >= from - 1 && r.to <= end + 2));
+}
+
 function computeHiddenRanges(state: EditorState): HiddenRange[] {
 	const ranges: HiddenRange[] = [];
 	const seenLines = new Set<number>();
@@ -685,7 +761,7 @@ function computeHiddenRanges(state: EditorState): HiddenRange[] {
 	}
 
 	ranges.sort((a, b) => a.from - b.from || a.to - b.to);
-	return ranges;
+	return dropComposingRanges(state, ranges);
 }
 
 /**
@@ -1354,10 +1430,13 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 	const state = update.state;
 	const newSel = state.selection;
 	const oldSel = update.startState.selection;
-	const hidden = computeHiddenRangesForPositions(
-		state.doc,
-		newSel,
-		state.field(wikiLinkHidingOptionsField, false) ?? {}
+	const hidden = dropComposingRanges(
+		state,
+		computeHiddenRangesForPositions(
+			state.doc,
+			newSel,
+			state.field(wikiLinkHidingOptionsField, false) ?? {}
+		)
 	);
 
 	// Unconditional top-level trace of every selectionSet event while the
@@ -2318,7 +2397,9 @@ function buildSingleCharDisplayDeleteTransaction(
 		});
 	}
 
-	const destination = getBareWikiLinkDestination(state.doc, link);
+	const destination = isComposingWikiLink(state, link)
+		? null
+		: getBareWikiLinkDestination(state.doc, link);
 
 	if (destination !== null) {
 		const relFrom = delFrom - link.textFrom;
@@ -2354,6 +2435,8 @@ const deleteInLinkTextKeymap = keymap.of([
 			if (!view.state.field(syntaxHiderEnabledField, false)) return false;
 			const sel = view.state.selection;
 			if (sel.ranges.length !== 1 || !sel.main.empty) return false;
+			// Composing a `[[` query: let Obsidian handle the key natively.
+			if (isComposingAtCursor(view.state)) return false;
 
 			const head = sel.main.head;
 			const hidden = computeHiddenRanges(view.state);
@@ -2413,6 +2496,7 @@ const deleteInLinkTextKeymap = keymap.of([
 			if (!view.state.field(syntaxHiderEnabledField, false)) return false;
 			const sel = view.state.selection;
 			if (sel.ranges.length !== 1 || !sel.main.empty) return false;
+			if (isComposingAtCursor(view.state)) return false;
 
 			const head = sel.main.head;
 			const hidden = computeHiddenRanges(view.state);
@@ -2866,6 +2950,7 @@ function findLinkSpanContainingVisibleRange(
 const suppressSuggestAfterVisibleDeleteFilter = EditorState.transactionFilter.of((tr) => {
 	if (!isPureDeleteTransaction(tr)) return tr;
 	if (!tr.startState.field(syntaxHiderEnabledField, false)) return tr;
+	if (isComposingAtCursor(tr.startState)) return tr;
 	if (tr.effects.some((e) => e.is(suppressSuggestAfterVisibleDelete))) {
 		return tr;
 	}
@@ -3039,6 +3124,7 @@ const insertAtLinkStartFix = EditorState.transactionFilter.of((tr) => {
 const deleteAtLinkEndFix = EditorState.transactionFilter.of((tr) => {
 	if (!isPureDeleteTransaction(tr)) return tr;
 	if (!tr.startState.field(syntaxHiderEnabledField, false)) return tr;
+	if (isComposingAtCursor(tr.startState)) return tr;
 
 	const hidden = tr.startState.field(hiddenRangesField, false);
 	if (!hidden || hidden.length === 0) return tr;
@@ -3152,6 +3238,7 @@ const deleteAtLinkEndFix = EditorState.transactionFilter.of((tr) => {
 const deleteAtLinkStartFix = EditorState.transactionFilter.of((tr) => {
 	if (!isPureDeleteTransaction(tr)) return tr;
 	if (!tr.startState.field(syntaxHiderEnabledField, false)) return tr;
+	if (isComposingAtCursor(tr.startState)) return tr;
 
 	const hidden = tr.startState.field(hiddenRangesField, false);
 	if (!hidden || hidden.length === 0) return tr;
@@ -4606,6 +4693,7 @@ export function createLinkSyntaxHiderExtension(wikiLinkOptions: WikiLinkHidingOp
 		syntaxHiderEnabledField,
 		wikiLinkHidingOptionsField.init(() => wikiLinkOptions),
 		suppressNextBoundaryInputField,
+		activeComposingWikiLinkField,
 		arrivedAtTextFromFromOutsideField,
 		syntaxHiderModePlugin,
 		hiddenRangesField,
@@ -4652,7 +4740,7 @@ function computeAllLinkSpansForState(state: EditorState, from: number, to: numbe
 		);
 	}
 	allRanges.sort((a, b) => a.from - b.from || a.to - b.to);
-	return buildLinkSpans(allRanges);
+	return buildLinkSpans(dropComposingRanges(state, allRanges));
 }
 
 export {
@@ -4685,5 +4773,7 @@ export {
 	computeAllLinkSpansForState,
 	isAnySuggestOpen,
 	enterAtLinkEndKeymap,
+	activeComposingWikiLinkField,
+	setActiveComposingWikiLink,
 };
 export type { HiddenRange, LinkRange, VisibleLinkSpan, LinkSpan };

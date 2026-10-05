@@ -21,6 +21,7 @@ import {
 	createHiddenSyntaxAnchor,
 	createLinkSyntaxHiderExtension,
 	setSyntaxHiderEnabled,
+	hiddenRangesField,
 	handleHomeKey,
 	suppressSameLineCursorResetEffect,
 	stripTrailingLinkSyntaxForClipboard,
@@ -4193,6 +4194,90 @@ describe("Integration: deleting a fully-selected link", () => {
 
 			expect(view.state.doc.toString()).toBe("");
 		});
+	});
+});
+
+describe("Composing a wikilink (typing after `[[`) must not lock the destination", () => {
+	let view: EditorView;
+	afterEach(() => view?.destroy());
+
+	const typeInto = (v: EditorView, from: number, insert: string, to = from) =>
+		v.dispatch({
+			changes: { from, to, insert },
+			selection: EditorSelection.cursor(from + insert.length),
+			userEvent: "input.type",
+		});
+
+	it("Backspace after a typo is not consumed and does not convert to an alias", () => {
+		view = createTestView("", 0);
+		view.dispatch({
+			changes: { from: 0, insert: "[[]]" },
+			selection: EditorSelection.cursor(2),
+			userEvent: "input.type",
+		});
+		typeInto(view, 2, "steadd");
+		const before = view.state.doc.toString();
+		expect(before).toContain("steadd");
+
+		const ev = new KeyboardEvent("keydown", { key: "Backspace", code: "Backspace", keyCode: 8, which: 8, bubbles: true, cancelable: true });
+		view.contentDOM.dispatchEvent(ev);
+
+		expect(ev.defaultPrevented).toBe(false);
+		expect(view.state.doc.toString()).toBe(before);
+		expect(view.state.doc.toString()).not.toContain("|");
+	});
+
+	it("a native-style backspace delete while composing stays a plain delete with its userEvent", () => {
+		view = createTestView("", 0);
+		view.dispatch({
+			changes: { from: 0, insert: "[[]]" },
+			selection: EditorSelection.cursor(2),
+			userEvent: "input.type",
+		});
+		typeInto(view, 2, "steadd");
+		const head = view.state.selection.main.head;
+
+		view.dispatch({
+			changes: { from: head - 1, to: head },
+			selection: EditorSelection.cursor(head - 1),
+			userEvent: "delete.backward",
+		});
+
+		expect(view.state.doc.toString()).toBe("[[stead]]");
+	});
+
+	it("keeps the brackets visible and the cursor free to move left while composing", () => {
+		view = createTestView("", 0);
+		view.dispatch({
+			changes: { from: 0, insert: "[[]]" },
+			selection: EditorSelection.cursor(2),
+			userEvent: "input.type",
+		});
+		typeInto(view, 2, "steadd");
+		expect(view.state.field(hiddenRangesField)).toHaveLength(0);
+
+		// Left arrow (plain selection move) and a mid-query edit stay put.
+		view.dispatch({ selection: EditorSelection.cursor(6), userEvent: "select" });
+		expect(view.state.selection.main.head).toBe(6);
+		expect(view.state.field(hiddenRangesField)).toHaveLength(0);
+	});
+
+	it("re-hides the brackets once the cursor leaves the composing link", () => {
+		view = createTestView("", 0);
+		view.dispatch({
+			changes: { from: 0, insert: "[[]]" },
+			selection: EditorSelection.cursor(2),
+			userEvent: "input.type",
+		});
+		typeInto(view, 2, "stead");
+		view.dispatch({ selection: EditorSelection.cursor(view.state.doc.length), userEvent: "select" });
+		expect(view.state.field(hiddenRangesField).length).toBeGreaterThan(0);
+	});
+
+	it("an established bare wikilink still converts to an alias on Backspace", () => {
+		view = createTestView("[[WikiNoAlias]]", 13);
+		view.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", code: "Backspace", keyCode: 8, which: 8, bubbles: true }));
+		expect(view.state.doc.toString()).toBe("[[WikiNoAlias|WikiNoAlia]]");
 	});
 });
 
