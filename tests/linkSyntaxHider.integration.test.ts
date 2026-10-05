@@ -4274,6 +4274,30 @@ describe("Composing a wikilink (typing after `[[`) must not lock the destination
 		expect(view.state.field(hiddenRangesField).length).toBeGreaterThan(0);
 	});
 
+	it("Emacs delete-char inside a composing query keeps brackets visible and does not convert to alias", () => {
+		view = createTestView("", 0);
+		view.dispatch({
+			changes: { from: 0, insert: "[[]]" },
+			selection: EditorSelection.cursor(2),
+			userEvent: "input.type",
+		});
+		typeInto(view, 2, "steady links");
+		// Move cursor to 'a' in "steady" (pos 5: [[ste|a|dy links]])
+		view.dispatch({ selection: EditorSelection.range(5, 6) }); // 1-char block selection on 'a'
+		expect(view.state.field(hiddenRangesField)).toHaveLength(0);
+
+		// Dispatch Emacs delete-char
+		view.dispatch({
+			changes: { from: 5, to: 6, insert: "" },
+			selection: EditorSelection.cursor(5),
+			annotations: Transaction.userEvent.of("emacs.deleteChar"),
+		});
+
+		expect(view.state.doc.toString()).toBe("[[stedy links]]");
+		expect(view.state.doc.toString()).not.toContain("|");
+		expect(view.state.field(hiddenRangesField)).toHaveLength(0);
+	});
+
 	it("an established bare wikilink still converts to an alias on Backspace", () => {
 		view = createTestView("[[WikiNoAlias]]", 13);
 		view.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", code: "Backspace", keyCode: 8, which: 8, bubbles: true }));

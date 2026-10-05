@@ -377,8 +377,6 @@ const activeComposingWikiLinkField = StateField.define<number | null>({
 		const sel = tr.newSelection.main;
 		if (
 			tr.docChanged &&
-			tr.isUserEvent("input") &&
-			sel.empty &&
 			sel.head >= 2 &&
 			tr.newDoc.sliceString(sel.head - 2, sel.head) === "[["
 		) {
@@ -388,19 +386,20 @@ const activeComposingWikiLinkField = StateField.define<number | null>({
 		if (value === null) return null;
 		if (value + 2 > tr.newDoc.length || tr.newDoc.sliceString(value, value + 2) !== "[[") return null;
 		if (tr.docChanged || tr.selection) {
-			if (!sel.empty) return null;
-			if (sel.head < value + 2 || sel.head > composingQueryEnd(tr.newDoc, value)) return null;
+			const end = composingQueryEnd(tr.newDoc, value);
+			if (sel.from < value + 2 || sel.to > end) return null;
 		}
 		return value;
 	},
 });
 
-/** True when the cursor is inside the query area of a wikilink being composed. */
+/** True when the selection/cursor is inside the query area of a wikilink being composed. */
 function isComposingAtCursor(state: EditorState): boolean {
 	const from = state.field(activeComposingWikiLinkField, false);
 	if (from === null || from === undefined) return false;
 	const sel = state.selection.main;
-	return sel.empty && sel.head >= from + 2 && sel.head <= composingQueryEnd(state.doc, from);
+	const end = composingQueryEnd(state.doc, from);
+	return sel.from >= from + 2 && sel.to <= end;
 }
 
 /** True when `link` is the wikilink currently being composed. */
