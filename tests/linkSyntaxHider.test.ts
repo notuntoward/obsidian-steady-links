@@ -1244,16 +1244,22 @@ function makeHiderStateWithRange(docText: string, anchor: number, head: number):
 describe("enterAtLinkEndFix: Enter at line end must not be intercepted", () => {
 	// ── BUG GUARD ─────────────────────────────────────────────────────────────
 	//
-	// enterAtLinkEndKeymap repositions the cursor to line.to before returning
-	// false so Obsidian's Enter handler can run.  If enterAtLinkEndFix then
-	// intercepts that Enter (cursor already at line.to), it re-inserts a hard-
-	// coded "\n" WITHOUT the ordered-list number increment — silently breaking
-	// ordered lists like "1. [[link]]".
+	// enterAtLinkEndKeymap repositions the cursor to link.to before returning
+	// false so Obsidian's Enter handler can run.  The cursor is therefore
+	// already outside the link by the time the resulting newline transaction
+	// reaches enterAtLinkEndFix, which must not relocate it in a way that
+	// duplicates the link's hidden closing syntax.
 	//
-	// The fix: enterAtLinkEndFix bails out when range.head === lineAtHead.to.
+	// Obsidian's smart-list Enter (newlineAndIndentContinueMarkdownList) does
+	// not simply insert "\n": it replaces the character before the cursor with
+	// that same character plus "\n" and the list prefix.  When the cursor sits
+	// just past a link, that character is the link's final "]".  Relocating the
+	// insertion to the link end must drop that re-inserted character, or the
+	// document ends up with "]]]".
 	//
-	// We verify this by checking that the transaction's insertion position is
-	// NOT redirected to line.to when the cursor was already there.
+	// enterAtLinkEndFix also bails when the insertion is already at the link
+	// end (insertFrom === targetPos), which preserves Obsidian's own ordered
+	// list numbering for a plain Enter at line end.
 
 	it("does NOT redirect Enter when cursor is already at line end (ordered list case)", () => {
 		// "1. [[link]]" — cursor at position 11 (line.to, after "]]")
@@ -1317,6 +1323,112 @@ describe("enterAtLinkEndFix: Enter at line end must not be intercepted", () => {
 		// Result doc: "see [[target]]\n more"
 		expect(newState.doc.toString()).toBe("see [[target]]\n more");
 		expect(newState.selection.main.head).toBe(15);
+	});
+
+	// ── BUG GUARD: Obsidian's smart-list Enter re-inserts the char before the
+	// cursor.  When that char is a link's hidden closing "]"/")", the relocated
+	// newline must not duplicate it.  Otherwise the ordered/bullet list case
+	// produced "]]]".  See stripReinsertedLeadingChar.
+
+	it("does NOT duplicate the closing ]] when Obsidian's list Enter re-inserts the char at line end", () => {
+		// Cursor is at link.to == line.to after enterAtLinkEndKeymap moved it.
+		// Obsidian's newlineAndIndentContinueMarkdownList replaces [10, 11)
+		// ("]") with "]\n2. ".
+		const doc = "1. [[link]]"; // length 11; link.to = line.to = 11
+		const state = makeHiderState(doc, doc.length);
+
+		const newState = state.update({
+			changes: { from: doc.length - 1, to: doc.length, insert: "]\n2. " },
+			selection: EditorSelection.cursor(doc.length + 4),
+			annotations: [Transaction.userEvent.of("input.type")],
+		}).state;
+
+		expect(newState.doc.toString()).toBe("1. [[link]]\n2. ");
+	});
+
+	it("does NOT duplicate the closing ]] when Obsidian's list Enter re-inserts the char mid-line", () => {
+		// "- list item [[link]] text": link.to = 20, line.to = 25.
+		// Obsidian replaces [19, 20) ("]") with "]\n- ".
+		const doc = "- list item [[link]] text";
+		const state = makeHiderState(doc, 20); // cursor at link.to
+
+		const newState = state.update({
+			changes: { from: 19, to: 20, insert: "]\n- " },
+			selection: EditorSelection.cursor(24),
+			annotations: [Transaction.userEvent.of("input.type")],
+		}).state;
+
+		expect(newState.doc.toString()).toBe("- list item [[link]]\n-  text");
+	});
+
+	it("moves a whole-line split (obsidian-outliner Enter) from inside a link to the link's right edge", () => {
+		// Outliner replaces the entire line with before + "\n" + prefix + after.
+		const doc = "1. [[Steady Links Plugin]]";
+		const state = makeHiderState(doc, 12); // after "Steady "
+		const newState = state.update({
+			changes: { from: 0, to: doc.length, insert: "1. [[Steady \n2. Links Plugin]]" },
+			selection: EditorSelection.cursor(16),
+		}).state;
+		expect(newState.doc.toString()).toBe("1. [[Steady Links Plugin]]\n2. ");
+		expect(newState.selection.main.head).toBe(newState.doc.length);
+	});
+
+	it("whole-line split keeps trailing text after the link on the new item", () => {
+		const doc = "- see [[link]] text";
+		const state = makeHiderState(doc, 10); // after "li"
+		const newState = state.update({
+			changes: { from: 0, to: doc.length, insert: "- see [[li\n- nk]] text" },
+		}).state;
+		expect(newState.doc.toString()).toBe("- see [[link]]\n-  text");
+	});
+
+	it.each([["undo"], ["redo"], ["set"], ["input.paste"], ["input.drop"], ["move"]])(
+		"never rewrites a %s transaction, even one shaped like an Enter split inside a link",
+		(userEvent) => {
+			const doc = "1. [[Steady Links Plugin]]";
+			const state = makeHiderState(doc, 12);
+			const replacement = "1. [[Steady \n2. Links Plugin]]";
+			const newState = state.update({
+				changes: { from: 0, to: doc.length, insert: replacement },
+				annotations: [Transaction.userEvent.of(userEvent)],
+			}).state;
+			expect(newState.doc.toString()).toBe(replacement);
+		}
+	);
+
+	it("does NOT hijack a large multi-line rewrite (e.g. another plugin updating frontmatter) while the cursor is in a link", () => {
+		const doc = "---\nmodified: 1\n---\n\n1. [[link]]";
+		const state = makeHiderState(doc, doc.length - 3); // inside link
+		const newDoc = "---\nmodified: 2\n---\n\n1. [[link]]";
+		const newState = state.update({
+			changes: { from: 0, to: doc.length, insert: newDoc },
+		}).state;
+		expect(newState.doc.toString()).toBe(newDoc);
+	});
+
+	it("does NOT hijack a far-away newline insertion while the cursor is in a link", () => {
+		const doc = "top\n1. [[link]]";
+		const state = makeHiderState(doc, doc.length - 3);
+		const newState = state.update({
+			changes: { from: 0, to: 0, insert: "a\nb" },
+		}).state;
+		expect(newState.doc.toString()).toBe("a\nbtop\n1. [[link]]");
+	});
+
+	it("exits an interior link to its right when Obsidian's list Enter runs with the cursor still inside the link", () => {
+		// Obsidian-first fallback: the cursor is still inside the link (pos 6),
+		// and Obsidian replaced the char at 5 ("l") with "l\n2. ".  The filter
+		// must relocate to link.to (11) WITHOUT re-adding the "l".
+		const doc = "1. [[link]]";
+		const state = makeHiderState(doc, 6); // inside "link"
+
+		const newState = state.update({
+			changes: { from: 5, to: 6, insert: "l\n2. " },
+			selection: EditorSelection.cursor(10),
+			annotations: [Transaction.userEvent.of("input.type")],
+		}).state;
+
+		expect(newState.doc.toString()).toBe("1. [[link]]\n2. ");
 	});
 });
 

@@ -15,14 +15,15 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { MarkdownView, App } from "obsidian";
 import SteadyLinksPlugin from "../src/main";
-import { EditorView } from "@codemirror/view";
-import { EditorState, EditorSelection, StateEffect, Transaction } from "@codemirror/state";
+import { EditorView, keymap } from "@codemirror/view";
+import { EditorState, EditorSelection, StateEffect, Transaction, Prec } from "@codemirror/state";
 import {
 	createHiddenSyntaxAnchor,
 	createLinkSyntaxHiderExtension,
 	setSyntaxHiderEnabled,
 	hiddenRangesField,
 	handleHomeKey,
+	handleEnterKey,
 	suppressSameLineCursorResetEffect,
 	stripTrailingLinkSyntaxForClipboard,
 	setWikiLinkHidingOptions,
@@ -2157,15 +2158,13 @@ describe("Integration: cursor correction with real CM6 state", () => {
 	// ──────────────────────────────────────────────────────────────────────
 	// BUG GUARD: Enter at textFrom of a line-start link must not split link
 	//
-	// After arrow-key navigation to a line-start link, the cursor lands at
-	// textFrom (the visible text start).  Enter at textFrom would insert
-	// \n between the hidden [[ and visible text, breaking the link.
-	// The enterAtLinkEndFix must redirect to leading.from.
 	// ──────────────────────────────────────────────────────────────────────
-	describe("Enter at textFrom of line-start link", () => {
-		it("Enter at textFrom of line-start wikilink redirects newline to leading.from", () => {
+	// Enter within a link (suggester closed) must exit link to the right side (link.to).
+	// ──────────────────────────────────────────────────────────────────────
+	describe("Enter within a link exits to right side (link.to)", () => {
+		it("Enter at textFrom of line-start wikilink exits link to right side (link.to)", () => {
 			// Doc: "bob\n[[target]] text"
-			// After arrow-down, cursor lands at textFrom=6 (leading=[4,6))
+			// Cursor at textFrom=6 (inside [[target]], leading=[4,6), link.to=14)
 			view = createTestView("bob\n[[target]] text", 6);
 
 			view.dispatch({
@@ -2174,14 +2173,14 @@ describe("Integration: cursor correction with real CM6 state", () => {
 				annotations: [Transaction.userEvent.of("input")],
 			});
 
-			// Newline should be inserted at leading.from (4), not at textFrom (6)
-			// Result: "bob\n\n[[target]] text"
-			expect(view.state.doc.toString()).toBe("bob\n\n[[target]] text");
+			// Newline should be inserted at link.to (14), exiting to right
+			// Result: "bob\n[[target]]\n text"
+			expect(view.state.doc.toString()).toBe("bob\n[[target]]\n text");
 		});
 
-		it("Enter at textFrom of line-start markdown link redirects newline to leading.from", () => {
+		it("Enter at textFrom of line-start markdown link exits link to right side (link.to)", () => {
 			// Doc: "bob\n[text](url) more"
-			// leading=[4,5), textFrom=5
+			// leading=[4,5), textFrom=5, link.to=15
 			view = createTestView("bob\n[text](url) more", 5);
 
 			view.dispatch({
@@ -2190,7 +2189,383 @@ describe("Integration: cursor correction with real CM6 state", () => {
 				annotations: [Transaction.userEvent.of("input")],
 			});
 
-			expect(view.state.doc.toString()).toBe("bob\n\n[text](url) more");
+			// Newline should be inserted at link.to (15), exiting to right
+			// Result: "bob\n[text](url)\n more"
+			expect(view.state.doc.toString()).toBe("bob\n[text](url)\n more");
+		});
+
+		it("Enter inside mid-line wikilink with list item exits link to right side with list continuation", () => {
+			// Doc: "- list item [[link]] text"
+			// link.from=12, link.to=20
+			view = createTestView("- list item [[link]] text", 16); // inside "link"
+
+			view.dispatch({
+				changes: { from: 16, to: 16, insert: "\n" },
+				selection: EditorSelection.cursor(17),
+				annotations: [Transaction.userEvent.of("input")],
+			});
+
+			// Result: "- list item [[link]]\n-  text"
+			expect(view.state.doc.toString()).toBe("- list item [[link]]\n-  text");
+		});
+
+		it("Enter inside ordered list item with link redirects transaction to link end and preserves list continuation", () => {
+			// Doc: "1. [[Steady Links Plugin]]"
+			// Cursor at index 10 (inside "Steady")
+			// Obsidian's list keymap dispatches newline+prefix insertion at cursor index 10
+			view = createTestView("1. [[Steady Links Plugin]]", 10);
+
+			view.dispatch({
+				changes: { from: 10, to: 10, insert: "\n2. " },
+				selection: EditorSelection.cursor(14),
+			});
+
+			// Insertion redirected to end of link (26)
+			// Result: "1. [[Steady Links Plugin]]\n2. "
+			expect(view.state.doc.toString()).toBe("1. [[Steady Links Plugin]]\n2. ");
+			expect(view.state.selection.main.head).toBe(30);
+		});
+
+		it("Enter inside task list item with link redirects transaction to link end", () => {
+			// Doc: "- [ ] [[Task Note]]"
+			// Cursor inside "Task" (pos 10)
+			view = createTestView("- [ ] [[Task Note]]", 10);
+
+			view.dispatch({
+				changes: { from: 10, to: 10, insert: "\n- [ ] " },
+			});
+
+			// Result: "- [ ] [[Task Note]]\n- [ ] "
+			expect(view.state.doc.toString()).toBe("- [ ] [[Task Note]]\n- [ ] ");
+		});
+
+		it("handleEnterKey inside ordered list item moves cursor to link.to and returns false for downstream handler", () => {
+			// Doc: "1. [[Steady Links Plugin]]"
+			// Cursor at index 10 (inside "Steady")
+			view = createTestView("1. [[Steady Links Plugin]]", 10);
+
+			const handled = handleEnterKey(view);
+			// handleEnterKey repositions cursor to link.to (26) and returns false
+			// so Obsidian's list continuation handler can execute at pos 26
+			expect(handled).toBe(false);
+			expect(view.state.selection.main.head).toBe(26);
+		});
+
+		it("handleEnterKey inside bullet list item moves cursor to link.to and returns false", () => {
+			// Doc: "- [[Steady Links Plugin]]"
+			// Cursor inside link (pos 8)
+			view = createTestView("- [[Steady Links Plugin]]", 8);
+
+			const handled = handleEnterKey(view);
+			expect(handled).toBe(false);
+			expect(view.state.selection.main.head).toBe(25);
+		});
+
+		it("handleEnterKey inside paragraph link moves cursor to link.to and returns false", () => {
+			view = createTestView("[[Steady Links Plugin]]", 5);
+
+			const handled = handleEnterKey(view);
+			expect(handled).toBe(false);
+			expect(view.state.selection.main.head).toBe(23);
+		});
+
+		it("handleEnterKey when cursor is at link.to returns false without changing cursor", () => {
+			view = createTestView("1. [[Steady Links Plugin]]", 26);
+
+			const handled = handleEnterKey(view);
+			expect(handled).toBe(false);
+			expect(view.state.selection.main.head).toBe(26);
+		});
+
+		// ── BUG GUARD ──────────────────────────────────────────────────────
+		// After handleEnterKey moves the cursor to link.to and returns false,
+		// Obsidian's own Enter keymap runs.  For lists it uses
+		// newlineAndIndentContinueMarkdownList, which replaces the character
+		// before the cursor with itself + "\n" + the list prefix.  That
+		// character is the link's hidden closing "]".  The newline must land
+		// after the link without duplicating that "]" (the pre-fix result was
+		// "1. [[Steady Links Plugin]]]\n2. ").
+
+		it("Enter inside an ordered-list link exits right and keeps list continuation without duplicating ]]", () => {
+			view = createTestView("1. [[Steady Links Plugin]]", 10);
+
+			// Our high-precedence keymap moves the cursor to link.to (26).
+			expect(handleEnterKey(view)).toBe(false);
+			const head = view.state.selection.main.head;
+			expect(head).toBe(26);
+
+			// Simulate Obsidian's newlineAndIndentContinueMarkdownList running
+			// after us at the relocated cursor (replaces [head-1, head) with
+			// "]" + "\n2. ").
+			view.dispatch({
+				changes: { from: head - 1, to: head, insert: "]\n2. " },
+				selection: EditorSelection.cursor(head + 3),
+				annotations: [Transaction.userEvent.of("input.type")],
+			});
+
+			expect(view.state.doc.toString()).toBe("1. [[Steady Links Plugin]]\n2. ");
+		});
+
+		it("Enter inside a bullet-list link with trailing text exits right and keeps trailing text", () => {
+			view = createTestView("- list item [[link]] text", 16);
+
+			expect(handleEnterKey(view)).toBe(false);
+			const head = view.state.selection.main.head; // link.to = 20
+
+			// Obsidian replaces the char at 19 ("]") with "]\n- ".
+			view.dispatch({
+				changes: { from: head - 1, to: head, insert: "]\n- " },
+				selection: EditorSelection.cursor(head + 2),
+				annotations: [Transaction.userEvent.of("input.type")],
+			});
+
+			expect(view.state.doc.toString()).toBe("- list item [[link]]\n-  text");
+		});
+	});
+
+	// ──────────────────────────────────────────────────────────────────────
+	// Capture-phase Enter pre-move + cross-plugin safety.
+	//
+	// Plugins such as obsidian-outliner bind Enter at high precedence and run
+	// before our keymap, so the cursor must already be outside the link by the
+	// time ANY keymap sees the key.  The pre-move must be tagged
+	// "select.steadyLinks" (Visible Cursor ignores that tag) and must never
+	// consume the event (Emacs Text Editor / Visible Cursor / other keymaps
+	// still need to see it).
+	// ──────────────────────────────────────────────────────────────────────
+	describe("Enter capture-phase pre-move and do-no-harm guarantees", () => {
+		function makeViewWithCompetitor(doc: string, cursor: number) {
+			const seenHeads: number[] = [];
+			const seenDefaultPrevented: boolean[] = [];
+			const selectionUserEvents: Array<string | undefined> = [];
+			const host = document.createElement("div");
+			host.className = "markdown-source-view is-live-preview";
+			document.body.appendChild(host);
+			const v = new EditorView({
+				state: EditorState.create({
+					doc,
+					selection: EditorSelection.cursor(cursor),
+					extensions: [
+						// Stand-in for obsidian-outliner's Enter override: Prec.highest and
+						// registered BEFORE this plugin, so it outranks enterAtLinkEndKeymap
+						// and runs first.  Records where the cursor is when it gets the key.
+						Prec.highest(keymap.of([
+							{
+								key: "Enter",
+								run: (cmView) => {
+									seenHeads.push(cmView.state.selection.main.head);
+									return true;
+								},
+							},
+						])),
+						createLinkSyntaxHiderExtension({}),
+						EditorView.updateListener.of((u) => {
+							for (const t of u.transactions) {
+								if (t.selection && !t.docChanged) {
+									selectionUserEvents.push(
+										t.annotation(Transaction.userEvent) ?? undefined
+									);
+								}
+							}
+						}),
+					],
+				}),
+				parent: host,
+			});
+			v.dispatch({ effects: [setSyntaxHiderEnabled.of(true)] });
+			selectionUserEvents.length = 0;
+			return { v, seenHeads, seenDefaultPrevented, selectionUserEvents };
+		}
+
+		function pressEnter(v: EditorView, init: KeyboardEventInit = {}): KeyboardEvent {
+			const ev = new KeyboardEvent("keydown", {
+				key: "Enter",
+				code: "Enter",
+				keyCode: 13,
+				which: 13,
+				bubbles: true,
+				cancelable: true,
+				...init,
+			});
+			v.contentDOM.dispatchEvent(ev);
+			return ev;
+		}
+
+		it("moves the cursor to the link's right edge before any competing Enter keymap runs", () => {
+			const ctx = makeViewWithCompetitor("1. [[Steady Links Plugin]]", 10);
+			view = ctx.v;
+
+			pressEnter(view);
+
+			expect(ctx.seenHeads).toEqual([26]);
+		});
+
+		it("tags the pre-move select.steadyLinks so Visible Cursor ignores it", () => {
+			const ctx = makeViewWithCompetitor("1. [[Steady Links Plugin]]", 10);
+			view = ctx.v;
+
+			pressEnter(view);
+
+			expect(ctx.selectionUserEvents).toContain("select.steadyLinks");
+			// Every selection-only transaction in this sequence is the tagged one.
+			expect(ctx.selectionUserEvents.every((e) => e === "select.steadyLinks")).toBe(true);
+		});
+
+		it("never consumes the event: it is not defaultPrevented by the pre-move and still reaches other handlers", () => {
+			const ctx = makeViewWithCompetitor("1. [[Steady Links Plugin]]", 10);
+			view = ctx.v;
+			let sawAtDocument = false;
+			const onDoc = () => {
+				sawAtDocument = true;
+			};
+			document.addEventListener("keydown", onDoc);
+			try {
+				// Capture-phase probe on view.dom, registered after ours: if our
+				// capture handler had stopped propagation this would not fire.
+				let sawCapture = false;
+				const probe = (e: Event) => {
+					sawCapture = true;
+					expect(e.defaultPrevented).toBe(false);
+				};
+				view.dom.addEventListener("keydown", probe, true);
+				pressEnter(view);
+				view.dom.removeEventListener("keydown", probe, true);
+
+				expect(sawCapture).toBe(true);
+				expect(sawAtDocument).toBe(true);
+				expect(ctx.seenHeads.length).toBe(1);
+			} finally {
+				document.removeEventListener("keydown", onDoc);
+			}
+		});
+
+		it("does nothing for Enter outside a link", () => {
+			const ctx = makeViewWithCompetitor("1. plain text [[a]]", 6);
+			view = ctx.v;
+
+			pressEnter(view);
+
+			expect(ctx.seenHeads).toEqual([6]);
+			expect(ctx.selectionUserEvents).toEqual([]);
+		});
+
+		it.each([
+			["Ctrl+Enter", { ctrlKey: true }],
+			["Alt+Enter", { altKey: true }],
+			["Meta+Enter", { metaKey: true }],
+			["Shift+Enter", { shiftKey: true }],
+		])("leaves %s untouched (cursor stays inside the link)", (_name, init) => {
+			const ctx = makeViewWithCompetitor("1. [[Steady Links Plugin]]", 10);
+			view = ctx.v;
+
+			pressEnter(view, init as KeyboardEventInit);
+
+			// (A bare "Enter" keymap never matches modified chords, so assert on the
+			// view itself: the cursor must not have been moved out of the link.)
+			expect(view.state.selection.main.head).toBe(10);
+			expect(ctx.selectionUserEvents).toEqual([]);
+		});
+
+		it("does not act when the event was already defaultPrevented by an earlier handler", () => {
+			const ctx = makeViewWithCompetitor("1. [[Steady Links Plugin]]", 10);
+			view = ctx.v;
+			const preventer = (e: Event) => e.preventDefault();
+			// Registered on the host's parent in capture phase so it runs before view.dom's.
+			view.dom.parentElement!.addEventListener("keydown", preventer, true);
+
+			pressEnter(view);
+
+			expect(ctx.selectionUserEvents).toEqual([]);
+		});
+
+		it("removes its listener on destroy", () => {
+			const ctx = makeViewWithCompetitor("1. [[Steady Links Plugin]]", 10);
+			const v = ctx.v;
+			const dom = v.dom;
+			v.destroy();
+			view = new EditorView({ state: EditorState.create({ doc: "" }) });
+
+			const before = ctx.selectionUserEvents.length;
+			dom.dispatchEvent(
+				new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })
+			);
+			expect(ctx.selectionUserEvents.length).toBe(before);
+		});
+
+		// ── Rewrites must preserve what the originating plugin attached ──
+
+		it("a rewritten Obsidian-style Enter (input.type, one-char reinsert) keeps annotations and effects", () => {
+			const marker = StateEffect.define<number>({ map: (v, m) => m.mapPos(v) });
+			view = createTestView("1. [[Steady Links Plugin]]", 26); // cursor already at link.to
+
+			const tr = view.state.update({
+				changes: { from: 25, to: 26, insert: "]\n2. " },
+				selection: EditorSelection.cursor(29),
+				annotations: [
+					Transaction.userEvent.of("input.type"),
+					Transaction.addToHistory.of(false),
+				],
+				effects: [marker.of(0)],
+			});
+
+			expect(tr.state.doc.toString()).toBe("1. [[Steady Links Plugin]]\n2. ");
+			expect(tr.annotation(Transaction.userEvent)).toBe("input.type");
+			expect(tr.annotation(Transaction.addToHistory)).toBe(false);
+			expect(tr.effects.some((e) => e.is(marker))).toBe(true);
+		});
+
+		it("a rewritten outliner-style whole-line split (no userEvent) keeps annotations and effects", () => {
+			const marker = StateEffect.define<number>({ map: (v, m) => m.mapPos(v) });
+			view = createTestView("1. [[Steady Links Plugin]]", 12);
+
+			const tr = view.state.update({
+				changes: { from: 0, to: 26, insert: "1. [[Steady \n2. Links Plugin]]" },
+				selection: EditorSelection.cursor(16),
+				annotations: [Transaction.addToHistory.of(false)],
+				effects: [marker.of(0)],
+			});
+
+			expect(tr.state.doc.toString()).toBe("1. [[Steady Links Plugin]]\n2. ");
+			expect(tr.annotation(Transaction.addToHistory)).toBe(false);
+			expect(tr.effects.some((e) => e.is(marker))).toBe(true);
+		});
+
+		it.each([["undo"], ["redo"], ["set"], ["move"]])(
+			"never rewrites a %s transaction even if it looks like an Enter split inside a link",
+			(userEvent) => {
+				view = createTestView("1. [[Steady Links Plugin]]", 12);
+				const replacement = "1. [[Steady \n2. Links Plugin]]";
+
+				view.dispatch({
+					changes: { from: 0, to: 26, insert: replacement },
+					annotations: [Transaction.userEvent.of(userEvent)],
+				});
+
+				expect(view.state.doc.toString()).toBe(replacement);
+			}
+		);
+
+		it("a large multi-line input-tagged rewrite touching a link is not appended wholesale at the link end", () => {
+			view = createTestView("1. [[Steady Links Plugin]]", 12);
+			const before = view.state.doc.toString();
+
+			view.dispatch({
+				changes: { from: 0, to: 26, insert: "---\nfrontmatter: x\n---\n1. [[Steady Links Plugin]]" },
+				annotations: [Transaction.userEvent.of("input.type")],
+			});
+
+			// Either applied as-is or blocked, but never duplicated/appended.
+			const after = view.state.doc.toString();
+			expect([before, "---\nfrontmatter: x\n---\n1. [[Steady Links Plugin]]"]).toContain(after);
+		});
+		it("does not hijack a multi-line replacement that happens to contain the cursor", () => {
+			const doc = "intro\n1. [[Steady Links Plugin]]";
+			view = createTestView(doc, 18); // inside the link on line 2
+			const replacement = "intro\n1. [[Steady \n2. Links Plugin]]";
+
+			view.dispatch({ changes: { from: 0, to: doc.length, insert: replacement } });
+
+			expect(view.state.doc.toString()).toBe(replacement);
 		});
 	});
 

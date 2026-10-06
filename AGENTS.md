@@ -567,6 +567,102 @@ retype `^`) is reproduced end-to-end in `tests/linkSyntaxHider.integration.test.
   edit; the fix belongs in `correctCursorPos`, which is the one place that
   actually decides whether a boundary crossing is worth correcting.
 
+## Critical: Enter inside a link must exit right, across plugins, without corrupting anything
+
+With the `[[` suggester closed, pressing Enter with the cursor inside a link
+must move the cursor to the link's right edge (`link.to`) and then let whichever
+plugin owns Enter act there. This must work in every context (paragraphs,
+bullet/ordered/task lists) and with the other Enter-handling plugins installed
+(obsidian-outliner, Obsidian's own smart-list Enter).
+
+### Who actually handles Enter (verified with runtime logs, do not assume)
+
+- **obsidian-outliner's Enter override** (`urOverride.run`) is a keymap that
+  outranks `enterAtLinkEndKeymap`, so our keymap is often NEVER invoked. It
+  replaces the WHOLE list-item line with `before-cursor + "\n" + newPrefix +
+  after-cursor` (e.g. replaces `[281,307)` with `'1. [[Steady \n2. Links Plugin]]'`).
+  It carries no `userEvent`.
+- **Obsidian's `newlineAndIndentContinueMarkdownList`** replaces the single
+  character before the cursor with that character + `"\n"` + list prefix
+  (`"]\n2. "`), tagged `input.type`.
+- **Other plugins also rewrite the document around Enter** (e.g.
+  front-matter-timestamps replaces the frontmatter block with a large multi-line
+  string, possibly while the cursor is inside a link). That must never be
+  mistaken for an Enter.
+
+### The layered design (each layer must keep working on its own)
+
+1. **`enterCapturePlugin`** (capture-phase `keydown` on `view.dom`) calls
+   `handleEnterKey` BEFORE any keymap sees the key, so every plugin finds the
+   cursor already at `link.to` and needs no knowledge of us.
+2. **`enterAtLinkEndKeymap`** is the fallback if the capture listener did not run.
+3. **`enterAtLinkEndFix`** (transaction filter) repairs the two known edit shapes
+   (outliner whole-line split; Obsidian one-char reinsert) when the cursor was
+   still inside the link. It fails OPEN: any other shape passes through
+   untouched. **`protectSyntaxFilter`'s newline safety net** only redirects
+   genuinely Enter-shaped changes for the same reason.
+
+CodeMirror runs `transactionFilter`s in REVERSE registration order, so
+`protectSyntaxFilter` sees input-tagged transactions BEFORE `enterAtLinkEndFix`.
+Any change to filter behavior must be checked against the full extension (the
+integration tests), not only `makeHiderState` (which contains only some filters).
+
+### Contract with other plugins (do not weaken)
+
+- The pre-move dispatch MUST carry `userEvent: "select.steadyLinks"`. Visible
+  Cursor's `navCorrection` ignores exactly that tag; untagged, a mid-link ->
+  `link.to` jump looks like a large user move and the plugins fight over the
+  cursor. (Visible Cursor pins this in `tests/homeNavigation.test.ts`, "Steady
+  Links contract".)
+- The capture listener MUST NOT `preventDefault`/`stopPropagation` and MUST NOT
+  consume the event. Emacs Text Editor (document-level `keydown`) and Visible
+  Cursor (`handleKeydown`) still need to see the keypress. Only plain Enter (no
+  Ctrl/Alt/Meta/Shift, not composing, not already `defaultPrevented`).
+- Rewriting another plugin's transaction MUST go through `rewriteKeepingMeta`,
+  which preserves annotations (`userEvent`, `addToHistory`, ...) and maps
+  effects. Never replace a transaction with a bare `tr.startState.update(...)`.
+- Never rewrite `undo`, `redo`, `set`, `input.paste`, `input.drop`, `move`
+  (`isEnterRewriteExempt`), multi-change transactions, or multi-line
+  replacements. Positional guards (`insertFrom` within one char of the cursor, or
+  a single-line whole-range replace containing the cursor) are what keep a
+  frontmatter rewrite from being hijacked.
+
+### Re-inserted boundary char
+
+Both Obsidian's handler (and any similar one) re-insert the character before the
+cursor, which at a link's end is the hidden `]`/`)`. Relocating the insertion
+must strip it (`stripReinsertedLeadingChar`) or the document ends up with `]]]`.
+
+### What NOT to do
+
+- Do NOT remove `stripReinsertedLeadingChar` calls from `enterAtLinkEndFix` or
+  `protectSyntaxFilter`.
+- Do NOT re-add an early `if (range.head === line.to) return tr;` bail to
+  `enterAtLinkEndFix` (it lets `protectSyntaxFilter` duplicate the `]`). The
+  self-loop guard is `if (insertFrom === targetPos) return tr;`.
+- Do NOT drop the `enterCapturePlugin` on the theory that the keymap suffices:
+  outliner's Enter outranks the keymap and the keymap never runs.
+- Do NOT revert `handleEnterKey` to inserting the newline itself; the owning
+  plugin's own Enter preserves numbering, empty-item removal and blockquotes.
+- Do NOT broaden `enterAtLinkEndFix` to "any newline-containing change near a
+  link". That exact mistake once appended an entire frontmatter block after a
+  link and duplicated it in the note.
+- Diagnostics: `window.__STEADY_LINKS_DEBUG = true` enables `ENTER ...` logs
+  (the `newline tr seen` entry includes a stack naming the dispatching plugin).
+  Keep `STEADY_LINKS_DEBUG` itself `false`, and remove any temporary line in
+  `main.ts` that forces the flag on before committing.
+
+### How to verify
+
+`tests/linkSyntaxHider.test.ts` (`enterAtLinkEndFix` block): the reinsert,
+whole-line-split, frontmatter-rewrite and exempt-userEvent cases.
+
+`tests/linkSyntaxHider.integration.test.ts` ("Enter capture-phase pre-move and
+do-no-harm guarantees"): a `Prec.highest` competing keymap registered before
+ours must see the cursor already at `link.to`; the pre-move is tagged
+`select.steadyLinks`; the event is never consumed; modified Enter is untouched;
+rewrites keep annotations/effects; exempt events and large rewrites are never
+hijacked.
 ## Critical: EditorFileSuggest completions must set text and cursor atomically via editor.transaction
 
 `EditorFileSuggest.completeSelection()` (Tab/`#`/`^` in-editor `[[` completion)

@@ -32,6 +32,7 @@ import {
 	StateField,
 	Transaction,
 	ChangeSet,
+	Annotation,
 } from "@codemirror/state";
 import { editorInfoField, MarkdownView } from "obsidian";
 import { wikiLinkVisibleTextOffset, type WikiLinkHidingOptions } from "./utils";
@@ -2606,6 +2607,36 @@ function listContinuation(lineText: string): string {
 }
 
 /**
+ * Obsidian's smart-list Enter (`newlineAndIndentContinueMarkdownList`)
+ * replaces the single character before the cursor with that same character
+ * followed by "\n" and the list continuation (e.g. `"]" + "\n2. "`).  When
+ * the cursor sits just past a hidden link, that character is the link's final
+ * `]]` / `](url)` syntax char.
+ *
+ * Filters that relocate such a newline insertion (to the link end, or to the
+ * line end) must not re-insert the boundary character wholesale, or the hidden
+ * syntax is duplicated (`]]]`).  This returns the inserted text with that one
+ * re-inserted leading character removed when the change replaces exactly one
+ * character with itself plus a newline; otherwise it returns `inserted`
+ * unchanged.
+ */
+function stripReinsertedLeadingChar(
+	tr: Transaction,
+	inserted: string,
+	fromA: number,
+	toA: number
+): string {
+	if (toA !== fromA + 1 || !inserted.includes("\n")) {
+		return inserted;
+	}
+	const deleted = tr.startState.doc.sliceString(fromA, toA);
+	if (deleted.length === 1 && inserted.charAt(0) === deleted) {
+		return inserted.slice(1);
+	}
+	return inserted;
+}
+
+/**
  * Keymap handler that fires BEFORE Obsidian's own Enter binding.
  * When the cursor sits inside or at the boundary of a trailing hidden
  * range that reaches the end of the line, we fully handle the Enter
@@ -2697,45 +2728,159 @@ function isAnySuggestOpen(): boolean {
 	return findVisibleSuggestionContainer() !== null;
 }
 
+/**
+ * All annotations attached to a transaction.  CodeMirror stores them on an
+ * internal `annotations` array that is not in its public typings; read it
+ * defensively and fall back to the public, well-known ones if a future
+ * CodeMirror removes it.
+ */
+function transactionAnnotations(tr: Transaction): Annotation<unknown>[] {
+	const internal = (tr as unknown as { annotations?: readonly Annotation<unknown>[] }).annotations;
+	if (Array.isArray(internal)) return [...internal];
+	const out: Annotation<unknown>[] = [];
+	const userEvent = tr.annotation(Transaction.userEvent);
+	if (userEvent !== undefined) out.push(Transaction.userEvent.of(userEvent));
+	const addToHistory = tr.annotation(Transaction.addToHistory);
+	if (addToHistory !== undefined) out.push(Transaction.addToHistory.of(addToHistory));
+	const remote = tr.annotation(Transaction.remote);
+	if (remote !== undefined) out.push(Transaction.remote.of(remote));
+	return out;
+}
+
+/**
+ * Rewrite a transaction's document change (and resulting selection) without
+ * discarding the rest of what the originating plugin attached to it.
+ *
+ * Several filters here replace another plugin's transaction (outliner, Obsidian
+ * itself, ...).  Building the replacement with a bare `startState.update` would
+ * silently drop that transaction's annotations (userEvent, addToHistory,
+ * isolateHistory, remote, ...) and effects.  This carries annotations over
+ * verbatim and maps effects from the original post-change coordinates into the
+ * rewritten document (dropping any effect that can no longer be mapped).
+ */
+function rewriteKeepingMeta(
+	tr: Transaction,
+	change: { from: number; to: number; insert: string },
+	selectionHead: number
+) {
+	const newChanges = ChangeSet.of(change, tr.startState.doc.length);
+	const remap = tr.changes.invert(tr.startState.doc).compose(newChanges);
+	const effects: StateEffect<unknown>[] = [];
+	for (const e of tr.effects) {
+		const mapped = e.map(remap);
+		if (mapped) effects.push(mapped);
+	}
+	return tr.startState.update({
+		changes: newChanges,
+		selection: EditorSelection.cursor(selectionHead),
+		effects,
+		annotations: transactionAnnotations(tr),
+		scrollIntoView: true,
+	});
+}
+
+/**
+ * True for transactions this Enter machinery must never rewrite: history
+ * replays, wholesale document sets, and paste/drop/move (which have their own
+ * dedicated handling).  Rewriting these would corrupt unrelated operations.
+ */
+function isEnterRewriteExempt(tr: Transaction): boolean {
+	return (
+		tr.isUserEvent("undo") ||
+		tr.isUserEvent("redo") ||
+		tr.isUserEvent("set") ||
+		tr.isUserEvent("input.paste") ||
+		tr.isUserEvent("input.drop") ||
+		tr.isUserEvent("move")
+	);
+}
+
+function handleEnterKey(view: EditorView): boolean {
+	debugLog("ENTER keymap: invoked", {
+		suggestOpen: isAnySuggestOpen(),
+		enabled: view.state.field(syntaxHiderEnabledField, false),
+		ranges: view.state.selection.ranges.map((r) => [r.anchor, r.head]),
+		line: view.state.doc.lineAt(view.state.selection.main.head).text,
+	});
+	if (view.composing) return false; // never disturb an IME composition
+	if (isAnySuggestOpen()) return false;
+	if (!view.state.field(syntaxHiderEnabledField, false)) return false;
+	const sel = view.state.selection;
+	if (sel.ranges.length !== 1 || !sel.main.empty) return false;
+
+	const head = sel.main.head;
+	const hidden = computeHiddenRanges(view.state);
+	if (!hidden || hidden.length === 0) return false;
+
+	const links = buildLinkSpans(hidden);
+	const link = links.find((l) => head > l.from && head < l.to);
+	debugLog("ENTER keymap: link lookup", {
+		head,
+		link: link ? { from: link.from, to: link.to } : null,
+		allLinks: links.map((l) => [l.from, l.to]),
+	});
+	if (!link) return false;
+
+	const targetPos = link.to;
+	// Purely corrective, selection-only move: MUST carry "select.steadyLinks" so
+	// cooperating plugins (Visible Cursor's navCorrection) ignore it instead of
+	// reacting to what looks like a large user cursor jump.  See AGENTS.md.
+	view.dispatch({
+		selection: EditorSelection.cursor(targetPos),
+		scrollIntoView: true,
+		userEvent: "select.steadyLinks",
+	});
+	return false; // Exit link to the right, and allow downstream Enter handlers to execute at targetPos
+}
+
 const enterAtLinkEndKeymap = keymap.of([
 	{
 		key: "Enter",
 		run(view) {
-			if (isAnySuggestOpen()) return false;
-			if (!view.state.field(syntaxHiderEnabledField, false)) return false;
-			const sel = view.state.selection;
-			if (sel.ranges.length !== 1 || !sel.main.empty) return false;
-
-			const head = sel.main.head;
-			const hidden = computeHiddenRanges(view.state);
-
-			for (const h of hidden) {
-				if (h.side !== "trailing") continue;
-				if (head < h.from || head > h.to) continue;
-
-				const line = view.state.doc.lineAt(head);
-				// Only act when the trailing range reaches the line end
-				if (h.to !== line.to) continue;
-
-				// Compute insert text with list continuation (handles ordered lists)
-				const continuation = listContinuation(line.text);
-				const insert = "\n" + continuation;
-
-				view.dispatch({
-					changes: {
-						from: line.to,
-						to: line.to,
-						insert,
-					},
-					selection: EditorSelection.cursor(line.to + insert.length),
-					scrollIntoView: true,
-				});
-				return true; // Consume Enter — we handled it
-			}
-			return false;
+			return handleEnterKey(view);
 		},
 	},
 ]);
+
+/**
+ * Capture-phase Enter listener: moves the cursor out of a link BEFORE any
+ * plugin's keymap sees the key.
+ *
+ * Other plugins (obsidian-outliner's Enter override, Obsidian's own smart-list
+ * Enter) run ahead of `enterAtLinkEndKeymap` and split the line at the cursor,
+ * so the keymap above never gets a chance.  A capture listener on `view.dom`
+ * fires before every CodeMirror keymap handler on `contentDOM`, so each of them
+ * then sees the cursor already at the link's right edge and needs no
+ * knowledge of this plugin.
+ *
+ * Contract with the rest of the ecosystem (do not weaken):
+ *  - Never preventDefault/stopPropagation and never consume the event: Emacs
+ *    Text Editor, Visible Cursor and every keymap must still see the keypress.
+ *  - Only a plain Enter (no Ctrl/Alt/Meta/Shift, not composing, not already
+ *    defaultPrevented).
+ *  - The cursor move is tagged "select.steadyLinks" (see handleEnterKey).
+ */
+function onEnterKeydownCapture(event: KeyboardEvent, view: EditorView): void {
+	if (event.key !== "Enter") return;
+	if (event.defaultPrevented || event.isComposing) return;
+	if (event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return;
+	handleEnterKey(view);
+}
+
+class EnterCaptureListener {
+	private readonly listener: (event: KeyboardEvent) => void;
+
+	constructor(private readonly view: EditorView) {
+		this.listener = (event) => onEnterKeydownCapture(event, this.view);
+		this.view.dom.addEventListener("keydown", this.listener, true);
+	}
+
+	destroy() {
+		this.view.dom.removeEventListener("keydown", this.listener, true);
+	}
+}
+
+const enterCapturePlugin = ViewPlugin.fromClass(EnterCaptureListener);
 
 // ---------------------------------------------------------------------------
 // Edit protection
@@ -2743,8 +2888,25 @@ const enterAtLinkEndKeymap = keymap.of([
 
 const enterAtLinkEndFix = EditorState.transactionFilter.of((tr) => {
 	if (!tr.docChanged) return tr;
-	if (!tr.isUserEvent("input")) return tr;
+	if (isSteadyLinksDebug()) {
+		const chg: Array<[number, number, string]> = [];
+		tr.changes.iterChanges((fromA, toA, _fromB, _toB, ins) => {
+			chg.push([fromA, toA, ins.toString().slice(0, 60)]);
+		});
+		if (chg.some((c) => c[2].includes("\n"))) {
+			debugLog("ENTER filter: newline tr seen", {
+				userEvent: tr.annotation(Transaction.userEvent),
+				startHead: tr.startState.selection.main.head,
+				changes: chg,
+				suggestOpen: isAnySuggestOpen(),
+				stack: new Error("who dispatched this newline transaction").stack,
+			});
+		}
+	}
 	if (!tr.startState.field(syntaxHiderEnabledField, false)) return tr;
+	if (isAnySuggestOpen()) return tr;
+	if (isEnterRewriteExempt(tr)) return tr;
+
 	const startSel = tr.startState.selection;
 	if (startSel.ranges.length !== 1) return tr;
 	const range = startSel.ranges[0];
@@ -2770,41 +2932,14 @@ const enterAtLinkEndFix = EditorState.transactionFilter.of((tr) => {
 		}
 	}
 
-	// If the cursor is already at the line end, OR the insertion is already
-	// at the line end, don't intercept.
-	//
-	// Case 1: enterAtLinkEndKeymap pre-positions the cursor to line.to before
-	// returning false; we must not redirect that Enter or ordered-list numbering
-	// (and other smart-Enter behaviours) will break.
-	//
-	// Case 2: enterAtLinkEndFix itself produces a redirected transaction by
-	// calling tr.startState.update({changes: {from: line.to, ...}}).  That
-	// redirected transaction is run through the filter pipeline again — we must
-	// not intercept it or we'll loop forever.
-	{
-		const lineAtHead = tr.startState.doc.lineAt(range.head);
-		if (range.head === lineAtHead.to) return tr;
-		// Guard against self-loop: if the insertion is already positioned at
-		// line.to (the redirect destination), pass through.
-		// "insertFrom" is computed below; use the raw change data here.
-		let firstInsertFrom = -1;
-		let hasNewline = false;
-		tr.changes.iterChanges((fromA, _toA, _fromB, _toB, inserted) => {
-			const text = inserted.toString();
-			if (text.includes("\n") && firstInsertFrom === -1) {
-				firstInsertFrom = fromA;
-				hasNewline = true;
-			}
-		});
-		if (hasNewline && firstInsertFrom === lineAtHead.to) return tr;
-	}
-
 	let insertText: string | undefined;
 	let insertFrom = -1;
 	let insertTo = -1;
 	let insertCount = 0;
+	let totalChanges = 0;
 
 	tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+		totalChanges += 1;
 		const text = inserted.toString();
 		if (!text.includes("\n")) return;
 		insertCount += 1;
@@ -2815,97 +2950,119 @@ const enterAtLinkEndFix = EditorState.transactionFilter.of((tr) => {
 
 	if (!insertText || insertCount !== 1) return tr;
 
+	// Whole-range split Enter (e.g. the obsidian-outliner plugin's Enter
+	// override, which runs before our keymap and replaces the entire list-item
+	// line with `before-cursor + "\n" + newPrefix + after-cursor`).  If the split
+	// point is strictly inside a link, move the split to the link's right edge,
+	// keeping the replaced range and the plugin's computed prefix.
+	if (
+		totalChanges === 1 &&
+		insertTo > insertFrom + 1 &&
+		insertFrom <= range.head &&
+		range.head <= insertTo &&
+		insertText.indexOf("\n") === insertText.lastIndexOf("\n")
+	) {
+		const original = tr.startState.doc.sliceString(insertFrom, insertTo);
+		const nl = insertText.indexOf("\n");
+		const k = range.head - insertFrom;
+		const before = insertText.slice(0, nl);
+		const tail = original.slice(k);
+		const rest = insertText.slice(nl + 1);
+		// Single-line scope only: a plugin replacing several lines is doing
+		// something other than "split this line at the cursor".
+		if (!original.includes("\n") && before === original.slice(0, k) && rest.endsWith(tail)) {
+			const prefix = rest.slice(0, rest.length - tail.length);
+			const splitLink = buildLinkSpans(computeHiddenRanges(tr.startState)).find(
+				(l) => range.head > l.from && range.head < l.to && l.to <= insertTo
+			);
+			debugLog("ENTER filter: whole-range split", {
+				head: range.head,
+				insertFrom,
+				insertTo,
+				prefix,
+				splitLink: splitLink ? [splitLink.from, splitLink.to] : null,
+			});
+			if (splitLink) {
+				const k2 = splitLink.to - insertFrom;
+				const newText = original.slice(0, k2) + "\n" + prefix + original.slice(k2);
+				return rewriteKeepingMeta(
+					tr,
+					{ from: insertFrom, to: insertTo, insert: newText },
+					insertFrom + k2 + 1 + prefix.length
+				);
+			}
+		}
+	}
+
+	// Only act on an Enter-shaped transaction: a single change, replacing at
+	// most the one character before the cursor, whose inserted text is a
+	// single newline (optionally preceded by that re-inserted char) followed by
+	// a list prefix.  Anything else (e.g. another plugin rewriting frontmatter
+	// or pasting multi-line text) must pass through untouched, since this
+	// filter replaces the whole transaction.
+	if (
+		totalChanges !== 1 ||
+		insertTo - insertFrom > 1 ||
+		insertFrom < range.head - 1 ||
+		insertFrom > range.head ||
+		insertText.split("\n").length !== 2 ||
+		!/^[^\n]?\n[^\n]*$/.test(insertText)
+	) {
+		debugLog("ENTER filter: not Enter-shaped, passing through", {
+			totalChanges,
+			insertFrom,
+			insertTo,
+			head: range.head,
+			insertText,
+		});
+		return tr;
+	}
+
 	const hidden = computeHiddenRanges(tr.startState);
 	if (hidden.length === 0) return tr;
 
+	const links = buildLinkSpans(hidden);
+	if (links.length === 0) return tr;
+
 	const line = tr.startState.doc.lineAt(range.head);
 
-	// For pure insertions at cursor, check via findLinkEndAtPos
-	// For replacements or insertions at other positions, check whether
-	// the cursor or the change range overlaps a trailing hidden range
-	let matchedTrailing: HiddenRange | null = null;
-
-	if (insertFrom === insertTo && insertFrom === range.head) {
-		const linkEnd = findLinkEndAtPos(line.text, line.from, insertFrom);
-		if (linkEnd !== null) {
-			for (const h of hidden) {
-				if (h.side === "trailing" && linkEnd === h.to) {
-					matchedTrailing = h;
-					break;
-				}
-			}
-		}
-	}
-
-	// Fallback: if the cursor is at or inside a trailing hidden range,
-	// or the change range overlaps one, redirect the newline to the
-	// end of the line regardless of exact insertion position.
-	if (!matchedTrailing) {
-		for (const h of hidden) {
-			if (h.side !== "trailing") continue;
-			// Cursor inside or at trailing range boundary
-			if (range.head >= h.from && range.head <= h.to) {
-				matchedTrailing = h;
-				break;
-			}
-			// Change range overlaps trailing range
-			if (insertFrom < h.to && insertTo > h.from) {
-				matchedTrailing = h;
-				break;
-			}
-		}
-	}
-
-	// Check for cursor at textFrom of a line-start leading range.
-	// When cursor is at textFrom (= leading.to) after arrow-key navigation,
-	// Enter would insert \n between the hidden [[ and the visible text,
-	// splitting the link.  Redirect to leading.from (real line start) so
-	// the entire link moves to the next line.
-	if (!matchedTrailing) {
-		for (const h of hidden) {
-			if (h.side !== "leading") continue;
-			if (h.from !== line.from) continue; // only line-start links
-			if (range.head === h.to && insertFrom === h.to) {
-				// Cursor is at textFrom of a line-start link.
-				// Redirect the newline to leading.from (= line start).
-				const userEvent = tr.annotation(Transaction.userEvent) ?? undefined;
-				traceFilter(
-					"enterAtLinkEndFix",
-					tr,
-					"REDIRECT newline from textFrom to leading.from",
-					{
-						leadingFrom: h.from,
-						leadingTo: h.to,
-						cursorHead: range.head,
-					}
-				);
-				return tr.startState.update({
-					changes: { from: h.from, to: h.from, insert: insertText },
-					selection: EditorSelection.cursor(h.from + insertText.length),
-					scrollIntoView: true,
-					userEvent,
-				});
-			}
-		}
-	}
-
-	if (!matchedTrailing) return tr;
-
-	// Only redirect newlines when the trailing range reaches the line end
-	if (matchedTrailing.to !== line.to) return tr;
-
-	let finalInsertText = insertText;
-	if (insertText === "\n" && line.text.trimStart().startsWith("- ")) {
-		finalInsertText = "\n- ";
-	}
-
-	const userEvent = tr.annotation(Transaction.userEvent) ?? undefined;
-	return tr.startState.update({
-		changes: { from: line.to, to: line.to, insert: finalInsertText },
-		selection: EditorSelection.cursor(line.to + finalInsertText.length),
-		scrollIntoView: true,
-		userEvent,
+	const matchedLink = links.find((l) => range.head > l.from && range.head <= l.to);
+	debugLog("ENTER filter: link match", {
+		head: range.head,
+		insertFrom,
+		insertTo,
+		insertText,
+		matchedLink: matchedLink ? [matchedLink.from, matchedLink.to] : null,
+		allLinks: links.map((l) => [l.from, l.to]),
+		lineText: line.text,
 	});
+	if (!matchedLink) return tr;
+
+	const targetPos = matchedLink.to;
+	if (insertFrom === targetPos) {
+		debugLog("ENTER filter: insertion already at link end, passing through", { targetPos });
+		return tr;
+	}
+
+	// Obsidian's smart-list Enter re-inserts the character before the cursor as
+	// the first character of the insertion (see stripReinsertedLeadingChar).
+	// When the cursor sits at/inside a link, that character belongs to the
+	// link's hidden closing syntax, so relocating the insertion to the link end
+	// must drop it or the syntax is duplicated (e.g. `]]]`).
+	const relocatedInsertText = stripReinsertedLeadingChar(tr, insertText, insertFrom, insertTo);
+
+	const continuation = listContinuation(line.text);
+	let finalInsertText = relocatedInsertText;
+	if (relocatedInsertText === "\n" && continuation !== "") {
+		finalInsertText = "\n" + continuation;
+	}
+
+	debugLog("ENTER filter: REDIRECT to link end", { targetPos, finalInsertText });
+	return rewriteKeepingMeta(
+		tr,
+		{ from: targetPos, to: targetPos, insert: finalInsertText },
+		targetPos + finalInsertText.length
+	);
 });
 
 function isPureDeleteTransaction(tr: Transaction): boolean {
@@ -4520,31 +4677,59 @@ const protectSyntaxFilter = EditorState.transactionFilter.of((tr) => {
 	// is preserved instead of silently swallowing the keypress.
 	let newlineText: string | undefined;
 	let newlineFrom = -1;
-	tr.changes.iterChanges((fromA, _toA, _fromB, _toB, inserted) => {
+	let newlineTo = -1;
+	let changeCount = 0;
+	tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+		changeCount += 1;
 		const text = inserted.toString();
 		if (text.includes("\n")) {
 			newlineText = text;
 			newlineFrom = fromA;
+			newlineTo = toA;
 		}
 	});
 
-	if (newlineText !== undefined && newlineFrom >= 0) {
+	// Only redirect a genuine Enter: one change replacing at most the single
+	// character before the cursor with <optional re-inserted char> + one newline +
+	// a short prefix.  Anything bigger (another plugin's multi-line rewrite, a
+	// tagged bulk edit) must NOT be appended wholesale at the line/link end; it
+	// falls through to the normal protection logic below instead.
+	const isEnterShapedNewline =
+		newlineText !== undefined &&
+		changeCount === 1 &&
+		newlineTo - newlineFrom <= 1 &&
+		/^[^\n]?\n[^\n]*$/.test(newlineText);
+
+	if (isEnterShapedNewline && newlineText !== undefined && newlineFrom >= 0) {
 		const line = tr.startState.doc.lineAt(newlineFrom);
-		const userEvent = tr.annotation(Transaction.userEvent) ?? undefined;
+		// Obsidian's smart-list Enter re-inserts the character before the
+		// cursor (the link's final hidden syntax char) as the first character
+		// of the newline insertion.  Relocating to the line end must drop that
+		// re-inserted character, or the hidden syntax is duplicated (`]]]`).
+		const relocatedText = stripReinsertedLeadingChar(tr, newlineText, newlineFrom, newlineTo);
+		debugLog("ENTER protectSyntaxFilter: newline redirect", {
+			newlineFrom,
+			newlineTo,
+			newlineText,
+			relocatedText,
+			head: tr.startState.selection.main.head,
+		});
 		traceFilter("protectSyntaxFilter", tr, "REDIRECT newline to line end", {
 			lineFrom: line.from,
 			lineTo: line.to,
 		});
-		return tr.startState.update({
-			changes: {
-				from: line.to,
-				to: line.to,
-				insert: newlineText,
-			},
-			selection: EditorSelection.cursor(line.to + newlineText.length),
-			scrollIntoView: true,
-			userEvent,
-		});
+		// Prefer the end of the link containing the change over the line end, so
+		// text following the link (e.g. " text") moves to the new list item
+		// exactly as Obsidian's own Enter would at that position.
+		const containingLink = buildLinkSpans(hidden).find(
+			(l) => newlineFrom >= l.from && newlineFrom < l.to
+		);
+		const redirectPos = containingLink ? containingLink.to : line.to;
+		return rewriteKeepingMeta(
+			tr,
+			{ from: redirectPos, to: redirectPos, insert: relocatedText },
+			redirectPos + relocatedText.length
+		);
 	}
 
 	traceFilter("protectSyntaxFilter", tr, "BLOCKED (return [])");
@@ -4704,6 +4889,7 @@ export function createLinkSyntaxHiderExtension(wikiLinkOptions: WikiLinkHidingOp
 		Prec.highest(suppressSuggestAfterDeleteListener),
 		Prec.highest(boundaryInputSuppressor),
 		Prec.highest(endKeyTracker),
+		enterCapturePlugin,
 		lastEndKeyDownAtField,
 		suppressSameLineCursorResetField,
 		pendingExternalSelectionExpansionField,
@@ -4712,8 +4898,8 @@ export function createLinkSyntaxHiderExtension(wikiLinkOptions: WikiLinkHidingOp
 		Prec.highest(homeKeyKeymap),
 		Prec.highest(deleteSelectionKeymap),
 		Prec.highest(deleteInLinkTextKeymap),
-		Prec.highest(enterAtLinkEndKeymap),
 		Prec.highest(expandSelectionToLeadingSyntaxFilter),
+		Prec.highest(enterAtLinkEndKeymap),
 		Prec.highest(enterAtLinkEndFix),
 		Prec.highest(suppressNextBoundaryInputFilter),
 		Prec.highest(suppressSuggestAfterVisibleDeleteFilter),
@@ -4772,6 +4958,7 @@ export {
 	computeAllLinkSpansForState,
 	isAnySuggestOpen,
 	enterAtLinkEndKeymap,
+	handleEnterKey,
 	activeComposingWikiLinkField,
 	setActiveComposingWikiLink,
 };
