@@ -19,7 +19,7 @@
  * 10. Both buttons must always be present (not reverted to single toggle)
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { EditLinkModal } from "../src/EditLinkModal";
 import { App } from "./__mocks__/obsidian";
 import { LinkInfo } from "../src/types";

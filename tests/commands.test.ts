@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { Editor, MarkdownView } from "obsidian";
+import { Editor } from "obsidian";
 
 // Mock the utils and modalLogic modules before importing
 vi.mock("../src/utils", () => ({
@@ -23,7 +23,6 @@ vi.mock("../src/linkSyntaxHider", () => ({
 // Import the mocked functions
 import { detectLinkAtCursor } from "../src/utils";
 import { computeSkipCursorPosition } from "../src/modalLogic";
-import { temporarilyVisibleLinkField } from "../src/linkSyntaxHider";
 
 // Get references to the mocked functions
 const mockDetectLinkAtCursor = detectLinkAtCursor as any;
@@ -41,8 +40,6 @@ const mockEditor = {
 	getLine: mockGetLine,
 	lineCount: mockLineCount,
 } as unknown as Editor;
-
-const mockView = {} as MarkdownView;
 
 // ============================================================================
 // Command Tests
@@ -270,7 +267,6 @@ describe("expand/collapse link in source mode", () => {
 		// In source mode, there's no link syntax hiding
 		// The command should return early
 		const isSourceMode = true;
-		const keepLinksSteady = true;
 
 		// Even with keepLinksSteady ON, in source mode the command does nothing
 		const shouldDoNothing = isSourceMode;

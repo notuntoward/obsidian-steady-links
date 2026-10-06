@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { MarkdownView, App } from "obsidian";
+import { App } from "obsidian";
 import SteadyLinksPlugin from "../src/main";
 import { EditorView, keymap } from "@codemirror/view";
 import { EditorState, EditorSelection, StateEffect, Transaction, Prec } from "@codemirror/state";
@@ -544,7 +544,6 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			view = createTestView("Click [two words here](https://x.com) for details", 20);
 
 			let pos = 20;
-			let previousPos = pos;
 			const visited: number[] = [pos];
 
 			// Arrow left until we exit the link or take too many steps
@@ -555,7 +554,6 @@ describe("Integration: cursor correction with real CM6 state", () => {
 				// The cursor must never jump forward during leftward motion
 				expect(next).toBeLessThanOrEqual(pos);
 
-				previousPos = pos;
 				pos = next;
 
 				// Stop once we've exited the link area
@@ -3372,7 +3370,7 @@ describe("Integration: DOM copy event focus handling", () => {
 		const plugin = new SteadyLinksPlugin(app, {} as any);
 		let copyHandler: ((e: any) => void) | null = null;
 		
-		plugin.registerDomEvent = vi.fn().mockImplementation((target, eventType, handler) => {
+		plugin.registerDomEvent = vi.fn().mockImplementation((_target, eventType, handler) => {
 			if (eventType === "copy") {
 				copyHandler = handler;
 			}
@@ -3416,7 +3414,7 @@ describe("Integration: DOM copy event focus handling", () => {
 		const plugin = new SteadyLinksPlugin(app, {} as any);
 		let copyHandler: ((e: any) => void) | null = null;
 		
-		plugin.registerDomEvent = vi.fn().mockImplementation((target, eventType, handler) => {
+		plugin.registerDomEvent = vi.fn().mockImplementation((_target, eventType, handler) => {
 			if (eventType === "copy") {
 				copyHandler = handler;
 			}

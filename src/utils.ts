@@ -1,5 +1,3 @@
-import { TFile } from "obsidian";
-
 /**
  * Check if a destination string is valid for a WikiLink format
  * 
@@ -617,9 +615,7 @@ export function detectMarkdownLinkAtCursor(line: string, cursorCh: number): Link
 		const end = match.index + match[0].length;
 
 		// The actual link content starts after the ! if present
-		const linkContentStart = hasEmbedPrefix ? start + 1 : start;
 		const isEmbed = hasEmbedPrefix;
-		const actualStart = start; // Include the ! in the range
 
 		// Check if cursor is within the link (including the ! prefix)
 		// We check a wider range to handle cases where cursor is on the embed prefix
@@ -855,7 +851,6 @@ export function computeDisplayedTextRange(
 		// Full link: wikiLink.start to wikiLink.end
 		// Displayed text is after the pipe, or the whole destination if no pipe
 		const hasEmbedPrefix = wikiLink.link.isEmbed;
-		const prefixLen = hasEmbedPrefix ? 3 : 2; // '![' or '[['
 		
 		// Find the opening [[ position
 		const openIndex = hasEmbedPrefix 
@@ -1152,7 +1147,7 @@ export function isEmbeddableUrl(url: string): boolean {
  */
 export function validateLinkDestination(
 	dest: string,
-	linkText: string,
+	_linkText: string,
 	isWiki: boolean,
 	isEmbed: boolean = false,
 	currentFilePath?: string,

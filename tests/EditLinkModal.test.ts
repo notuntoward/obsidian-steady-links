@@ -1,12 +1,10 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import {
-	validateSubmission,
 	parseClipboardFlags,
 	computeConversionNotice,
 	isTextProvisional,
 } from "../src/modalLogic";
 import { normalizeUrl, isUrl, validateLinkDestination } from "../src/utils";
-import { LinkInfo } from "../src/types";
 
 // ============================================================================
 // Tests for URL Normalization Logic (used in EditLinkModal.submit)
@@ -460,9 +458,6 @@ describe("onCancel Callback Behavior", () => {
 	it("should not call onCancel on submit", () => {
 		// The onCancel should only be called on ESC, not on submit
 		let cancelCalled = false;
-		const onCancel = () => {
-			cancelCalled = true;
-		};
 
 		// Simulate submit behavior (should NOT call onCancel)
 		const onSubmit = () => {

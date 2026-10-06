@@ -580,7 +580,7 @@ export class Plugin {
 	registerDomEvent(): this {
 		return this;
 	}
-	register(cb: () => any): void {
+	register(_cb: () => any): void {
 		// Mock stub
 	}
 	registerInterval(): number {
@@ -925,11 +925,9 @@ export class TextAreaComponent {
 
 export class Notice {
 	private message: string;
-	private timeout: number;
 
-	constructor(message: string, timeout?: number) {
+	constructor(message: string, _timeout?: number) {
 		this.message = message;
-		this.timeout = timeout ?? 5000;
 	}
 
 	getMessage(): string {
@@ -989,7 +987,6 @@ export abstract class AbstractInputSuggest<T> {
 	protected app: App;
 	protected inputEl: HTMLInputElement;
 	scope: Scope;
-	private suggestions: T[] = [];
 	private isOpen = false;
 
 	constructor(app: App, inputEl: HTMLInputElement) {
@@ -1003,8 +1000,8 @@ export abstract class AbstractInputSuggest<T> {
 	abstract selectSuggestion(item: T): void;
 
 	// Test helpers
-	protected setSuggestions(suggestions: T[]): void {
-		this.suggestions = suggestions;
+	protected setSuggestions(_suggestions: T[]): void {
+		// no-op: mock helper, no test reads it back
 	}
 
 	protected getIsOpen(): boolean {

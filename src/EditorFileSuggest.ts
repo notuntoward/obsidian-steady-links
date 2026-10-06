@@ -357,7 +357,7 @@ export class EditorFileSuggest extends EditorSuggest<SuggestionItem> {
 		return { line, ch: endCh };
 	}
 
-	onTrigger(cursor: EditorPosition, editor: Editor, file: TFile): EditorSuggestTriggerInfo | null {
+	onTrigger(cursor: EditorPosition, editor: Editor, _file: TFile): EditorSuggestTriggerInfo | null {
 		debugLog("onTrigger called", { cursor, keepLinksSteady: this.plugin.settings.keepLinksSteady });
 
 		if (!this.plugin.settings.keepLinksSteady) {
@@ -415,7 +415,7 @@ export class EditorFileSuggest extends EditorSuggest<SuggestionItem> {
 		renderSuggestionItem(item, el, query, this.app);
 	}
 
-	async selectSuggestion(item: SuggestionItem, evt: MouseEvent | KeyboardEvent): Promise<void> {
+	async selectSuggestion(item: SuggestionItem, _evt: MouseEvent | KeyboardEvent): Promise<void> {
 		const context = this.context;
 		if (!context) return;
 

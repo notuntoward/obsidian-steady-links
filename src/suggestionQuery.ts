@@ -242,7 +242,7 @@ export interface LinkValueContext {
  * @returns The link destination string
  */
 export function generateLinkValue(context: LinkValueContext): string {
-	const { query, currentFilePath, targetFileBasename, headingText, blockId } = context;
+	const { query, targetFileBasename, headingText, blockId } = context;
 
 	switch (query.type) {
 		case 'global-heading':

@@ -5,7 +5,6 @@ import { EditorFileSuggest } from "./EditorFileSuggest";
 import { SteadyLinksSettingTab } from "./SettingTab";
 import { PluginSettings, LinkInfo } from "./types";
 import {
-	parseClipboardLink,
 	detectLinkAtCursor,
 	determineLinkFromContext,
 	urlAtCursor,
@@ -292,7 +291,7 @@ export default class SteadyLinksPlugin extends Plugin {
 		this.addCommand({
 			id: "open-link-in-default-app",
 			name: "Open link in default app",
-			editorCallback: (editor: Editor, view: MarkdownView) => {
+			editorCallback: (editor: Editor, _view: MarkdownView) => {
 				this.handleOpenLinkInDefaultApp(editor);
 			},
 		});
@@ -300,7 +299,7 @@ export default class SteadyLinksPlugin extends Plugin {
 		this.addCommand({
 			id: "reveal-link-in-explorer",
 			name: "Reveal link in file explorer",
-			editorCallback: (editor: Editor, view: MarkdownView) => {
+			editorCallback: (editor: Editor, _view: MarkdownView) => {
 				this.handleRevealLinkInExplorer(editor);
 			},
 		});
@@ -482,7 +481,7 @@ export default class SteadyLinksPlugin extends Plugin {
 	 * Used by both "Expand Link" and "Toggle Link Expand" commands.
 	 * Only works in live preview mode when "keep links steady" is enabled.
 	 */
-	private expandLink(editor: Editor, view: MarkdownView): void {
+	private expandLink(editor: Editor, _view: MarkdownView): void {
 		// This command only makes sense when "keep links steady" is enabled
 		if (!this.settings.keepLinksSteady) {
 			return;
@@ -561,7 +560,7 @@ export default class SteadyLinksPlugin extends Plugin {
 	 * When "keep links steady" is ON: cursor stays on link for easy toggling
 	 * When "keep links steady" is OFF: cursor skips off link to prevent automatic re-expansion
 	 */
-	private collapseLink(editor: Editor, view: MarkdownView): void {
+	private collapseLink(editor: Editor, _view: MarkdownView): void {
 		const cursor = editor.getCursor();
 		const line = editor.getLine(cursor.line);
 

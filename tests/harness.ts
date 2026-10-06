@@ -15,7 +15,7 @@ import {
 } from "./__mocks__/obsidian";
 import { PluginSettings } from "../src/types";
 import { createSettings } from "./factories";
-import { ClipboardService, createMockClipboard, MockClipboardOptions } from "./clipboard";
+import { ClipboardService, createMockClipboard } from "./clipboard";
 
 // ============================================================================
 // Test Harness

@@ -110,20 +110,6 @@ function traceFilter(
 	});
 }
 
-function findPreviousWordBoundary(text: string, from: number, to: number): number {
-	let pos = Math.max(from, Math.min(to, text.length));
-
-	while (pos > from && /[\s\p{P}]/u.test(text.charAt(pos - 1))) {
-		pos -= 1;
-	}
-
-	while (pos > from && /[^\s\p{P}]/u.test(text.charAt(pos - 1))) {
-		pos -= 1;
-	}
-
-	return pos;
-}
-
 function findNextWordBoundary(text: string, from: number, to: number): number {
 	let pos = Math.max(from, Math.min(to, 0));
 
@@ -901,7 +887,7 @@ const BODY_CLASS = "le-keep-links-steady";
 class BodyClassPlugin implements PluginValue {
 	private enabled = false;
 
-	constructor(private view: EditorView) {
+	constructor(view: EditorView) {
 		this.sync(view);
 	}
 	update(update: ViewUpdate) {
@@ -1082,7 +1068,7 @@ class SyntaxHiderModePlugin implements PluginValue {
 	private syncing = false;
 	private pendingSync: number | null = null;
 
-	constructor(private view: EditorView) {
+	constructor(view: EditorView) {
 		this.scheduleSync(view);
 	}
 
@@ -1921,7 +1907,7 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 			// its own correction logic (goalColumn, arrivedFromOutside).
 			const lineStartSpanOutsideCheck = isEmacsMoveToBeginning
 				? (oldH: number, spanTo: number, spanTextFrom: number) => oldH >= spanTo || oldH <= spanTextFrom
-				: (oldH: number, spanTo: number, spanTextFrom: number) => oldH > spanTo;
+				: (oldH: number, spanTo: number, _spanTextFrom: number) => oldH > spanTo;
 
 			const lineStartSpan = linkSpans.find(
 				(span) => {
@@ -1944,7 +1930,6 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 
 			if (lineStartSpan) {
 				const isLineStart = lineStartSpan.leading.from === state.doc.lineAt(lineStartSpan.leading.from).from;
-				const isHomePos = isHomePosition(lineStartSpan.leading.from, state.doc);
 				
 				if (isEmacsMoveToBeginning) {
 					head = getLineStartTarget(lineStartSpan, state.doc.lineAt(head).from, oldHead);
@@ -2035,8 +2020,6 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 		const hasGoalColumn =
 			newSel.main.goalColumn !== undefined || oldSel.main.goalColumn !== undefined;
 		if (hasGoalColumn || isEmacsVertical || cameFromBlankLine) {
-			const oldLine = oldLineForVert;
-			const newLine = newLineForVert;
 			const isVertical = isCrossLine;
 
 			let allowLeadingBoundaryAdvance = false;
@@ -4767,9 +4750,6 @@ export function findLinkRangeAtPos(
 		...findMarkdownLinkSyntaxRanges(lineText, lineFrom),
 		...findWikiLinkSyntaxRanges(lineText, lineFrom),
 	];
-
-	// Group ranges by link (each link has leading and trailing ranges)
-	const links = new Map<number, { from: number; to: number }>();
 
 	for (const r of ranges) {
 		if (pos < r.from || pos > r.to) continue;

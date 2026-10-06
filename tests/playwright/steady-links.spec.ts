@@ -1,13 +1,5 @@
 import { expect, test } from "@playwright/test";
-import type { HarnessRect, SteadyLinksHarness } from "./harnessTypes";
-
-function getHarness(): SteadyLinksHarness {
-	const harness = window.__steadyLinksHarness;
-	if (!harness) {
-		throw new Error("Steady Links Playwright harness did not initialize");
-	}
-	return harness;
-}
+import type { HarnessRect } from "./harnessTypes";
 
 test.beforeEach(async ({ page }) => {
 	await page.goto("/tests/playwright/index.html");

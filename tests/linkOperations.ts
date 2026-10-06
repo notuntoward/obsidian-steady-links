@@ -15,7 +15,6 @@ import {
 	determineLinkFromContext,
 	urlAtCursor,
 	LinkAtCursor,
-	LinkFromContext,
 } from "../src/utils";
 
 // ============================================================================

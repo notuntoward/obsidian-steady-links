@@ -3,9 +3,7 @@ import {
 	determineLinkOperation,
 	determineLinkOperationWithSelection,
 	determineSkipPosition,
-	EditorContext,
 	EditorContextWithSelection,
-	LinkOperation,
 	SkipLinkContext,
 } from "./linkOperations";
 import {

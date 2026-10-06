@@ -35,7 +35,7 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 		this.focusValue = this.inputEl.value;
 
 		// Track the input value when focus happens
-		this.inputEl.addEventListener("focus", (e) => {
+		this.inputEl.addEventListener("focus", () => {
 			this.focusValue = this.inputEl.value;
 		});
 
@@ -177,7 +177,7 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 		renderSuggestionItem(item, el, query, this.app);
 	}
 
-	async selectSuggestion(item: SuggestionItem, evt?: MouseEvent | KeyboardEvent): Promise<void> {
+	async selectSuggestion(item: SuggestionItem, _evt?: MouseEvent | KeyboardEvent): Promise<void> {
 		const { linkValue, newLinkText } = await computeSelectedLinkValue(item, this.app, true);
 
 		this.inputEl.value = linkValue;

@@ -10,8 +10,6 @@ import {
 	hasSearchTerm,
 	generateLinkValue,
 	validateQuery,
-	ParsedQuery,
-	QueryType,
 } from '../src/suggestionQuery';
 
 // ============================================================================

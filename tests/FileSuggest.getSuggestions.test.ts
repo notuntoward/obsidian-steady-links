@@ -9,7 +9,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { FileSuggest } from "../src/FileSuggest";
 import { App, TFile } from "./__mocks__/obsidian";
-import { enterAtLinkEndKeymap, isAnySuggestOpen } from "../src/linkSyntaxHider";
+import { isAnySuggestOpen } from "../src/linkSyntaxHider";
 
 // ---------------------------------------------------------------------------
 // Modal stub
