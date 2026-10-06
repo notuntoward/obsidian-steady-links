@@ -191,6 +191,7 @@ export class EditorFileSuggest extends EditorSuggest<SuggestionItem> {
 
 		const editor = context.editor;
 		const file = context.file;
+		const replaceEnd = this.resolveQueryEndForCompletion(context);
 		const newEndCh = context.start.ch + completionText.length;
 		const newCursor = { line: context.start.line, ch: newEndCh };
 
@@ -210,7 +211,7 @@ export class EditorFileSuggest extends EditorSuggest<SuggestionItem> {
 		// transaction keeps it under that same docChanged guard.
 		editor.transaction(
 			{
-				changes: [{ from: context.start, to: context.end, text: completionText }],
+				changes: [{ from: context.start, to: replaceEnd, text: completionText }],
 				selection: { from: newCursor },
 			},
 			AUTOCOMPLETE_USER_EVENT
@@ -223,6 +224,18 @@ export class EditorFileSuggest extends EditorSuggest<SuggestionItem> {
 		this.retriggerSuggest(editor, file);
 
 		return true;
+	}
+
+	private resolveQueryEndForCompletion(context: EditorSuggestContext): EditorPosition {
+		const editor = context.editor;
+		const line = context.start.line;
+		const lineText = editor.getLine(line);
+		const startCh = Math.max(0, context.start.ch - 2);
+		const closeIdx = lineText.indexOf("]]", startCh + 2);
+		if (closeIdx !== -1) {
+			return { line, ch: closeIdx };
+		}
+		return context.end;
 	}
 
 	/**
@@ -313,7 +326,7 @@ export class EditorFileSuggest extends EditorSuggest<SuggestionItem> {
 	): void {
 		const editor = context.editor;
 		const startPos = { line: context.start.line, ch: context.start.ch - 2 }; // include the "[["
-		const endPos = this.resolveEndConsumingAutoPairedClose(context.end, editor);
+		const endPos = this.resolveEndConsumingAutoPairedClose(context);
 		const insertion = `[[${inner}]]`;
 		const selection = computeSelection(startPos, insertion);
 
@@ -324,17 +337,24 @@ export class EditorFileSuggest extends EditorSuggest<SuggestionItem> {
 	}
 
 	/**
-	 * If Obsidian auto-paired a "]]" immediately after `end`, extend `end` to
-	 * cover it so a full-link replacement doesn't leave a duplicate "]]"
-	 * behind. Used by {@link buildFullLinkReplacement}.
+	 * If Obsidian auto-paired a "]]" on the same line, extend `end` to cover it
+	 * so a full-link replacement doesn't leave duplicate text or "]]" behind.
+	 * Used by {@link buildFullLinkReplacement}.
 	 */
-	private resolveEndConsumingAutoPairedClose(end: EditorPosition, editor: Editor): EditorPosition {
-		let endCh = end.ch;
-		const lineText = editor.getLine(end.line);
+	private resolveEndConsumingAutoPairedClose(context: EditorSuggestContext): EditorPosition {
+		const editor = context.editor;
+		const line = context.start.line;
+		const lineText = editor.getLine(line);
+		const startCh = Math.max(0, context.start.ch - 2);
+		const closeIdx = lineText.indexOf("]]", startCh + 2);
+		if (closeIdx !== -1) {
+			return { line, ch: closeIdx + 2 };
+		}
+		let endCh = context.end.ch;
 		if (lineText.substring(endCh, endCh + 2) === "]]") {
 			endCh += 2;
 		}
-		return { line: end.line, ch: endCh };
+		return { line, ch: endCh };
 	}
 
 	onTrigger(cursor: EditorPosition, editor: Editor, file: TFile): EditorSuggestTriggerInfo | null {
