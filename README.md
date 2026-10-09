@@ -77,9 +77,18 @@ When **Keep links steady** is enabled, Steady Links provides its own high-priori
 
 ### 5. Clicking and Following Links
 
-- **Clicking into links with the mouse**: In Live Preview, clicking on a link places the text cursor inside the visible link text for editing—without expanding the link.
-- **Following links with the mouse**: Use Obsidian's standard link-following gesture: **Ctrl+Click** (Windows/Linux) or **Cmd+Click** (macOS) to follow the link and open the target note. (In Reading view, a plain click follows the link).
-- **Following links with the keyboard**: Use Obsidian's native **Open link under cursor** command (default hotkey **Alt+Enter**, or customizable in Obsidian Settings → Hotkeys). You can also use **Open link under cursor in new tab** (`Ctrl/Cmd + Alt + Enter`) or **Open link under cursor to the right**.
+- **Native link interactions**: Steady Links leaves mouse link gestures and modified Enter shortcuts to Obsidian. In Reading view, a plain click follows the link; in Live Preview, a plain click places the editor cursor in the visible link text.
+
+| Operation | Input | Internal link | External link |
+| --- | --- | --- | --- |
+| Follow in current tab | Alt+Enter (Windows/Linux), Option+Enter (macOS) | Opens the linked note in the current tab. | Opens in the default browser. |
+| Open in a new tab | Ctrl+Enter / Ctrl+click (Windows/Linux); Cmd+Enter / Cmd+click (macOS) | Opens the linked note in a new tab without switching to it. | Opens in the browser. |
+| Open in a new tab group | Ctrl+Alt+Enter / Ctrl+Alt+click (Windows/Linux); Cmd+Option+Enter / Cmd+Option+click (macOS) | Opens the linked note in a new tab group and switches to it. | Opens in the browser. |
+| Open in a new window | Ctrl+Alt+Shift+Enter / Ctrl+Alt+Shift+click (Windows/Linux); Cmd+Option+Shift+Enter / Cmd+Option+Shift+click (macOS) | Opens the linked note in a new window. | Opens in the browser. |
+| Link suggester / Tab | Tab while the wikilink suggester is active | Accepts or completes the highlighted note suggestion. | No wikilink suggester; normal editor Tab behavior applies. |
+| Link context menu | Right-click | Obsidian's native link context menu. | Obsidian's native link context menu. |
+
+In Source Mode, add **Shift** to the modifier-click gesture for opening a new tab. Keyboard shortcuts can be customized in Obsidian Settings → Hotkeys.
 - **Opening in default external applications**: Use Steady Links' **Open link in default app** command to open web URLs in your system default web browser, or linked files (e.g. PDFs, images) in their default OS desktop applications.
 - **Revealing in file explorer**: Use Steady Links' **Reveal link in file explorer** command to locate linked vault files or local files in Windows File Explorer, macOS Finder, or Linux file manager.
 

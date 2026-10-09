@@ -735,6 +735,61 @@ describe("Integration: cursor correction with real CM6 state", () => {
 		});
 	});
 
+	describe("native link mouse event passthrough", () => {
+		it.each([
+			["wikilink", "[[target]]", 2],
+			["internal markdown link", "[target](target.md)", 1],
+			["external markdown link", "[site](https://example.com)", 1],
+		])("does not cancel link gestures on a %s", (_name, doc, cursor) => {
+			view = createTestView(doc, cursor);
+
+			const clicks = [
+				["plain click", {}],
+				["Ctrl+click", { ctrlKey: true }],
+				["Ctrl+Alt+click", { ctrlKey: true, altKey: true }],
+				["Ctrl+Alt+Shift+click", { ctrlKey: true, altKey: true, shiftKey: true }],
+				["Cmd+click", { metaKey: true }],
+				["Cmd+Option+click", { metaKey: true, altKey: true }],
+				["Cmd+Option+Shift+click", { metaKey: true, altKey: true, shiftKey: true }],
+			] as const;
+
+			for (const [_name, modifiers] of clicks) {
+				let reachedNativeHandler = false;
+				const nativeHandler = () => {
+					reachedNativeHandler = true;
+				};
+				view.dom.addEventListener("click", nativeHandler);
+
+				const event = new MouseEvent("click", {
+					bubbles: true,
+					cancelable: true,
+					...modifiers,
+				});
+				view.contentDOM.dispatchEvent(event);
+				view.dom.removeEventListener("click", nativeHandler);
+
+				expect(reachedNativeHandler).toBe(true);
+				expect(event.defaultPrevented).toBe(false);
+			}
+
+			let reachedContextMenu = false;
+			const contextMenuHandler = () => {
+				reachedContextMenu = true;
+			};
+			view.dom.addEventListener("contextmenu", contextMenuHandler);
+			const contextMenuEvent = new MouseEvent("contextmenu", {
+				bubbles: true,
+				cancelable: true,
+				button: 2,
+			});
+			view.contentDOM.dispatchEvent(contextMenuEvent);
+			view.dom.removeEventListener("contextmenu", contextMenuHandler);
+
+			expect(reachedContextMenu).toBe(true);
+			expect(contextMenuEvent.defaultPrevented).toBe(false);
+		});
+	});
+
 	describe("visible-text delete followed by typing", () => {
 		it("rewrites the next text input after an emacs-style visible-text delete inside a wikilink", () => {
 			view = createTestView("[[target]]", 2);
@@ -2334,6 +2389,7 @@ describe("Integration: cursor correction with real CM6 state", () => {
 	describe("Enter capture-phase pre-move and do-no-harm guarantees", () => {
 		function makeViewWithCompetitor(doc: string, cursor: number) {
 			const seenHeads: number[] = [];
+			const seenModifiedEnterHeads: number[] = [];
 			const seenDefaultPrevented: boolean[] = [];
 			const selectionUserEvents: Array<string | undefined> = [];
 			const host = document.createElement("div");
@@ -2355,6 +2411,21 @@ describe("Integration: cursor correction with real CM6 state", () => {
 									return true;
 								},
 							},
+							// Stand-in for Obsidian's modified link-open keymap. It must still see
+							// the cursor inside the link after this extension is installed.
+							...([
+								"Ctrl-Enter",
+								"Alt-Enter",
+								"Ctrl-Alt-Enter",
+								"Meta-Enter",
+								"Meta-Alt-Enter",
+							].map((key) => ({
+								key,
+								run: (cmView: EditorView) => {
+									seenModifiedEnterHeads.push(cmView.state.selection.main.head);
+									return true;
+								},
+							}))),
 						])),
 						createLinkSyntaxHiderExtension({}),
 						EditorView.updateListener.of((u) => {
@@ -2372,7 +2443,7 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			});
 			v.dispatch({ effects: [setSyntaxHiderEnabled.of(true)] });
 			selectionUserEvents.length = 0;
-			return { v, seenHeads, seenDefaultPrevented, selectionUserEvents };
+			return { v, seenHeads, seenModifiedEnterHeads, seenDefaultPrevented, selectionUserEvents };
 		}
 
 		function pressEnter(v: EditorView, init: KeyboardEventInit = {}): KeyboardEvent {
@@ -2448,19 +2519,22 @@ describe("Integration: cursor correction with real CM6 state", () => {
 		});
 
 		it.each([
-			["Ctrl+Enter", { ctrlKey: true }],
-			["Alt+Enter", { altKey: true }],
-			["Meta+Enter", { metaKey: true }],
-			["Shift+Enter", { shiftKey: true }],
-		])("leaves %s untouched (cursor stays inside the link)", (_name, init) => {
+			["Ctrl+Enter", { ctrlKey: true }, true],
+			["Alt+Enter", { altKey: true }, true],
+			["Ctrl+Alt+Enter", { ctrlKey: true, altKey: true }, true],
+			["Meta+Enter", { metaKey: true }, true],
+			["Meta+Alt+Enter", { metaKey: true, altKey: true }, true],
+			["Shift+Enter", { shiftKey: true }, false],
+		])("leaves %s untouched (cursor stays inside the link)", (_name, init, opensLink) => {
 			const ctx = makeViewWithCompetitor("1. [[Steady Links Plugin]]", 10);
 			view = ctx.v;
 
 			pressEnter(view, init as KeyboardEventInit);
 
-			// (A bare "Enter" keymap never matches modified chords, so assert on the
-			// view itself: the cursor must not have been moved out of the link.)
+			// Modified link-opening chords must reach the competing native keymap
+			// with the cursor still inside the visible link text.
 			expect(view.state.selection.main.head).toBe(10);
+			expect(ctx.seenModifiedEnterHeads).toEqual(opensLink ? [10] : []);
 			expect(ctx.selectionUserEvents).toEqual([]);
 		});
 

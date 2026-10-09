@@ -51,6 +51,13 @@ describe("EditorFileSuggest.onTrigger", () => {
 		expect(result).toBeNull();
 	});
 
+	it("does not open the wikilink suggester inside an external markdown link", () => {
+		const suggest = makeSuggest(app);
+		editor.setLines(["[website](https://example.com)"]);
+		const result = suggest.onTrigger({ line: 0, ch: 5 }, editor as any, file as any);
+		expect(result).toBeNull();
+	});
+
 	it("returns null when [[ is closed before cursor", () => {
 		const suggest = makeSuggest(app);
 		editor.setLines(["[[link]] more"]);
