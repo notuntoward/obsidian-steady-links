@@ -29,6 +29,7 @@ export class EditLinkModal extends Modal {
 	isWiki: boolean;
 	wasUrl: boolean;
 	isNewLink: boolean;
+	private shouldPopulateFromClipboard: boolean;
 	clipboardUsedText: boolean;
 	clipboardUsedDest: boolean;
 	conversionNoticeEl!: HTMLElement | null;
@@ -60,7 +61,8 @@ export class EditLinkModal extends Modal {
 		shouldSelectText?: boolean,
 		conversionNotice?: string | null,
 		isNewLink?: boolean,
-		onCancel?: () => void
+		onCancel?: () => void,
+		shouldPopulateFromClipboard?: boolean
 	) {
 		super(app);
 		this.link = link;
@@ -71,6 +73,8 @@ export class EditLinkModal extends Modal {
 		this.isWiki = false;
 		this.wasUrl = false;
 		this.isNewLink = isNewLink || false;
+		// A prefilled new link can still opt out of the usual clipboard convenience.
+		this.shouldPopulateFromClipboard = shouldPopulateFromClipboard ?? this.isNewLink;
 		this.conversionNoticeEl = null;
 
 		// Parse the conversion notice to determine what was used from clipboard
@@ -435,13 +439,12 @@ export class EditLinkModal extends Modal {
 		this.eventListeners.push([this.modalEl, "keydown", modalKeydownHandler as EventListener]);
 
 		this.updateUIState();
-		// Clipboard auto-fill is only a convenience for NEW links. For existing
-		// links the text/destination/type are already populated from the document,
-		// and populateFromClipboard() would otherwise asynchronously overwrite
-		// this.isWiki based on whatever happens to be in the clipboard — flipping a
-		// correctly-detected wikilink to Markdown (intermittently, depending on
-		// clipboard contents and async timing).
-		if (this.isNewLink) {
+		// Clipboard auto-fill is only a convenience for links that have not
+		// already been prefilled. For existing links the text/destination/type are
+		// populated from the document, and populateFromClipboard() would otherwise
+		// asynchronously overwrite this.isWiki based on whatever happens to be in
+		// the clipboard. Callers can also opt out for prefilled new links.
+		if (this.shouldPopulateFromClipboard) {
 			this.populateFromClipboard();
 		}
 		this.setInitialFocus();

@@ -7,6 +7,7 @@ import {
 	knownBlockIds,
 	planLocationLink,
 	resolveLocation,
+	defaultBlockLinkText,
 	selectedFileFromMenu,
 	isSupportedFileTarget,
 	shouldAddFileLinkMenuItem,
@@ -42,6 +43,10 @@ function fileLinkGenerator(useWikilinks: boolean) {
 }
 
 describe("copy links to notes and locations", () => {
+	it("compacts whitespace in default block-link text", () => {
+		expect(defaultBlockLinkText("Meeting Notes", "id123")).toBe("Meeting-Notes-block-id123");
+	});
+
 	it("accepts one File Explorer menu target and rejects multiple selected rows", () => {
 		const first = new MockTFile({ path: "First.md" });
 		const second = new MockTFile({ path: "Second.md" });

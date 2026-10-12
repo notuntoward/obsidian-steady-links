@@ -652,6 +652,11 @@ export function planLocationLink(
 	return null;
 }
 
+export function defaultBlockLinkText(noteName: string, blockId: string): string {
+	const compactName = noteName.trim().replace(/\s+/g, "-");
+	return `${compactName}-block-${blockId}`;
+}
+
 export function knownBlockIds(cache: CachedMetadata): Set<string> {
 	const ids = new Set<string>(Object.keys(cache.blocks ?? {}));
 	for (const section of cache.sections ?? []) {

@@ -8,7 +8,7 @@
  */
 
 import { LinkInfo } from "./types";
-import { isUrl, isAlmostUrl } from "./utils";
+import { isUrl, isAlmostUrl, parseClipboardLink } from "./utils";
 
 /**
  * Result of parsing a conversion notice string to determine what was used
@@ -339,6 +339,26 @@ export function buildLinkText(result: LinkInfo): string {
 		return `${embedPrefix}[[${result.destination}|${result.text}]]`;
 	}
 	return `${embedPrefix}[${result.text}](${result.destination})`;
+}
+
+/**
+ * When a parsed link is pasted over selected text, keep its target, syntax,
+ * and embed state while using the selection as its display text.
+ */
+export function buildLinkTextWithSelection(
+	clipboardText: string,
+	selectionText: string
+): string | null {
+	const link = parseClipboardLink(clipboardText);
+	if (!link) return null;
+
+	const trimmed = clipboardText.trim();
+	const isWikiLink = link.isWiki;
+	const isMarkdownLink = /^!?\[[^\]]*\]\([^)]+\)$/.test(trimmed);
+	const isStandaloneUrl = link.text === "" && trimmed === link.destination;
+	if (!isWikiLink && !isMarkdownLink && !isStandaloneUrl) return null;
+
+	return buildLinkText({ ...link, text: selectionText });
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

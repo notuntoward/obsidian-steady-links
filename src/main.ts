@@ -14,9 +14,11 @@ import {
 	bareDomainNoteTargetFromUrl,
 	fileExtTokenAtCursor,
 	moveToFront,
+	parseClipboardLink,
 } from "./utils";
 import {
 	buildLinkText,
+	buildLinkTextWithSelection,
 	computeCloseCursorPosition,
 	computeSkipCursorPosition,
 	computeSkipLinkPosition,
@@ -27,6 +29,7 @@ import {
 	knownBlockIds,
 	planLocationLink,
 	resolveLocation,
+	defaultBlockLinkText,
 	selectedFileFromMenu,
 	isSupportedFileTarget,
 	shouldAddFileLinkMenuItem,
@@ -186,6 +189,15 @@ export default class SteadyLinksPlugin extends Plugin {
 		// Register the (initially empty) extension array.  We populate it
 		// later based on the user's setting.
 		this.registerEditorExtension(this.syntaxHiderExtensions);
+		// Link-copy paste behavior is independent of the optional syntax hider.
+		this.registerEditorExtension(
+			EditorView.clipboardInputFilter.of((text, state) => {
+				const selection = state.selection;
+				if (selection.ranges.length !== 1 || selection.main.empty) return text;
+				const selectedText = state.sliceDoc(selection.main.from, selection.main.to);
+				return buildLinkTextWithSelection(text, selectedText) ?? text;
+			})
+		);
 
 		this.editorFileSuggest = new EditorFileSuggest(this.app, this);
 		this.registerEditorSuggest(this.editorFileSuggest);
@@ -635,6 +647,53 @@ export default class SteadyLinksPlugin extends Plugin {
 		}
 
 		try {
+			const targetLabel =
+				resolution.target.kind === "heading"
+					? `heading "${resolution.target.heading}"`
+					: resolution.target.kind === "table"
+						? "table"
+						: "block";
+
+			if (plan.subpath.startsWith("#^") && !editor.somethingSelected()) {
+				const generatedLink = generateLocationLink(
+					file,
+					this.app.fileManager,
+					plan.subpath
+				);
+				const parsedLink = parseClipboardLink(generatedLink);
+				if (!parsedLink) {
+					new Notice("Could not create a reliable link to this location.");
+					return;
+				}
+				const blockId = plan.subpath.slice(2);
+				const initialLink: LinkInfo = {
+					...parsedLink,
+					text: defaultBlockLinkText(file.basename, blockId),
+				};
+
+				new EditLinkModal(
+					this.app,
+					initialLink,
+					(result: LinkInfo) => {
+						// Do not create a new block ID unless the user accepts the link.
+						if (plan.insertion) {
+							editor.replaceRange(plan.insertion.text, plan.insertion.position);
+						}
+						const link = buildLinkText(result);
+						this.writeLinkToClipboard(
+							link,
+							`Copied link to ${targetLabel} in ${file.basename}`
+						);
+					},
+					true, // select the default link text for quick replacement
+					null,
+					true, // isNewLink
+					undefined, // onCancel
+					false // prefilled block links must not be overwritten by clipboard content
+				).open();
+				return;
+			}
+
 			if (plan.insertion) {
 				editor.replaceRange(plan.insertion.text, plan.insertion.position);
 			}
@@ -644,12 +703,6 @@ export default class SteadyLinksPlugin extends Plugin {
 				plan.subpath,
 				resolution.target.alias
 			);
-			const targetLabel =
-				resolution.target.kind === "heading"
-					? `heading "${resolution.target.heading}"`
-					: resolution.target.kind === "table"
-						? "table"
-						: "block";
 			this.writeLinkToClipboard(link, `Copied link to ${targetLabel} in ${file.basename}`);
 		} catch {
 			new Notice("Could not create a reliable link to this location.");

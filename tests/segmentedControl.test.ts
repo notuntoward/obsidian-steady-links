@@ -127,6 +127,39 @@ describe("Link Type segmented control — structure", () => {
 		expect(wikiBtn.getAttribute("type")).toBe("button");
 		expect(mdBtn.getAttribute("type")).toBe("button");
 	});
+
+	it("selects a prefilled link label without replacing it from the clipboard", () => {
+		const readText = vi.fn().mockResolvedValue("[other](Other.md)");
+		Object.defineProperty(globalThis.navigator, "clipboard", {
+			value: { readText },
+			writable: true,
+			configurable: true,
+		});
+		const link: LinkInfo = {
+			text: "Meeting-Notes-block-id123",
+			destination: "Meeting Notes#^id123",
+			isWiki: true,
+			isEmbed: false,
+		};
+		const modal = new EditLinkModal(
+			new App() as any,
+			link,
+			vi.fn(),
+			true,
+			null,
+			true,
+			undefined,
+			false
+		);
+
+		modal.open();
+
+		expect(readText).not.toHaveBeenCalled();
+		expect(modal.textInput.getValue()).toBe(link.text);
+		expect(modal.textInput.inputEl.selectionStart).toBe(0);
+		expect(modal.textInput.inputEl.selectionEnd).toBe(link.text.length);
+		modal.close();
+	});
 });
 
 // ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@ import {
 	computeCloseCursorPosition,
 	computeSkipCursorPosition,
 	computeSkipLinkPosition,
+	buildLinkTextWithSelection,
 } from '../src/modalLogic';
 
 // ============================================================================
@@ -434,6 +435,36 @@ describe('buildLinkText', () => {
 			text: 'my photo', destination: 'photo.png',
 			isWiki: true, isEmbed: true,
 		})).toBe('![[photo.png|my photo]]');
+	});
+});
+
+describe('buildLinkTextWithSelection', () => {
+	it('uses selected text as the alias of a wikilink while preserving its destination', () => {
+		expect(buildLinkTextWithSelection('[[Folder/Note#^block-id]]', 'chosen text')).toBe(
+			'[[Folder/Note#^block-id|chosen text]]'
+		);
+	});
+
+	it('uses selected text as the label of a markdown link', () => {
+		expect(buildLinkTextWithSelection('[old label](Folder/Note.md#^block-id)', 'new label')).toBe(
+			'[new label](Folder/Note.md#^block-id)'
+		);
+	});
+
+	it('preserves embed syntax when replacing its display text', () => {
+		expect(buildLinkTextWithSelection('![[photo.png]]', 'selected text')).toBe(
+			'![[photo.png|selected text]]'
+		);
+	});
+
+	it('wraps a standalone URL in a markdown link using the selected text', () => {
+		expect(buildLinkTextWithSelection('https://example.com', 'selected text')).toBe(
+			'[selected text](https://example.com)'
+		);
+	});
+
+	it('does not transform ordinary clipboard text', () => {
+		expect(buildLinkTextWithSelection('ordinary text', 'selected text')).toBeNull();
 	});
 });
 
