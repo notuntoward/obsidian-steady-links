@@ -31,6 +31,11 @@ import {
 	isSupportedFileTarget,
 	shouldAddFileLinkMenuItem,
 } from "./copyLinks";
+import { revealInNativeFileExplorer, type NativeFileExplorerPlugin } from "./fileExplorer";
+import {
+	resolveLocalFileTargetPath,
+	resolveVaultFileFromLink,
+} from "./linkTargetResolution";
 import { generateBlockId } from "./suggestionLogic";
 import {
 	createLinkSyntaxHiderExtension,
@@ -308,10 +313,10 @@ export default class SteadyLinksPlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: "reveal-link-in-explorer",
-			name: "Reveal link in file explorer",
+			id: "reveal-linked-file-in-navigation",
+			name: "Reveal linked file in navigation",
 			editorCallback: (editor: Editor, _view: MarkdownView) => {
-				this.handleRevealLinkInExplorer(editor);
+				this.handleRevealLinkedFileInNavigation(editor);
 			},
 		});
 
@@ -428,38 +433,74 @@ export default class SteadyLinksPlugin extends Plugin {
 		});
 	}
 
-	private handleRevealLinkInExplorer(editor: Editor): void {
-		if (!Platform.isDesktop) {
-			new Notice("Revealing in file explorer is only supported on desktop");
-			return;
-		}
-		const target = this.getOpenableFromCursor(editor);
-		if (!target) {
+	private handleRevealLinkedFileInNavigation(editor: Editor): void {
+		const link = this.getLinkAtCursor(editor);
+		if (!link) {
 			new Notice("No link found at cursor");
 			return;
 		}
-		if (target.kind === "url") {
-			new Notice("Cannot reveal a URL in the file explorer");
+		const file = this.getVaultFileFromLink(link.link);
+		if (!file) {
+			let destination = link.link.destination.trim();
+			if (destination.startsWith("<") && destination.endsWith(">")) {
+				destination = destination.slice(1, -1).trim();
+			}
+			if (isUrl(destination)) {
+				new Notice("Cannot reveal a URL in Obsidian's File Explorer");
+				return;
+			}
+			new Notice("Only files in this vault can be revealed in Obsidian's File Explorer");
 			return;
 		}
-		const { shell } = require("electron");
-		shell.showItemInFolder(target.path);
+		try {
+			if (!this.revealFileInNativeNavigation(file)) {
+				new Notice("Obsidian's native File Explorer is unavailable");
+			}
+		} catch {
+			new Notice("Could not reveal the linked file in Obsidian's File Explorer");
+		}
 	}
 
 	private getOpenableFromCursor(
 		editor: Editor
 	): { kind: "url"; url: string } | { kind: "file"; path: string } | null {
+		const link = this.getLinkAtCursor(editor);
+		if (!link) return null;
+		return this.resolveOpenableTarget(link.link);
+	}
+
+	private getLinkAtCursor(editor: Editor) {
 		const cursor = editor.getCursor();
 		const line = editor.getLine(cursor.line);
-		const link = detectLinkAtCursor(line, cursor.ch);
-		if (!link) return null;
-		return this.resolveOpenableTarget(link.link.destination);
+		return detectLinkAtCursor(line, cursor.ch);
+	}
+
+	private getVaultFileFromLink(link: { destination: string; isWiki: boolean }): TFile | null {
+		return resolveVaultFileFromLink(
+			link,
+			this.app.workspace.getActiveFile()?.path ?? "",
+			(linkPath, sourcePath) =>
+				this.app.metadataCache.getFirstLinkpathDest(linkPath, sourcePath)
+		);
+	}
+
+	private revealFileInNativeNavigation(file: TFile): boolean {
+		// This is the core File Explorer API used by Obsidian's native reveal action.
+		// Keep the internal plugin access narrowly typed because it is not in obsidian.d.ts.
+		const appWithInternalPlugins = this.app as unknown as {
+			internalPlugins?: {
+				getPluginById?: (id: string) => NativeFileExplorerPlugin | null;
+			};
+		};
+		const fileExplorerPlugin =
+			appWithInternalPlugins.internalPlugins?.getPluginById?.("file-explorer");
+		return revealInNativeFileExplorer(fileExplorerPlugin, file);
 	}
 
 	private resolveOpenableTarget(
-		destination: string
+		link: { destination: string; isWiki: boolean }
 	): { kind: "url"; url: string } | { kind: "file"; path: string } | null {
-		let d = destination.trim();
+		let d = link.destination.trim();
 		if (d.startsWith("<") && d.endsWith(">")) {
 			d = d.slice(1, -1).trim();
 		}
@@ -471,46 +512,25 @@ export default class SteadyLinksPlugin extends Plugin {
 			return { kind: "url", url: normalizeUrl(d) };
 		}
 
-		const fileTarget = this.resolveVaultFile(d);
-		if (fileTarget) return fileTarget;
+		const adapter = this.app.vault.adapter;
+		const getFullPath =
+			adapter instanceof FileSystemAdapter
+				? (path: string) => adapter.getFullPath(path)
+				: undefined;
+		const filePath = resolveLocalFileTargetPath(
+			link,
+			this.app.workspace.getActiveFile()?.path ?? "",
+			(linkPath, sourcePath) =>
+				this.app.metadataCache.getFirstLinkpathDest(linkPath, sourcePath),
+			getFullPath
+		);
+		if (filePath) return { kind: "file", path: filePath };
 
 		if (isUrl(d)) {
 			return { kind: "url", url: normalizeUrl(d) };
 		}
 
-		if (this.looksLikeAbsolutePath(d)) {
-			return { kind: "file", path: d };
-		}
-
 		return null;
-	}
-
-	private resolveVaultFile(
-		destination: string
-	): { kind: "file"; path: string } | null {
-		const filePart = destination.split("#")[0].trim();
-		if (!filePart) return null;
-
-		const sourcePath = this.app.workspace.getActiveFile()?.path ?? "";
-		let tfile: TFile | null = null;
-		try {
-			tfile = this.app.metadataCache.getFirstLinkpathDest(filePart, sourcePath);
-		} catch {
-			tfile = null;
-		}
-		if (!tfile) return null;
-
-		const adapter = this.app.vault.adapter;
-		if (!(adapter instanceof FileSystemAdapter)) return null;
-		return { kind: "file", path: adapter.getFullPath(tfile.path) };
-	}
-
-	private looksLikeAbsolutePath(p: string): boolean {
-		return (
-			/^[A-Za-z]:[\\/]/.test(p) ||
-			p.startsWith("/") ||
-			p.startsWith("\\\\")
-		);
 	}
 
 	/**

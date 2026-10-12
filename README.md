@@ -90,7 +90,7 @@ When **Keep links steady** is enabled, Steady Links provides its own high-priori
 
 In Source Mode, add **Shift** to the modifier-click gesture for opening a new tab. Keyboard shortcuts can be customized in Obsidian Settings → Hotkeys.
 - **Opening in default external applications**: Use Steady Links' **Open link in default app** command to open web URLs in your system default web browser, or linked files (e.g. PDFs, images) in their default OS desktop applications.
-- **Revealing in file explorer**: Use Steady Links' **Reveal link in file explorer** command to locate linked vault files or local files in Windows File Explorer, macOS Finder, or Linux file manager.
+- **Revealing linked files in navigation**: Use Steady Links' **Reveal linked file in navigation** command to show a linked vault file in Obsidian's native File Explorer navigation pane.
 
 ---
 
@@ -187,7 +187,7 @@ Steady Links registers 8 commands to streamline link editing, navigation, and in
 | **Expand Link** | Temporarily reveals full raw syntax of link at cursor | `Alt+E` / `⌥E` | `steady-links:expand-link` | Live Preview |
 | **Collapse Link** | Collapses expanded link at cursor back to display text | `Alt+C` / `⌥C` | `steady-links:collapse-link` | Live Preview |
 | **Open link in default app** | Opens link destination in OS default application or browser | — | `steady-links:open-link-in-default-app` | Desktop only (all modes) |
-| **Reveal link in file explorer**| Reveals linked file in OS file explorer (Finder / Explorer) | — | `steady-links:reveal-link-in-explorer` | Desktop only (all modes) |
+| **Reveal linked file in navigation** | Expands to and selects the linked vault file in Obsidian's native File Explorer | — | `steady-links:reveal-linked-file-in-navigation` | Live Preview & Source |
 | **Copy link to current note** | Copies a wikilink to the active note to the clipboard | — | `steady-links:copy-link-to-current-note` | All modes |
 
 ### Command Details
@@ -208,8 +208,9 @@ Steady Links registers 8 commands to streamline link editing, navigation, and in
 - **Open link in default app**:
   - Web URLs (`https://`, `http://`, `www.`) open in your system default browser.
   - Linked vault files (e.g. `[[manual.pdf]]`, `[[image.png]]`) or absolute file paths (`C:\...`, `/...`) open in their associated OS applications (external PDF reader, media player, etc.).
-- **Reveal link in file explorer**:
-  - Locates the linked note or asset file on disk and selects it in Windows File Explorer, macOS Finder, or Linux file manager.
+- **Reveal linked file in navigation**:
+  - Expands its parent folders and selects the linked vault file in Obsidian's native File Explorer navigation pane.
+  - Works for files inside the current vault; URLs and paths outside the vault cannot be shown in the vault tree.
 - **Copy link to current note**:
   - Generates a clean wikilink to the active note (e.g. `[[Folder/My Note]]` or `[[diagram.canvas]]`) and copies it to your clipboard.
   - Can also be accessed via the tab header context menu (see [Settings](#settings)).
@@ -239,8 +240,8 @@ Leave **Keep links steady** off and bind `Alt+S` to **Skip Link**. Whenever a li
 ### "I want to open linked PDFs or external files in native desktop apps."
 Place the cursor on the link and run **Open link in default app** from the command palette or a custom hotkey to open the file in your preferred PDF viewer or media player.
 
-### "I want to locate a linked file on my computer's drive."
-Run **Reveal link in file explorer** on any vault file link to highlight it in Finder or Windows Explorer.
+### "I want to locate a linked file in my vault."
+Run **Reveal linked file in navigation** on a vault file link to highlight it in Obsidian's native File Explorer.
 
 ### "I want cleaner heading and subfolder links in my notes."
 Enable **Shorten heading and block links** and **Shorten file links** in settings. Links like `[[Deep/Folder/Topic]]` display as `"Topic"` and `[[Guide#Installation]]` display as `"Installation"`, even while typing on them.
@@ -265,7 +266,7 @@ Run **Copy link to current note** or right-click the note's tab header to copy i
 
 - **Modes**: Fully compatible with **Live Preview** and **Source** modes.
 - **Link formats**: Supports **WikiLinks** (`[[destination]]`, `[[destination|display text]]`), **Markdown links** (`[display text](destination)`), and **Embeds** (`![[...]`, `![...](...)`).
-- **Platform support**: Works on desktop and mobile. (Desktop-specific commands: *Open link in default app* and *Reveal link in file explorer*).
+- **Platform support**: Works on desktop and mobile. (Desktop-specific command: *Open link in default app*).
 - **Requirements**: Obsidian **1.9.0** or later.
 
 ---
