@@ -291,6 +291,12 @@ npm run test:browser
 
 ---
 
+## Credits
+
+Thanks to the [Obsidian Links plugin](https://github.com/mii-key/obsidian-links) for the inspiration.
+
+---
+
 ## License
 
 MIT
