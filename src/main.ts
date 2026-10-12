@@ -22,6 +22,17 @@ import {
 	computeSkipLinkPosition,
 } from "./modalLogic";
 import {
+	generateFileLink,
+	generateLocationLink,
+	knownBlockIds,
+	planLocationLink,
+	resolveLocation,
+	selectedFileFromMenu,
+	isSupportedFileTarget,
+	shouldAddFileLinkMenuItem,
+} from "./copyLinks";
+import { generateBlockId } from "./suggestionLogic";
+import {
 	createLinkSyntaxHiderExtension,
 	findLinkRangeAtPos,
 	setTemporarilyVisibleLink,
@@ -307,26 +318,89 @@ export default class SteadyLinksPlugin extends Plugin {
 		this.addCommand({
 			id: "copy-link-to-current-note",
 			name: "Copy link to current note",
-			callback: () => {
-				const file = this.app.workspace.getActiveFile();
-				if (!file) {
-					new Notice("No active note");
-					return;
+			checkCallback: (checking: boolean) => {
+				if (this.isFileExplorerActive()) {
+					if (!checking) {
+						new Notice(
+							"File Explorer rows cannot be targeted by this hotkey. Right-click the desired file and choose Copy link to current note; the file does not need to be open."
+						);
+					}
+					return true;
 				}
-				this.copyLinkToFile(file);
+				const file = this.app.workspace.getActiveFile();
+				if (!file || !isSupportedFileTarget(file)) return false;
+				if (!checking) this.copyLinkToFile(file);
+				return true;
+			},
+		});
+
+		this.addCommand({
+			id: "copy-link-to-current-location",
+			name: "Copy link to current location",
+			checkCallback: (checking: boolean) => {
+				if (this.isFileExplorerActive()) {
+					if (checking) return false;
+					new Notice(
+						"Copy link to current location is not implemented in File Explorer. Open the note in an editing view and run this command there."
+					);
+					return true;
+				}
+				const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+				if (view?.file && view.getMode() === "source") {
+					const resolution = this.resolveEditorLocation(view.editor, view.file);
+					if (!resolution.target) {
+						if (!checking) new Notice(resolution.reason ?? "Could not resolve this location.");
+						return false;
+					}
+					if (!checking) this.copyLinkToLocation(view.editor, view.file);
+					return true;
+				}
+				if (this.isActivePdfView()) {
+					if (!checking) this.showPdfPageLimitation();
+					return true;
+				}
+				return false;
 			},
 		});
 
 		this.registerEvent(
 			this.app.workspace.on("file-menu", (menu: Menu, file: unknown, source: string) => {
-				if (!this.settings.copyLinkToCurrentNoteInTabMenu) return;
-				if (source !== "tab-header") return;
-				if (!(file instanceof TFile)) return;
+				// Use the file payload as the target; Explorer sources can be
+				// "file-explorer-context-menu", not only "file-explorer".
+				if (
+					!(file instanceof TFile) ||
+					!shouldAddFileLinkMenuItem(
+						source,
+						this.settings.copyLinkToCurrentNoteInTabMenu
+					)
+				) {
+					return;
+				}
+				this.addCopyFileMenuItem(menu, file);
+			})
+		);
+
+		this.registerEvent(
+			this.app.workspace.on("files-menu", (menu, files) => {
+				// Obsidian supplies the exact selected-file list through this
+				// public event. A multi-file selection is intentionally omitted.
+				const file = selectedFileFromMenu(files);
+				if (file) this.addCopyFileMenuItem(menu, file);
+			})
+		);
+
+		this.registerEvent(
+			this.app.workspace.on("editor-menu", (menu, editor, info) => {
+				if (!(info instanceof MarkdownView) || info.getMode() !== "source") return;
+				const file = info.file;
+				if (!file) return;
+				const resolution = this.resolveEditorLocation(editor, file);
+				if (!resolution.target) return;
 				menu.addItem((item) => {
 					item
-						.setTitle("Copy link to current note")
+						.setTitle("Copy link to current location")
 						.setIcon("link")
-						.onClick(() => this.copyLinkToFile(file));
+						.onClick(() => this.copyLinkToLocation(editor, file));
 				});
 			})
 		);
@@ -468,12 +542,120 @@ export default class SteadyLinksPlugin extends Plugin {
 	}
 
 	private copyLinkToFile(file: TFile): void {
-		const linkBody = file.extension === "md" ? file.path.replace(/\.md$/i, "") : file.path;
-		const wikilink = `[[${linkBody}]]`;
-		navigator.clipboard
-			.writeText(wikilink)
-			.then(() => new Notice("Copied link to current note"))
-			.catch(() => new Notice("Failed to copy link to current note"));
+		if (!isSupportedFileTarget(file)) {
+			new Notice("Canvas and Ink links are not supported");
+			return;
+		}
+		try {
+			const link = generateFileLink(file, this.app.fileManager, file.path);
+			this.writeLinkToClipboard(link, "Copied link to current note");
+		} catch {
+			new Notice("Could not generate a link to this file");
+		}
+	}
+
+	private addCopyFileMenuItem(menu: Menu, file: TFile): void {
+		if (!isSupportedFileTarget(file)) return;
+		menu.addItem((item) => {
+			item
+				.setTitle("Copy link to current note")
+				.setIcon("link")
+				.onClick(() => this.copyLinkToFile(file));
+		});
+	}
+
+	private isFileExplorerActive(): boolean {
+		return this.app.workspace.activeLeaf?.view.getViewType() === "file-explorer";
+	}
+
+	private isActivePdfView(): boolean {
+		return (
+			this.app.workspace.activeLeaf?.view.getViewType() === "pdf" &&
+			this.app.workspace.getActiveFile()?.extension.toLowerCase() === "pdf"
+		);
+	}
+
+	private resolveEditorLocation(editor: Editor, file: TFile) {
+		if (editor.listSelections().length !== 1) {
+			return {
+				target: null,
+				reason: "Multiple editor selections are ambiguous; use one cursor or one text selection.",
+			};
+		}
+		const selection = editor.somethingSelected()
+			? {
+					from: editor.getCursor("from"),
+					to: editor.getCursor("to"),
+					text: editor.getSelection(),
+				}
+			: undefined;
+		return resolveLocation({
+			content: editor.getValue(),
+			cache: this.app.metadataCache.getFileCache(file),
+			cursor: editor.getCursor(),
+			selection,
+		});
+	}
+
+	private copyLinkToLocation(editor: Editor, file: TFile): void {
+		const resolution = this.resolveEditorLocation(editor, file);
+		if (!resolution.target) {
+			new Notice(resolution.reason ?? "Could not resolve this location.");
+			return;
+		}
+		const cache = this.app.metadataCache.getFileCache(file);
+		if (!cache) {
+			new Notice("Obsidian has not indexed this note yet.");
+			return;
+		}
+		const plan = planLocationLink(resolution.target, knownBlockIds(cache), generateBlockId);
+		if (!plan) {
+			new Notice("Could not create a reliable link to this location.");
+			return;
+		}
+
+		try {
+			if (plan.insertion) {
+				editor.replaceRange(plan.insertion.text, plan.insertion.position);
+			}
+			const link = generateLocationLink(
+				file,
+				this.app.fileManager,
+				plan.subpath,
+				resolution.target.alias
+			);
+			const targetLabel =
+				resolution.target.kind === "heading"
+					? `heading "${resolution.target.heading}"`
+					: resolution.target.kind === "table"
+						? "table"
+						: "block";
+			this.writeLinkToClipboard(link, `Copied link to ${targetLabel} in ${file.basename}`);
+		} catch {
+			new Notice("Could not create a reliable link to this location.");
+		}
+	}
+
+	private writeLinkToClipboard(link: string, successNotice: string): void {
+		try {
+			const clipboard = navigator.clipboard;
+			if (!clipboard) {
+				new Notice("Clipboard access is unavailable");
+				return;
+			}
+			clipboard
+				.writeText(link)
+				.then(() => new Notice(successNotice))
+				.catch(() => new Notice("Failed to copy link to clipboard"));
+		} catch {
+			new Notice("Failed to copy link to clipboard");
+		}
+	}
+
+	private showPdfPageLimitation(): void {
+		new Notice(
+			"Could not determine the PDF page under the pointer. Use the PDF viewer's 1-based page number and create the #page=n link manually."
+		);
 	}
 
 	/**
