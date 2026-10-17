@@ -11,6 +11,8 @@
  * - Factory functions for creating test scenarios
  */
 
+import { StateField } from "@codemirror/state";
+
 // ============================================================================
 // TFile - File representation
 // ============================================================================
@@ -1131,3 +1133,8 @@ export function createMockEditor(lines: string | string[]): Editor {
 	const lineArray = Array.isArray(lines) ? lines : [lines];
 	return new Editor({ lines: lineArray });
 }
+
+export const editorInfoField = StateField.define<{ app?: unknown } | null>({
+	create: () => null,
+	update: (value) => value,
+});

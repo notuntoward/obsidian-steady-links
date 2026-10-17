@@ -2778,6 +2778,47 @@ function isEnterRewriteExempt(tr: Transaction): boolean {
 	);
 }
 
+/**
+ * Shared eligibility check for the Enter machinery: returns the single cursor
+ * head and the link span it sits strictly inside, or null when Enter must not
+ * be treated as an in-link action (IME composition, open suggester, disabled
+ * hider, non-empty or multi-ranged selection, or a cursor that is not strictly
+ * inside a link).  Both `tryFollowLinkInCurrentTab` and `handleEnterKey` use
+ * this so their notions of "inside a link" can never drift apart.
+ */
+function findLinkAtCursorHead(view: EditorView): { head: number; link: LinkSpan } | null {
+	if (view.composing) return null;
+	if (isAnySuggestOpen()) return null;
+	if (!view.state.field(syntaxHiderEnabledField, false)) return null;
+	const sel = view.state.selection;
+	if (sel.ranges.length !== 1 || !sel.main.empty) return null;
+	const head = sel.main.head;
+	const hidden = computeHiddenRanges(view.state);
+	if (!hidden || hidden.length === 0) return null;
+	const link = buildLinkSpans(hidden).find((l) => head > l.from && head < l.to);
+	return link ? { head, link } : null;
+}
+
+/**
+ * Live Preview only: plain Enter with the cursor inside a link follows it in
+ * the current tab by running Obsidian's own "Follow link under cursor"
+ * command.  Returns true only when the command was actually executed, so
+ * callers fall back to the exit-right behavior otherwise (source mode, no
+ * App available, suggest open, selection, or cursor not inside a link).
+ */
+function tryFollowLinkInCurrentTab(view: EditorView): boolean {
+	// Strict live-preview gate: only the Live Preview source view gets this
+	// behavior; Source mode and any other host fall through to exit-right.
+	if (!view.dom.closest(".markdown-source-view.is-live-preview")) return false;
+	if (!findLinkAtCursorHead(view)) return false;
+	const app = view.state.field(editorInfoField, false)?.app as
+		| { commands?: { executeCommandById?: (id: string) => boolean } }
+		| undefined;
+	const execute = app?.commands?.executeCommandById;
+	if (typeof execute !== "function") return false;
+	return execute.call(app!.commands, "editor:follow-link") !== false;
+}
+
 function handleEnterKey(view: EditorView): boolean {
 	debugLog("ENTER keymap: invoked", {
 		suggestOpen: isAnySuggestOpen(),
@@ -2785,24 +2826,13 @@ function handleEnterKey(view: EditorView): boolean {
 		ranges: view.state.selection.ranges.map((r) => [r.anchor, r.head]),
 		line: view.state.doc.lineAt(view.state.selection.main.head).text,
 	});
-	if (view.composing) return false; // never disturb an IME composition
-	if (isAnySuggestOpen()) return false;
-	if (!view.state.field(syntaxHiderEnabledField, false)) return false;
-	const sel = view.state.selection;
-	if (sel.ranges.length !== 1 || !sel.main.empty) return false;
-
-	const head = sel.main.head;
-	const hidden = computeHiddenRanges(view.state);
-	if (!hidden || hidden.length === 0) return false;
-
-	const links = buildLinkSpans(hidden);
-	const link = links.find((l) => head > l.from && head < l.to);
+	const found = findLinkAtCursorHead(view);
 	debugLog("ENTER keymap: link lookup", {
-		head,
-		link: link ? { from: link.from, to: link.to } : null,
-		allLinks: links.map((l) => [l.from, l.to]),
+		head: found?.head ?? null,
+		link: found ? { from: found.link.from, to: found.link.to } : null,
 	});
-	if (!link) return false;
+	if (!found) return false;
+	const link = found.link;
 
 	const targetPos = link.to;
 	// Purely corrective, selection-only move: MUST carry "select.steadyLinks" so
@@ -2820,6 +2850,7 @@ const enterAtLinkEndKeymap = keymap.of([
 	{
 		key: "Enter",
 		run(view) {
+			if (tryFollowLinkInCurrentTab(view)) return true;
 			return handleEnterKey(view);
 		},
 	},
@@ -2847,6 +2878,11 @@ function onEnterKeydownCapture(event: KeyboardEvent, view: EditorView): void {
 	if (event.key !== "Enter") return;
 	if (event.defaultPrevented || event.isComposing) return;
 	if (event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return;
+	if (tryFollowLinkInCurrentTab(view)) {
+		event.preventDefault();
+		event.stopPropagation();
+		return;
+	}
 	handleEnterKey(view);
 }
 

@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { App } from "obsidian";
+import { App, editorInfoField, type MarkdownFileInfo } from "obsidian";
 import SteadyLinksPlugin from "../src/main";
 import { EditorView, keymap } from "@codemirror/view";
 import { EditorState, EditorSelection, StateEffect, Transaction, Prec } from "@codemirror/state";
@@ -21,6 +21,7 @@ import {
 	createHiddenSyntaxAnchor,
 	createLinkSyntaxHiderExtension,
 	setSyntaxHiderEnabled,
+	syntaxHiderEnabledField,
 	hiddenRangesField,
 	handleHomeKey,
 	handleEnterKey,
@@ -2419,6 +2420,10 @@ describe("Integration: cursor correction with real CM6 state", () => {
 								"Ctrl-Alt-Enter",
 								"Meta-Enter",
 								"Meta-Alt-Enter",
+								"Ctrl-Shift-Enter",
+								"Meta-Shift-Enter",
+								"Ctrl-Alt-Shift-Enter",
+								"Meta-Alt-Shift-Enter",
 							].map((key) => ({
 								key,
 								run: (cmView: EditorView) => {
@@ -2508,6 +2513,185 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			}
 		});
 
+		describe("Live Preview Enter follows the link in the current tab", () => {
+			function makeFollowView(hostClass: string, cursor: number, withApp = true) {
+				const execute = vi.fn(() => true);
+				const host = document.createElement("div");
+				host.className = hostClass;
+				document.body.appendChild(host);
+				const seenHeads: number[] = [];
+				const v = new EditorView({
+					state: EditorState.create({
+						doc: "1. [[Steady Links Plugin]]",
+						selection: EditorSelection.cursor(cursor),
+						extensions: [
+							Prec.highest(keymap.of([{
+								key: "Enter",
+								run: (cmView) => {
+									seenHeads.push(cmView.state.selection.main.head);
+									return true;
+								},
+							}])),
+							...(withApp
+								? [editorInfoField.init(() => ({ app: { commands: { executeCommandById: execute } } }) as unknown as MarkdownFileInfo)]
+								: []),
+							createLinkSyntaxHiderExtension({}),
+						],
+					}),
+					parent: host,
+				});
+				v.dispatch({ effects: [setSyntaxHiderEnabled.of(true)] });
+				return { v, execute, seenHeads };
+			}
+
+			it("runs editor:follow-link and consumes plain Enter in Live Preview", () => {
+				const ctx = makeFollowView("markdown-source-view is-live-preview", 10);
+				view = ctx.v;
+
+				const ev = pressEnter(view);
+
+				expect(ctx.execute).toHaveBeenCalledTimes(1);
+				expect(ctx.execute).toHaveBeenCalledWith("editor:follow-link");
+				expect(ev.defaultPrevented).toBe(true);
+				expect(ctx.seenHeads).toEqual([]);
+				expect(view.state.selection.main.head).toBe(10);
+			});
+
+			it("does not follow the link in Source mode (keeps exit-right behavior)", () => {
+				const ctx = makeFollowView("markdown-source-view", 10);
+				view = ctx.v;
+
+				pressEnter(view);
+
+				expect(ctx.execute).not.toHaveBeenCalled();
+				expect(ctx.seenHeads).toEqual([26]);
+			});
+
+			it("does not follow when the cursor is outside a link", () => {
+				const ctx = makeFollowView("markdown-source-view is-live-preview", 3 - 1);
+				view = ctx.v;
+
+				pressEnter(view);
+
+				expect(ctx.execute).not.toHaveBeenCalled();
+				expect(ctx.seenHeads).toEqual([2]);
+			});
+
+			it("does not follow for modified Enter chords (stock handles those)", () => {
+				const ctx = makeFollowView("markdown-source-view is-live-preview", 10);
+				view = ctx.v;
+
+				pressEnter(view, { ctrlKey: true });
+
+				expect(ctx.execute).not.toHaveBeenCalled();
+			});
+
+			it("falls back to exit-right when no App is available", () => {
+				const ctx = makeFollowView("markdown-source-view is-live-preview", 10, false);
+				view = ctx.v;
+
+				pressEnter(view);
+
+				expect(ctx.seenHeads).toEqual([26]);
+			});
+		});
+
+		describe("Source mode and Reading view keep stock Obsidian link behavior", () => {
+			// The syntax hider is only ever enabled by SyntaxHiderModePlugin when
+			// isLivePreview(view) is true, so source mode (and any non-source CM6
+			// host) never gets the plugin's cursor correction, Enter interception,
+			// or decorations. These tests build a view without manually enabling
+			// the field and let the mode plugin's async sync tick run.
+			function makeModeView(hostClass: string, doc: string, cursor: number) {
+				const execute = vi.fn(() => true);
+				const host = document.createElement("div");
+				host.className = hostClass;
+				document.body.appendChild(host);
+				const seenHeads: number[] = [];
+				const v = new EditorView({
+					state: EditorState.create({
+						doc,
+						selection: EditorSelection.cursor(cursor),
+						extensions: [
+							Prec.highest(
+								keymap.of([
+									{
+										key: "Enter",
+										run: (cmView) => {
+											seenHeads.push(cmView.state.selection.main.head);
+											return false;
+										},
+									},
+								])
+							),
+							editorInfoField.init(
+								() =>
+									({
+										app: { commands: { executeCommandById: execute } },
+									}) as unknown as MarkdownFileInfo
+							),
+							createLinkSyntaxHiderExtension({}),
+						],
+					}),
+					parent: host,
+				});
+				return { v, execute, seenHeads };
+			}
+
+			async function flushModeSync() {
+				await new Promise((resolve) => setTimeout(resolve, 0));
+			}
+
+			it("Source mode leaves the syntax hider disabled", async () => {
+				const ctx = makeModeView(
+					"markdown-source-view is-source-mode",
+					"1. [[Steady Links Plugin]]",
+					10
+				);
+				view = ctx.v;
+
+				await flushModeSync();
+
+				expect(view.state.field(syntaxHiderEnabledField)).toBe(false);
+			});
+
+			it("Source mode neither consumes nor intercepts Enter on a link", async () => {
+				const ctx = makeModeView(
+					"markdown-source-view is-source-mode",
+					"1. [[Steady Links Plugin]]",
+					10
+				);
+				view = ctx.v;
+				await flushModeSync();
+
+				const ev = pressEnter(view);
+
+				expect(ev.defaultPrevented).toBe(false);
+				expect(ctx.execute).not.toHaveBeenCalled();
+				expect(ctx.seenHeads).toEqual([10]);
+				expect(view.state.selection.main.head).toBe(10);
+			});
+
+			it("Source mode does not correct a pointer selection inside hidden link syntax", async () => {
+				const ctx = makeModeView("markdown-source-view is-source-mode", "see [[target]]", 11);
+				view = ctx.v;
+				await flushModeSync();
+
+				// 13 is inside the trailing "]]"; with the hider enabled this snaps
+				// to 12.  In source mode the cursor must stay exactly where clicked.
+				expect(dispatchSelection(view, 13, "select.pointer")).toBe(13);
+			});
+
+			it("Reading view leaves the syntax hider disabled", async () => {
+				const ctx = makeModeView("markdown-reading-view", "1. [[Steady Links Plugin]]", 10);
+				view = ctx.v;
+
+				await flushModeSync();
+
+				expect(view.state.field(syntaxHiderEnabledField)).toBe(false);
+			});
+		});
+
 		it("does nothing for Enter outside a link", () => {
 			const ctx = makeViewWithCompetitor("1. plain text [[a]]", 6);
 			view = ctx.v;
@@ -2524,6 +2708,10 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			["Ctrl+Alt+Enter", { ctrlKey: true, altKey: true }, true],
 			["Meta+Enter", { metaKey: true }, true],
 			["Meta+Alt+Enter", { metaKey: true, altKey: true }, true],
+			["Ctrl+Shift+Enter", { ctrlKey: true, shiftKey: true }, true],
+			["Meta+Shift+Enter", { metaKey: true, shiftKey: true }, true],
+			["Ctrl+Alt+Shift+Enter", { ctrlKey: true, altKey: true, shiftKey: true }, true],
+			["Meta+Alt+Shift+Enter", { metaKey: true, altKey: true, shiftKey: true }, true],
 			["Shift+Enter", { shiftKey: true }, false],
 		])("leaves %s untouched (cursor stays inside the link)", (_name, init, opensLink) => {
 			const ctx = makeViewWithCompetitor("1. [[Steady Links Plugin]]", 10);

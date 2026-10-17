@@ -614,7 +614,11 @@ integration tests), not only `makeHiderState` (which contains only some filters)
   `link.to` jump looks like a large user move and the plugins fight over the
   cursor. (Visible Cursor pins this in `tests/homeNavigation.test.ts`, "Steady
   Links contract".)
-- The capture listener MUST NOT `preventDefault`/`stopPropagation` and MUST NOT
+- The one exception: in Live Preview with the cursor strictly inside a link,
+  plain Enter runs Obsidian's `editor:follow-link` (open in current tab) via
+  `tryFollowLinkInCurrentTab` and IS consumed. Source mode and cursor-at-edge
+  keep the exit-right behavior below.
+- Otherwise the capture listener MUST NOT `preventDefault`/`stopPropagation` and MUST NOT
   consume the event. Emacs Text Editor (document-level `keydown`) and Visible
   Cursor (`handleKeydown`) still need to see the keypress. Only plain Enter (no
   Ctrl/Alt/Meta/Shift, not composing, not already `defaultPrevented`).

@@ -77,11 +77,13 @@ When **Keep links steady** is enabled, Steady Links provides its own high-priori
 
 ### 5. Clicking and Following Links
 
-- **Native link interactions**: Steady Links leaves mouse link gestures and modified Enter shortcuts to Obsidian. In Reading view, a plain click follows the link; in Live Preview, a plain click places the editor cursor in the visible link text.
+- **Source mode and Reading view use stock Obsidian behavior**: Steady Links does not change link clicks or `Enter` in Source mode or Reading view. Link clicks follow Obsidian's normal tab/window rules, and `Enter` inserts a newline as usual.
+- **Live Preview matches stock Obsidian for keyboard link visiting, with one change**: Every modified-Enter shortcut behaves exactly as in stock Obsidian (Alt+Enter follows in the current tab, Ctrl/Cmd+Enter opens a new tab, Ctrl/Cmd+Alt+Enter opens a new tab group, Ctrl/Cmd+Alt+Shift+Enter opens a new window). The only difference is that a bare `Enter` with the cursor inside a link opens that link in the current tab instead of inserting a newline. When the cursor is at a link's edge rather than strictly inside it, `Enter` still inserts a newline outside the link.
+- **Native link interactions**: Steady Links leaves mouse link gestures to Obsidian. In Reading view, a plain click follows the link; in Live Preview, a plain click places the editor cursor in the visible link text.
 
 | Operation | Input | Internal link | External link |
 | --- | --- | --- | --- |
-| Follow in current tab | Alt+Enter (Windows/Linux), Option+Enter (macOS) | Opens the linked note in the current tab. | Opens in the default browser. |
+| Follow in current tab | Enter (Live Preview only, cursor inside the link); Alt+Enter (Windows/Linux), Option+Enter (macOS) | Opens the linked note in the current tab. | Opens in the default browser. |
 | Open in a new tab | Ctrl+Enter / Ctrl+click (Windows/Linux); Cmd+Enter / Cmd+click (macOS) | Opens the linked note in a new tab without switching to it. | Opens in the browser. |
 | Open in a new tab group | Ctrl+Alt+Enter / Ctrl+Alt+click (Windows/Linux); Cmd+Option+Enter / Cmd+Option+click (macOS) | Opens the linked note in a new tab group and switches to it. | Opens in the browser. |
 | Open in a new window | Ctrl+Alt+Shift+Enter / Ctrl+Alt+Shift+click (Windows/Linux); Cmd+Option+Shift+Enter / Cmd+Option+Shift+click (macOS) | Opens the linked note in a new window. | Opens in the browser. |
