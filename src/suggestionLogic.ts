@@ -1,3 +1,4 @@
+import { ownerWindow, setTimeoutIn } from "commons/windows";
 import { App, TFile } from "obsidian";
 import { SuggestionItem } from "./types";
 import { isUrl } from "./utils";
@@ -754,9 +755,10 @@ export function resolveCompletion(
  * with its own copy of the visibility check, so a future Obsidian change to
  * how popups are hidden only needs to be updated here.
  */
-export function findVisibleSuggestionContainer(): HTMLElement | null {
-	if (typeof document === "undefined") return null;
-	const containers = document.querySelectorAll(".suggestion-container");
+export function findVisibleSuggestionContainer(doc?: Document): HTMLElement | null {
+	const d = doc ?? (typeof document !== "undefined" ? document : null);
+	if (!d) return null;
+	const containers = d.querySelectorAll(".suggestion-container");
 	for (let i = 0; i < containers.length; i++) {
 		const container = containers[i] as HTMLElement;
 		if (!container.classList.contains("is-hidden") && container.style.display !== "none") {
@@ -814,7 +816,8 @@ export function getSelectedSuggestionItem<T>(
 	}
 
 	if (selectedId === undefined) {
-		const container = findVisibleSuggestionContainer();
+		const doc = (instance as { inputEl?: HTMLElement })?.inputEl?.ownerDocument;
+		const container = findVisibleSuggestionContainer(doc);
 		if (container) {
 			const selectedEl = container.querySelector(".suggestion-item.is-selected");
 			if (selectedEl) {
@@ -838,13 +841,14 @@ export function getSelectedSuggestionItem<T>(
 	return undefined;
 }
 
-export function flashSuggestContainer(customContainer?: HTMLElement) {
+export function flashSuggestContainer(customContainer?: HTMLElement, win?: Window) {
 	const container = customContainer ?? findVisibleSuggestionContainer() ?? undefined;
 	if (container) {
 		container.classList.remove("is-flashing");
 		void (container as any).offsetWidth; // trigger reflow to restart animation
 		container.classList.add("is-flashing");
-		window.setTimeout(() => {
+		const targetWin = win ?? (container ? ownerWindow(container) : null) ?? window;
+		setTimeoutIn(targetWin, () => {
 			if (container) {
 				container.classList.remove("is-flashing");
 			}

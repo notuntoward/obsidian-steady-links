@@ -2,7 +2,7 @@
  * Mock module for the Obsidian API.
  *
  * The real "obsidian" npm package is type-only (no runtime entry point).
- * This file is resolved via a Vite alias in vitest.config.ts so that any
+ * This file is resolved via a Vite alias in vitest.config.mts so that any
  * `import { ... } from "obsidian"` in source files works at test time.
  *
  * This mock provides:

@@ -1,3 +1,4 @@
+import { ownerWindow } from "commons/windows";
 import { App, TFile, AbstractInputSuggest } from "obsidian";
 import { SuggestionItem } from "./types";
 import { isUrl } from "./utils";
@@ -56,8 +57,8 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 
 				if (alreadyComplete) {
 					// Flash completion window to show it is already fully completed
-					const container = findVisibleSuggestionContainer();
-					if (container) flashSuggestContainer(container);
+					const container = findVisibleSuggestionContainer(this.inputEl?.ownerDocument);
+					if (container) flashSuggestContainer(container, ownerWindow(this.inputEl) ?? window);
 					return false; // consume event
 				}
 
@@ -219,11 +220,12 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 	}
 
 	get isSuggestOpen(): boolean {
-		return findVisibleSuggestionContainer() !== null;
+		return findVisibleSuggestionContainer(this.inputEl?.ownerDocument) !== null;
 	}
 
 	selectCurrentSuggestion(): void {
-		const selected = document.querySelector(".suggestion-item.is-selected") as HTMLElement;
+		const doc = this.inputEl?.ownerDocument ?? document;
+		const selected = doc.querySelector(".suggestion-item.is-selected") as HTMLElement | null;
 		if (selected) {
 			selected.click();
 		}

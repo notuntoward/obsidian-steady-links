@@ -1,3 +1,4 @@
+import { ownerWindow, setTimeoutIn } from "commons/windows";
 /**
  * CM6 extension that prevents links from visually expanding when the cursor
  * enters them.
@@ -497,8 +498,9 @@ function getModeForView(view: EditorView): "source" | "preview" | "live" | null 
 // Decorations
 // ---------------------------------------------------------------------------
 
-function createHiddenSyntaxAnchor(): HTMLSpanElement {
-	const span = document.createElement("span");
+function createHiddenSyntaxAnchor(doc?: Document): HTMLSpanElement {
+	const d = doc ?? (typeof document !== "undefined" ? document : null);
+	const span = d ? d.createElement("span") : (document.createElement("span"));
 	span.className = "le-hidden-syntax-anchor";
 	span.setAttribute("aria-hidden", "true");
 	span.setAttribute("data-steady-links-anchor", "hidden-syntax");
@@ -534,8 +536,8 @@ function createHiddenSyntaxAnchor(): HTMLSpanElement {
 }
 
 class HiddenSyntaxWidget extends WidgetType {
-	toDOM(): HTMLElement {
-		return createHiddenSyntaxAnchor();
+	toDOM(view?: EditorView): HTMLElement {
+		return createHiddenSyntaxAnchor(view?.dom?.ownerDocument);
 	}
 
 	ignoreEvent(): boolean {
@@ -559,8 +561,9 @@ const hiddenSyntaxReplace = Decoration.replace({
  * (textFrom/textTo and the hidden ranges).
  */
 class EmptyLinkBracketsWidget extends WidgetType {
-	toDOM(): HTMLElement {
-		const span = document.createElement("span");
+	toDOM(view?: EditorView): HTMLElement {
+		const doc = view?.dom?.ownerDocument ?? document;
+		const span = doc.createElement("span");
 		span.className = "le-empty-link-brackets";
 		span.setAttribute("aria-hidden", "true");
 		span.setAttribute("data-steady-links-empty", "true");
@@ -886,21 +889,26 @@ const BODY_CLASS = "le-keep-links-steady";
 
 class BodyClassPlugin implements PluginValue {
 	private enabled = false;
+	private ownerDoc: Document | null = null;
 
 	constructor(view: EditorView) {
+		this.ownerDoc = view.dom.ownerDocument ?? (typeof document !== "undefined" ? document : null);
 		this.sync(view);
 	}
 	update(update: ViewUpdate) {
+		this.ownerDoc = update.view.dom.ownerDocument ?? (typeof document !== "undefined" ? document : null);
 		this.sync(update.view);
 	}
 	private sync(view: EditorView) {
 		const enabled = view.state.field(syntaxHiderEnabledField, false) ?? false;
 		if (enabled === this.enabled) return;
 		this.enabled = enabled;
-		document.body.classList.toggle(BODY_CLASS, enabled);
+		const doc = this.ownerDoc ?? view.dom.ownerDocument ?? (typeof document !== "undefined" ? document : null);
+		doc?.body.classList.toggle(BODY_CLASS, enabled);
 	}
 	destroy() {
-		document.body.classList.remove(BODY_CLASS);
+		const doc = this.ownerDoc ?? (typeof document !== "undefined" ? document : null);
+		doc?.body.classList.remove(BODY_CLASS);
 	}
 }
 
@@ -1066,7 +1074,7 @@ const hiddenSyntaxReplacePlugin = ViewPlugin.fromClass(HiddenSyntaxReplacePlugin
 
 class SyntaxHiderModePlugin implements PluginValue {
 	private syncing = false;
-	private pendingSync: number | null = null;
+	private pendingSync: (() => void) | null = null;
 
 	constructor(view: EditorView) {
 		this.scheduleSync(view);
@@ -1079,7 +1087,8 @@ class SyntaxHiderModePlugin implements PluginValue {
 
 	private scheduleSync(view: EditorView) {
 		if (this.pendingSync !== null) return;
-		this.pendingSync = window.setTimeout(() => {
+		const win = (view?.dom ? ownerWindow(view.dom) : null) ?? window;
+		this.pendingSync = setTimeoutIn(win, () => {
 			this.pendingSync = null;
 			this.sync(view);
 		}, 0);
@@ -1097,7 +1106,12 @@ class SyntaxHiderModePlugin implements PluginValue {
 		}
 	}
 
-	destroy() {}
+	destroy() {
+		if (this.pendingSync) {
+			this.pendingSync();
+			this.pendingSync = null;
+		}
+	}
 }
 
 const syntaxHiderModePlugin = ViewPlugin.fromClass(SyntaxHiderModePlugin);
@@ -2257,7 +2271,8 @@ const suppressSuggestAfterDeleteListener = EditorView.updateListener.of((update)
 
 	if (targetPos === null) return;
 
-	window.setTimeout(() => {
+	const win = (update.view?.dom ? ownerWindow(update.view.dom) : null) ?? window;
+	setTimeoutIn(win, () => {
 		if (!update.view.dom.isConnected) return;
 
 		const current = update.view.state.selection.main;

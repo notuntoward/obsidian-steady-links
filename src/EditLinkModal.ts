@@ -1,3 +1,4 @@
+import { ownerWindow, readClipboardIn } from "commons/windows";
 import { App, Modal, Setting, TextComponent, ButtonComponent, ToggleComponent, MarkdownView } from "obsidian";
 import { LinkInfo } from "./types";
 import { FileSuggest } from "./FileSuggest";
@@ -380,8 +381,9 @@ export class EditLinkModal extends Modal {
 		const modalKeydownHandler = (e: KeyboardEvent) => {
 			// TAB: accept suggestion if open, otherwise cycle focus
 			if (e.key === "Tab") {
+				const doc = this.contentEl.ownerDocument ?? document;
 				// If on dest and suggester open, let suggester handle Tab completion (don't cycle focus)
-				if (document.activeElement === this.destInput.inputEl) {
+				if (doc.activeElement === this.destInput.inputEl) {
 					const isOpen = this.fileSuggest.isSuggestOpen;
 					if (isOpen) {
 						return; // Let the suggest scope handler process Tab completion
@@ -391,7 +393,7 @@ export class EditLinkModal extends Modal {
 				// Normal tab cycling when no suggestion is open
 				e.preventDefault();
 				const focusable = this.getFocusableElements();
-				const active = document.activeElement as HTMLElement;
+				const active = doc.activeElement as HTMLElement;
 				let index = focusable.indexOf(active);
 				if (index === -1) index = 0;
 
@@ -490,7 +492,9 @@ export class EditLinkModal extends Modal {
 
 	async populateFromClipboard() {
 		try {
-			const clipboardText = await navigator.clipboard.readText();
+			const win = ownerWindow(this.contentEl) ?? window;
+			const clipboardText = await readClipboardIn(win);
+			if (!clipboardText) return;
 			const parsedLink = parseClipboardLink(clipboardText);
 
 			if (parsedLink) {

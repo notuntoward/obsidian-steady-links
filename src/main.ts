@@ -1,3 +1,5 @@
+import { ownerWindow, setTimeoutIn, requestFrameIn, readClipboardIn, writeClipboardIn } from "commons/windows";
+import { getEditorLeafLocations } from "commons/workspace";
 import { Plugin, Editor, MarkdownView, Notice, FileSystemAdapter, TFile, Menu, Platform } from "obsidian";
 import { Extension, EditorSelection } from "@codemirror/state";
 import { EditLinkModal } from "./EditLinkModal";
@@ -106,15 +108,12 @@ export default class SteadyLinksPlugin extends Plugin {
 			}
 		};
 
-		window.setTimeout(() => {
-			if (typeof window.requestAnimationFrame === "function") {
-				window.requestAnimationFrame(() => {
-					restore();
-				});
-				return;
-			}
-
-			restore();
+		const cm6View = (editor as any)?.cm as EditorView | undefined;
+		const win = (cm6View?.dom ? ownerWindow(cm6View.dom) : null) ?? (editor as any)?.containerEl?.ownerDocument?.defaultView ?? window;
+		setTimeoutIn(win, () => {
+			requestFrameIn(win, () => {
+				restore();
+			});
 		}, 0);
 	}
 
@@ -709,17 +708,15 @@ export default class SteadyLinksPlugin extends Plugin {
 		}
 	}
 
-	private writeLinkToClipboard(link: string, successNotice: string): void {
+	private async writeLinkToClipboard(link: string, successNotice: string, targetWin?: Window): Promise<void> {
+		const win = targetWin ?? (typeof activeWindow !== "undefined" ? activeWindow : window);
 		try {
-			const clipboard = navigator.clipboard;
-			if (!clipboard) {
-				new Notice("Clipboard access is unavailable");
-				return;
+			const success = await writeClipboardIn(win, link);
+			if (success) {
+				new Notice(successNotice);
+			} else {
+				new Notice("Failed to copy link to clipboard");
 			}
-			clipboard
-				.writeText(link)
-				.then(() => new Notice(successNotice))
-				.catch(() => new Notice("Failed to copy link to clipboard"));
 		} catch {
 			new Notice("Failed to copy link to clipboard");
 		}
@@ -884,11 +881,11 @@ export default class SteadyLinksPlugin extends Plugin {
 		// enabled throughout would otherwise have no visible effect until
 		// Obsidian is restarted.
 		if (this.settings.keepLinksSteady) {
-			this.app.workspace.iterateAllLeaves((leaf) => {
-				if (!(leaf.view instanceof MarkdownView)) return;
+			for (const { leaf } of getEditorLeafLocations(this.app)) {
+				if (!(leaf.view instanceof MarkdownView)) continue;
 				const cm6View = (leaf.view.editor as any).cm as EditorView | undefined;
 				cm6View?.dispatch({ effects: [setWikiLinkHidingOptions.of(wikiLinkOptions)] });
-			});
+			}
 		}
 	}
 
@@ -1042,8 +1039,10 @@ export default class SteadyLinksPlugin extends Plugin {
 		let clipboardText = "";
 
 		try {
-			clipboardText = await navigator.clipboard.readText();
-			clipboardText = clipboardText.trim();
+			const cm6View = (editor as any)?.cm as EditorView | undefined;
+			const win = (cm6View?.dom ? ownerWindow(cm6View.dom) : null) ?? (editor as any)?.containerEl?.ownerDocument?.defaultView ?? window;
+			const text = await readClipboardIn(win);
+			clipboardText = (text ?? "").trim();
 		} catch (e) {
 			// Clipboard access may fail - proceed without it
 		}
