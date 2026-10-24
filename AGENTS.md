@@ -935,15 +935,3 @@ its name contains `DEBUG`.
   they're currently disabled — they are useful, low-noise, opt-in
   instrumentation for diagnosing future real-Obsidian-only issues that don't
   reproduce in the unit test mocks.
-
-## Note: worktree builds (Agent Manager) and the vault junction
-
-Steady Links also ships a pre-built `main.js` that the vault loads via a
-junction at `<vault>/.obsidian/plugins/steady-links` pointing to the main
-checkout, so builds inside a git worktree are not automatically visible.
-
-For the workflow and the shared relink script, see the global rule in
-`~/.config/kilo/AGENTS.md` under *When building an Obsidian plugin inside a
-git worktree*.  The script at `$env:USERPROFILE\.config\kilo\tools\obsidian-relink.ps1`
-re-points the vault junction in one command; do not ask the user to do
-the delete/re-create manually.
