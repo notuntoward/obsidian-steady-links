@@ -1,4 +1,5 @@
 import { ownerWindow, setTimeoutIn } from "commons/windows";
+import { renderHighlightedText } from "commons/modal";
 import { App, TFile } from "obsidian";
 import { SuggestionItem } from "./types";
 import { isUrl } from "./utils";
@@ -500,22 +501,9 @@ export async function addBlockIdToFile(file: TFile, app: App, position: any, blo
 }
 
 function highlightMatches(el: HTMLElement, text: string, query: string): void {
-	if (!query) {
-		el.createSpan({ text });
-		return;
-	}
-	const index = text.toLowerCase().indexOf(query.toLowerCase());
-	if (index !== -1) {
-		const before = text.substring(0, index);
-		const match = text.substring(index, index + query.length);
-		const after = text.substring(index + query.length);
-		
-		if (before) el.createSpan({ text: before });
-		el.createSpan({ text: match, cls: "suggestion-highlight" });
-		if (after) el.createSpan({ text: after });
-	} else {
-		el.createSpan({ text });
-	}
+	const index = query ? text.toLowerCase().indexOf(query.toLowerCase()) : -1;
+	const matches = index === -1 ? [] : [[index, index + query.length]];
+	renderHighlightedText(el, text, matches);
 }
 
 export function renderSuggestionItem(

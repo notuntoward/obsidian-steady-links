@@ -41,6 +41,9 @@ function addObsidianDomExtensions() {
 		this.appendChild(span);
 		return span;
 	};
+	(HTMLElement.prototype as any).setText = function (text: string) {
+		this.textContent = text;
+	};
 	(HTMLElement.prototype as any).empty = function () {
 		this.innerHTML = "";
 	};
@@ -127,14 +130,14 @@ describe("renderSuggestionItem — file items", () => {
 		const el = document.createElement("div");
 		const item: SuggestionItem = {
 			type: "file",
-			basename: "MyNote",
-			name: "MyNote.md",
+			basename: "Note note",
+			name: "Note note.md",
 			extension: "md",
 		};
-		renderSuggestionItem(item, el, "Note", app as any);
-		const highlight = el.querySelector(".suggestion-highlight");
-		expect(highlight).not.toBeNull();
-		expect(highlight!.textContent).toBe("Note");
+		renderSuggestionItem(item, el, "note", app as any);
+		const highlights = el.querySelectorAll(".suggestion-highlight");
+		expect(highlights).toHaveLength(1);
+		expect(highlights[0].textContent).toBe("Note");
 	});
 });
 

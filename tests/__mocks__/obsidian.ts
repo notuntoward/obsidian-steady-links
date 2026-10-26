@@ -635,6 +635,15 @@ export class Modal {
 	}
 }
 
+export class SuggestModal<T> {
+	constructor(_app: App) {}
+	getSuggestions(_query: string): T[] {
+		return [];
+	}
+}
+
+export function setIcon(_el: HTMLElement, _icon: string): void {}
+
 // ============================================================================
 // PluginSettingTab
 // ============================================================================
