@@ -1,4 +1,5 @@
 import { ownerWindow, setTimeoutIn } from "commons/windows";
+import { dispatchLinkActivation } from "commons/links";
 /**
  * CM6 extension that prevents links from visually expanding when the cursor
  * enters them.
@@ -2816,8 +2817,8 @@ function findLinkAtCursorHead(view: EditorView): { head: number; link: LinkSpan 
 
 /**
  * Live Preview only: plain Enter with the cursor inside a link follows it in
- * the current tab by running Obsidian's own "Follow link under cursor"
- * command.  Returns true only when the command was actually executed, so
+ * the current tab, first offering a commons consumer handoff, then running
+ * Obsidian's own "Follow link under cursor" command. Returns true only when handled, so
  * callers fall back to the exit-right behavior otherwise (source mode, no
  * App available, suggest open, selection, or cursor not inside a link).
  */
@@ -2826,6 +2827,7 @@ function tryFollowLinkInCurrentTab(view: EditorView): boolean {
 	// behavior; Source mode and any other host fall through to exit-right.
 	if (!view.dom.closest(".markdown-source-view.is-live-preview")) return false;
 	if (!findLinkAtCursorHead(view)) return false;
+	if (dispatchLinkActivation(view.contentDOM)) return true;
 	const app = view.state.field(editorInfoField, false)?.app as
 		| { commands?: { executeCommandById?: (id: string) => boolean } }
 		| undefined;

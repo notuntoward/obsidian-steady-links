@@ -77,6 +77,14 @@ When **Keep links steady** is enabled, Steady Links provides its own high-priori
 
 ### 5. Clicking and Following Links
 
+#### Optional Perplexity Saver handshake
+
+With [Perplexity Saver](https://github.com/notuntoward/obsidian-perplexity-saver) installed, plain **Enter** inside a YouTube timestamp link in Live Preview can open Saver's video viewer at that time and start playback instead of opening the browser. Set Saver's **Timestamp link click** option to **Open in the video viewer**. Steady Links' **Keep links steady** must be enabled for its plain-Enter link following; the cursor must be inside the link with no selection or open suggestion.
+
+Before running Obsidian's native **Follow link under cursor** command, Steady Links offers a bubbling, cancelable `commons:link-activation` event from that editor's `contentDOM`. Saver's per-window receiver reads the cursor's link and cancels the event only when it handles a supported YouTube timestamp. A claimed event skips the native fallback, preventing double opening. Without Saver, for an ordinary wikilink/other URL, or when Saver selects the browser, the native behavior below is unchanged. Neither plugin imports from or requires the other; separately bundled `commons` copies communicate through the owning document.
+
+No new hotkey assignment is needed for this handshake. Without Steady Links, Saver supports the native **Follow link under cursor** shortcut (normally Alt+Enter on Windows/Linux or Option+Enter on macOS); it does not make plain Enter open links. Source-mode plain Enter, link-edge newline behavior, modified-Enter behavior, suggestions, selections and IME composition are unchanged.
+
 - **Source mode and Reading view use stock Obsidian behavior**: Steady Links does not change link clicks or `Enter` in Source mode or Reading view. Link clicks follow Obsidian's normal tab/window rules, and `Enter` inserts a newline as usual.
 - **Live Preview matches stock Obsidian for keyboard link visiting, with one change**: Every modified-Enter shortcut behaves exactly as in stock Obsidian (Alt+Enter follows in the current tab, Ctrl/Cmd+Enter opens a new tab, Ctrl/Cmd+Alt+Enter opens a new tab group, Ctrl/Cmd+Alt+Shift+Enter opens a new window). The only difference is that a bare `Enter` with the cursor inside a link opens that link in the current tab instead of inserting a newline. When the cursor is at a link's edge rather than strictly inside it, `Enter` still inserts a newline outside the link.
 - **Native link interactions**: Steady Links leaves mouse link gestures to Obsidian. In Reading view, a plain click follows the link; in Live Preview, a plain click places the editor cursor in the visible link text.

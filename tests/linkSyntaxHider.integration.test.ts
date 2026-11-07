@@ -16,6 +16,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { App, editorInfoField, type MarkdownFileInfo } from "obsidian";
 import SteadyLinksPlugin from "../src/main";
 import { EditorView, keymap } from "@codemirror/view";
+import { onLinkActivation } from "commons/links";
 import { EditorState, EditorSelection, StateEffect, Transaction, Prec } from "@codemirror/state";
 import {
 	createHiddenSyntaxAnchor,
@@ -2514,11 +2515,11 @@ describe("Integration: cursor correction with real CM6 state", () => {
 		});
 
 		describe("Live Preview Enter follows the link in the current tab", () => {
-			function makeFollowView(hostClass: string, cursor: number, withApp = true) {
+			function makeFollowView(hostClass: string, cursor: number, withApp = true, doc = document) {
 				const execute = vi.fn(() => true);
-				const host = document.createElement("div");
+				const host = doc.createElement("div");
 				host.className = hostClass;
-				document.body.appendChild(host);
+				doc.body.appendChild(host);
 				const seenHeads: number[] = [];
 				const v = new EditorView({
 					state: EditorState.create({
@@ -2555,6 +2556,35 @@ describe("Integration: cursor correction with real CM6 state", () => {
 				expect(ev.defaultPrevented).toBe(true);
 				expect(ctx.seenHeads).toEqual([]);
 				expect(view.state.selection.main.head).toBe(10);
+			});
+
+			it.each([false, true])("offers Enter to a consumer before the native command without double opening (popout=%s)", (popout) => {
+				const doc = popout ? document.implementation.createHTMLDocument() : document;
+				const ctx = makeFollowView("markdown-source-view is-live-preview", 10, true, doc);
+				view = ctx.v;
+				const handler = vi.fn(() => true);
+				const stop = onLinkActivation(view.dom, handler);
+				try {
+					const ev = pressEnter(view);
+					expect(handler).toHaveBeenCalledOnce();
+					expect(handler).toHaveBeenCalledWith(view.contentDOM, false);
+					expect(ctx.execute).not.toHaveBeenCalled();
+					expect(ev.defaultPrevented).toBe(true);
+					expect(ctx.seenHeads).toEqual([]);
+					expect(view.state.selection.main.head).toBe(10);
+				} finally { stop(); }
+			});
+
+			it("retains native fallback when the consumer declines", () => {
+				const ctx = makeFollowView("markdown-source-view is-live-preview", 10);
+				view = ctx.v;
+				const handler = vi.fn(() => false);
+				const stop = onLinkActivation(view.dom, handler);
+				try {
+					pressEnter(view);
+					expect(handler).toHaveBeenCalledOnce();
+					expect(ctx.execute).toHaveBeenCalledOnce();
+				} finally { stop(); }
 			});
 
 			it("does not follow the link in Source mode (keeps exit-right behavior)", () => {
@@ -4939,5 +4969,3 @@ describe("Composing a wikilink (typing after `[[`) must not lock the destination
 		expect(view.state.doc.toString()).toBe("[[WikiNoAlias|WikiNoAlia]]");
 	});
 });
-
-
