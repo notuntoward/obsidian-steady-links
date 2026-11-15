@@ -1,0 +1,924 @@
+# Detailed regression guide
+
+## Critical: cursorCorrector's own dispatches must carry userEvent "select.steadyLinks"
+
+Every purely-corrective selection dispatch made BY `cursorCorrector` itself
+(the ones that reposition the cursor onto/off of hidden link syntax, and the
+"suppress same-line cursor reset" dispatches) MUST include
+`userEvent: "select.steadyLinks"` in the dispatch spec.
+
+### Why this exists
+
+Cooperating third-party plugins — specifically Visible Cursor
+(`obsidian-visible-cursor`), whose block-cursor `navCorrection` listener is
+the only logic in that plugin that dispatches its own corrective selection
+changes — explicitly ignore transactions tagged `"select.steadyLinks"` (see
+its `navCorrection`, which early-returns on `t.isUserEvent("select.pointer")
+|| t.isUserEvent("select.steadyLinks") || t.isUserEvent("select.programmatic")`).
+
+Without this tag, Steady Links' own corrective dispatch (which normally
+carries NO userEvent, since it's not itself a "user" action) is
+indistinguishable from a genuine large/cross-line cursor jump that Visible
+Cursor's `navCorrection` should react to. That let the two plugins fight over
+the cursor position — most visibly with the block cursor style — which caused
+a real, hard-to-reproduce bug: Emacs kill-line on a line-start wikilink at
+end of document leaving a stray one-character alias like `[[dest|S]]` instead
+of deleting the whole link, because the real CM6 selection had drifted one
+character into the alias by the time kill-line read it.
+
+This tag was added once already and then silently missing (the emitting side
+was never actually wired up even though Visible Cursor already had matching
+code to ignore it) — verify with
+`git log -S"select.steadyLinks" -- src/linkSyntaxHider.ts` that it is still
+present before assuming it's redundant or safe to drop.
+
+### What NOT to do
+
+- Do NOT remove `userEvent: "select.steadyLinks"` from any of
+  `cursorCorrector`'s own `view.dispatch(...)` / `update.view.dispatch(...)`
+  calls, including the three "suppress same-line cursor reset" call sites and
+  the main end-of-listener correction dispatch.
+- Do NOT assume this tag is dead just because Steady Links' own code doesn't
+  check for it anywhere (it deliberately isn't checked here — it exists
+  purely for OTHER plugins to check, most notably Visible Cursor).
+- Do NOT add this tag to dispatches that ARE genuine user-initiated
+  navigation already carrying a real semantic userEvent (e.g. the Home key
+  handler's `userEvent: "select"`) — only add it to dispatches that exist
+  purely to correct/reposition the cursor in reaction to a previous update.
+
+### How to verify
+
+The integration test "cursorCorrector's vertical-motion correction dispatch
+carries userEvent select.steadyLinks" in
+`tests/linkSyntaxHider.integration.test.ts` asserts this tag directly by
+capturing `tr.annotation(Transaction.userEvent)` on the dispatched
+transaction. If this test is missing or modified to stop checking the exact
+string `"select.steadyLinks"`, the cross-plugin contract can silently break
+again with no local test failure to catch it.
+
+## Critical: Prefer explicit signals over selection-shape heuristics for cross-command intent (e.g. "was this kill-line?")
+
+`isKillLine` in `clampSelectionDeleteFilter` (and threaded through
+`rewriteDeleteChanges` / `rewriteDeleteChangeForLinks`) was previously
+computed by guessing from selection shape: matching a link whose
+`textFrom`/line-end happened to align with the transaction's starting
+selection. This heuristic was fragile and, on inspection, entirely inert —
+every test that appeared to depend on it actually passed because
+`deletesEntireDisplay`/`coversEmptyLink` (which apply regardless of which
+command produced the delete) already covered the same cases.
+
+`isKillLine` is now computed from exactly two explicit signals:
+
+```ts
+const pendingExpansion = tr.startState.field(pendingExternalSelectionExpansionField, false);
+const isKillLine = tr.isUserEvent("emacs.killLine") || pendingExpansion !== null;
+```
+
+- `tr.isUserEvent("emacs.killLine")` — the Emacs Text Editor plugin's own
+  userEvent tag on its kill-line delete dispatch (an explicit, real signal
+  from that plugin).
+- `pendingExpansion !== null` — set by `expandSelectionToLeadingSyntaxFilter`
+  when Steady Links ITSELF just expanded the selection to include a link's
+  full leading syntax, which only happens for whole-link selection
+  operations, never for a single-atom delete-char.
+
+### What NOT to do
+
+- Do NOT reintroduce a `links.some((l) => ...)` selection-shape heuristic to
+  `isKillLine` (or any similarly-named "guess what command did this" flag)
+  without first proving, with a concrete failing test, that the two explicit
+  signals above are insufficient. AI has repeatedly reached for
+  position-matching heuristics here, and every one added so far turned out to
+  be dead weight that only added confusing, unreachable branches (see the
+  removed `(isKillLine && change.from <= link.textFrom && change.to >=
+  link.textTo)` disjunct in `rewriteDeleteChangeForLinks`, which was always
+  subsumed by `deletesEntireDisplay`/`coversEmptyLink`).
+- Do NOT add a new heuristic branch to `rewriteDeleteChangeForLinks`'s
+  `deletesEntireDisplay || coversEmptyLink` check without first verifying,
+  algebraically or with a failing test, that it isn't already implied by
+  `change.from <= link.textFrom && change.to >= link.textTo` (which is what
+  `deletesEntireDisplay` already reduces to whenever it's relevant).
+- If a genuinely new cross-command signal is needed, add an explicit
+  StateField/StateEffect (mirroring `pendingExternalSelectionExpansionField`)
+  that Steady Links itself sets when it performs the relevant expansion or
+  action, rather than trying to infer intent from raw selection coordinates.
+
+## Critical: Cursor correction ordering in linkSyntaxHider.ts
+
+The `cursorCorrector` update listener in `src/linkSyntaxHider.ts` contains
+fragile ordering dependencies that have been broken by AI at least 4 times.
+Each regression takes significant time and money to diagnose and fix because
+the bug only manifests in real Obsidian (not in standalone CM6 test harnesses).
+
+### The bug pattern
+
+When the user presses ArrowDown from a blank line above a line-start markdown
+link like `[text](url)`, or ArrowUp from below it, the cursor bounces back
+instead of landing on the link line. Wikilinks `[[target]]` are not affected
+because their leading hidden range is 2+ chars wide and CM6 lands at
+`leading.from`, not `textFrom`.
+
+### Root cause
+
+Two code blocks in the `ranges.map()` callback match the same cursor pattern
+(`oldHead = textFrom, head = leading.from`):
+
+1. **Obsidian normalization suppression** — checks `cameFromOutside` and
+   returns early (keeps cursor on the link line)
+2. **`markdownLeadingExit`** — bounces cursor to `leading.from - 1`
+   (previous line) for genuine left-arrow presses
+
+If `markdownLeadingExit` runs first, it bounces before the suppression check
+can fire. The suppression MUST run first.
+
+### How to verify
+
+The test suite includes a dedicated describe block:
+
+```
+"Obsidian normalization must not bounce cursor off line-start markdown links"
+```
+
+These tests simulate the exact 3-step Obsidian sequence:
+
+1. CM6 vertical motion lands at `textFrom` (with goalColumn)
+2. Our corrector sets `arrivedFromOutside`
+3. Obsidian normalizes `textFrom -> leading.from` (no userEvent)
+
+If step 3 bounces to `leading.from - 1`, the tests fail.
+
+**Always run `npm run test:run` after modifying `cursorCorrector` or
+`correctCursorPos`. If the "Obsidian normalization" tests fail, you have
+broken the ordering.**
+
+### What NOT to do
+
+- Do NOT move `markdownLeadingExit` above the Obsidian normalization
+  suppression check
+- Do NOT remove the `arrivedFromOutside` marker from the vertical-motion
+  span loop
+- Do NOT assume standalone CM6 (Playwright harness) reproduces Obsidian's
+  cursor normalization behavior. Real Obsidian fires an extra no-userEvent
+  `textFrom -> leading.from` dispatch that standalone CM6 does not.
+- Do NOT change the ordering of checks in the `ranges.map()` callback
+  without running the full test suite AND testing in real Obsidian
+
+## Critical: Suppression must redirect to textFrom, not stay at leading.from
+
+The Obsidian normalisation suppression (the `cameFromOutside` block) must
+redirect the cursor to `textFrom` (the visible alias text start), NOT stay
+at `leading.from` (the hidden `[[` or `[` syntax position).
+
+### Why this matters
+
+When the cursor stays at `leading.from` after suppression:
+
+- The **visible-cursor plugin** renders a garbled block cursor on the hidden
+  `[` character instead of the visible alias character
+- **Two right-arrow presses** are needed to move off the first visible
+  character (the real selection is on hidden syntax, not visible text)
+- `coordsAtPos()` at `leading.from` returns ~1px width (collapsed syntax),
+  causing the block cursor to be a thin sliver or wrong width
+
+This interaction between steady-links and visible-cursor has been broken by
+AI at least 5 times.
+
+### The correct code
+
+```typescript
+// In the cameFromOutside suppression block:
+head = obsidianNorm.textFrom;   // CORRECT: redirect to visible alias start
+needsAdjust = true;
+
+// NOT this (the old buggy version):
+// return range.empty
+//     ? EditorSelection.cursor(head)   // WRONG: head = leading.from = hidden [[
+//     : EditorSelection.range(range.anchor, head);
+```
+
+### How to verify
+
+The test suite includes:
+
+```
+"Obsidian normalisation suppression must redirect to textFrom"
+```
+
+These tests check that after the suppression fires, the cursor is at
+`textFrom` (visible alias start), NOT at `leading.from` (hidden syntax).
+They cover wikilinks, piped wikilinks with aliases, and markdown links.
+
+### What NOT to do
+
+- Do NOT change the suppression to `return` early with `head` unchanged —
+  that leaves the cursor at `leading.from` (inside hidden syntax)
+- Do NOT remove `needsAdjust = true` from the suppression — without it,
+  the corrective dispatch never fires
+- Do NOT assume the cursor position after suppression is correct without
+  checking that it equals `textFrom`, not `leading.from`
+
+### Testing in real Obsidian
+
+Use this test document (both wikilinks and markdown links):
+
+```markdown
+(blank line)
+[[test-notes/Note-09.md#Note Nine |Wote Nine]]
+(blank line)
+[dklfsdfg](http://arxiv.org/abs/2602.19141) asdflkjasdlfj
+alsdkfjasldjf
+```
+
+1. Put cursor on the blank line above each link, press ArrowDown — cursor
+   must land on the link line with the block cursor correctly sized on the
+   first visible alias character
+2. Press ArrowUp from below — same result
+3. A single ArrowRight should move to the second visible character
+4. Open DevTools console — look for `redirecting to textFrom=` in the
+   `[SteadyLinks corrector]` logs
+5. If you see `staying at h.from=` instead, the bug has regressed
+
+### Testing in real Obsidian (markdown link bounce)
+
+The integration tests simulate Obsidian's behavior, but if you need to verify
+in the real app, use this test document:
+
+```markdown
+(blank line)
+[dklfsdfg](http://arxiv.org/abs/2602.19141) asdflkjasdlfj
+alsdkfjasldjf
+```
+
+1. Put cursor on the blank line, press ArrowDown — cursor must land on the
+   link line (not bounce back)
+2. Put cursor on the third line, press ArrowUp — cursor must land on the
+   link line (not skip over it)
+3. Open DevTools console — look for `[SteadyLinks corrector]` logs to trace
+   the exact correction sequence
+
+## Critical: deleteSelectionKeymap must pass a userEvent to rewriteDeleteChanges
+
+The `deleteSelectionKeymap` keymap handler (Backspace/Delete with a non-empty
+selection) MUST pass a non-null `userEvent` (e.g. `"delete.selection"`) when
+calling `rewriteDeleteChanges`.  Without it, the `matchesExactSingleLink`
+branch in `rewriteDeleteChangeForLinks` fires — that branch is reserved for
+**programmatic, no-userEvent** deletes (Emacs delete-char where `goRight`
+jumps the full link decoration and `replaceSelection("")` follows).
+
+### The bug pattern
+
+When the user selects the visible text of a link (e.g. `[[Destination]]` →
+select "Destination") and presses Backspace or Delete:
+
+1. `expandSelectionRangeToFullLinks` expands `[textFrom, textTo)` to
+   `[link.from, link.to)` (the full link span).
+2. `matchesExactSingleLink` becomes true (`change.from === link.from &&
+   change.to === link.to`).
+3. If `userEvent` is null/undefined, the `matchesExactSingleLink` branch
+   fires and **converts the bare wikilink to an aliased wikilink + deletes
+   only 1 character** — instead of deleting the entire link.
+
+This has been broken by AI at least 3 times because the fix looks
+counter-intuitive (why pass a userEvent to an internal helper?).  The
+`matchesExactSingleLink` branch's `userEvent === null || userEvent ===
+undefined` guard is the ONLY thing that distinguishes a genuine user
+selection-delete from a programmatic Emacs delete-char.
+
+### How to verify
+
+The test suite includes:
+
+```
+"Backspace on a selected bare wikilink deletes the entire link"
+"Delete on a selected bare wikilink deletes the entire link"
+```
+
+These dispatch real `KeyboardEvent`s and expect the entire link to be
+deleted (empty document), NOT `[[Destination|estination]]`.
+
+The Emacs delete-char path is guarded by:
+
+```
+"Emacs delete-char (programmatic, no userEvent) on a full-link selection still converts bare wikilink"
+```
+
+This dispatches with NO `userEvent` annotation and expects the aliased
+conversion — proving the two paths are correctly distinguished.
+
+### What NOT to do
+
+- Do NOT remove the `"delete.selection"` userEvent argument from
+  `deleteSelectionKeymap`'s `rewriteDeleteChanges` calls
+- Do NOT change the `matchesExactSingleLink` branch's `userEvent === null
+  || userEvent === undefined` guard to always fire — that would break
+  Emacs delete-char
+- Do NOT assume `deleteSelectionKeymap` and `clampSelectionDeleteFilter`
+  are interchangeable — the keymap handles keypresses (user-driven), the
+  filter handles programmatic dispatches (no userEvent)
+
+## Critical: Selection-collapse redirect in cursorCorrector
+
+The `cursorCorrector` update listener contains a block that redirects the
+cursor to `textFrom` when a non-empty selection is collapsed to empty at a
+link's trailing boundary.  This block MUST run BEFORE `correctCursorPos`
+and MUST include `!update.docChanged` in its condition.
+
+### The bug pattern
+
+When the user selects the visible text of a link (e.g. `[[Destination]]` →
+select "Destination") and runs Emacs kill-line:
+
+1. Emacs `disableSelection` collapses the selection to the head.
+2. For a left-to-right selection, the head was at `textTo` (trailing.from),
+   but the cursor corrector already moved it to `span.to` or `span.to + 1`
+   during selection creation.
+3. `correctCursorPos` would leave the cursor at `span.to` / lineEnd.
+4. Emacs `getCursor()` returns lineEnd → `setSelection(lineEnd, lineEnd)` =
+   empty selection → `replaceSelection("")` does nothing.
+
+The redirect block catches this: when a non-empty selection is collapsed to
+empty, and the head is within `[span.from, span.to + 1]`, and the old
+selection's anchor was within the link's leading syntax or at `textFrom`,
+it redirects the cursor to `textFrom`.  This makes kill-line select
+`[textFrom, lineEnd]` which expands to `[link.from, link.to]` and deletes
+the entire link.
+
+### Why `!update.docChanged` is required
+
+Without `!update.docChanged`, the redirect also fires during edit-driven
+selection changes (e.g. `emulateEmacsKillLine`'s delete step where
+`oldSel` was non-empty and `newSel` is empty).  In that case
+`correctCursorPos` already handles the cursor correctly via `isEditUpdate`
+(keeping it at `textTo`), and the redirect would incorrectly move it to
+`textFrom`.  The "kill-line inside a wikilink alias" and "kill-line inside
+a markdown link" tests will fail if `!update.docChanged` is removed.
+
+### How to verify
+
+The test suite includes:
+
+```
+"collapsing a selection ending at textTo redirects cursor to textFrom, not lineEnd"
+"Emacs kill-line on a selected bare wikilink deletes the entire link"
+```
+
+### What NOT to do
+
+- Do NOT remove the `!update.docChanged` condition — edit-driven cursor
+  changes have their own handling via `isEditUpdate` in `correctCursorPos`
+- Do NOT move this block AFTER the `correctCursorPos` loop — the loop
+  moves the head past the link, after which the span match fails
+- Do NOT remove the `oldRange.anchor >= span.from && oldRange.anchor <=
+  span.textFrom` check — without it, selections that include text BEFORE
+  the link would also get redirected, breaking kill-line for those cases
+
+## Critical: End / line-end moves must not advance past trailing link syntax
+
+`correctCursorPos` accepts an `isLineEndMove` flag (8th parameter) that the
+`cursorCorrector` computes. When a line-end move (End key, Emacs "Move end of
+line" / `emacs.moveToEnd`, Shift+End / `selectLineEnd`) lands the cursor inside
+a link's trailing hidden range, `correctCursorPos` MUST return `null` (leave
+the selection unchanged) instead of advancing to `h.to` / `h.to + 1`.
+
+### The bug pattern
+
+On a soft-wrapped line whose visible alias text ends at the right edge, the End
+command (CM6 `moveToLineBoundary(forward)`, assoc=-1) lands the cursor at the
+link's `textTo` — the start of the hidden trailing `]]` syntax. Without the
+`isLineEndMove` guard, the trailing "moving right" branch advances the cursor
+to `h.to + 1` (past the `]]`), which visually lands on the next visual line.
+Pressing Delete then removes the first character of the next visual line
+instead of the character at the wrap boundary. This is a regression from the
+"line-ending links, stop at h.to" fix.
+
+### The correct code
+
+In the trailing `movingRight` branch of `correctCursorPos`:
+
+```typescript
+const textFrom = findTextFromForTrailing(hidden, h, doc);
+const isSingleCharInLinkAdvance =
+    textFrom !== null &&
+    oldPos >= textFrom &&
+    oldPos < h.from &&
+    Math.abs(pos - oldPos) <= 1;
+if (!isSingleCharInLinkAdvance && isLineEndMove) {
+    return null;   // keep cursor at the wrap boundary End placed it on
+}
+// ...otherwise preserve the existing advance to h.to / h.to + 1
+```
+
+A single-character right-arrow from inside the link's visible text must STILL
+advance past the trailing syntax — even right after an End keydown — so the
+`isSingleCharInLinkAdvance` exception is required (otherwise a Right press
+immediately after End would get stuck at `textTo`).
+
+### How the End key is detected
+
+The Emacs command and Shift+End carry distinct userEvents (`emacs.moveToEnd`,
+`selectLineEnd`). The bare End key dispatches with a generic `select`
+userEvent indistinguishable from arrow keys, so `cursorCorrector` also checks
+`Date.now() - lastEndKeyDown < END_KEY_LINE_END_WINDOW_MS` (300ms), where
+`lastEndKeyDown` is read from the **per-view** `lastEndKeyDownAtField`
+StateField (set by the `endKeyTracker` `EditorView.domEventHandlers`
+keydown). This mirrors the visible-cursor plugin's `lastKeyDownTime`
+approach but uses a StateField rather than a module-level variable so End
+keydowns in one editor instance cannot affect cursor correction in another.
+
+`END_KEY_LINE_END_WINDOW_MS` is a named constant — see its definition for
+rationale on the 300ms value.
+
+### How to verify
+
+The integration test suite includes:
+
+```
+"End / emacs.moveToEnd landing at a link's trailing boundary (soft-wrap regression)"
+```
+
+These cover `emacs.moveToEnd`, `selectLineEnd`, the bare End key (keydown +
+generic `select` dispatch), and the preserved single-char right-arrow advance.
+They also verify the line-end-link case (where `h.to === lineEnd`).
+
+### What NOT to do
+
+- Do NOT remove the `isLineEndMove` parameter or the `isSingleCharInLinkAdvance`
+  exception — without the exception, right-arrow-after-End breaks; without the
+  flag, the End regression returns.
+- Do NOT detect line-end moves by `assoc` alone — CM6 normalises assoc at wrap
+  boundaries, so it is unreliable.
+- Do NOT remove the `endKeyTracker` domEventHandler — the bare End key has no
+  distinguishable userEvent and relies on the keydown timestamp.
+- Do NOT revert `lastEndKeyDownAtField` to a module-level variable —
+  per-view scoping prevents End keydowns in one editor from affecting
+  cursor correction in another.
+
+## Critical: Trailing syntax exit navigation must land at h.to, not h.to + 1
+
+In `correctCursorPos` (`src/linkSyntaxHider.ts`), when the cursor enters the
+trailing hidden range (`]]` for wikilinks or `](url)` for markdown links) from
+the left (`movingRight` is true):
+
+```typescript
+// Advance to h.to (the boundary immediately after the link syntax).
+// This lands right after the link text (e.g. before any following space),
+// matching symmetric left-arrow behavior from h.to.
+return h.to;
+```
+
+### The bug pattern
+
+Previously, `correctCursorPos` returned `Math.min(doc.length, h.to + 1)` for
+mid-line links. This caused a single right-arrow press from the last character of
+a link's display text to skip the trailing syntax **and** the following space
+character, landing on the first letter of the subsequent word.
+When pressing left-arrow from that subsequent word, the cursor entered the trailing
+range and landed at `h.to` / `h.from` (before the space), creating an asymmetrical
+navigation anomaly where the space between a link and the next word was skipped
+when moving forward and could only be reached when moving backward.
+
+### Mandatory invariants
+
+1. **Always return `h.to` on trailing `movingRight` exit**:
+   Landing at `h.to` places the cursor cleanly between the link text and any
+   trailing character or space. A subsequent right-arrow press then advances past
+   the space.
+2. **Symmetric single-step navigation**:
+   - `[textFrom, textTo)` -> right-arrow -> `h.to` (after link, before space)
+   - `h.to` -> right-arrow -> `h.to + 1` (after space)
+   - `h.to + 1` -> left-arrow -> `h.to` (before space)
+   - `h.to` -> left-arrow -> inside visible link text (`h.from - 1` / `textTo`)
+3. **Applies uniformly to all link topologies and input methods**:
+   - Wikilinks and markdown links
+   - Start of line, mid-line, and end of line
+   - Arrow keys and Emacs cursor commands (`forward-char` / `backward-char` / `Ctrl-F` / `Ctrl-B`)
+
+### What NOT to do
+
+- Do NOT change `return h.to;` to `return Math.min(doc.length, h.to + 1);`.
+- Do NOT skip the space or character following `h.to` during forward navigation.
+
+## Critical: the trailing-boundary `movingRight` exit must not fire for edit-driven cursor placement
+
+The `movingRight` branch inside the trailing-range case of `correctCursorPos`
+(the same branch documented in the section above) MUST return `null`
+immediately when `isEditUpdate` (the `docChanged` flag passed in from
+`cursorCorrector`) is `true`, before it ever considers advancing to `h.to`:
+
+```typescript
+if (movingRight) {
+    if (isEditUpdate) {
+        return null;
+    }
+    // ...existing single-char-advance / line-end-move logic...
+}
+```
+
+### The bug pattern
+
+`cursorCorrector` remaps the pre-edit head through the transaction's changes
+with **forward association** (`update.changes.mapPos(oldHead, 1)`) so that,
+for a genuine edit, the remapped `oldPos` lines up with the post-edit `pos`.
+That is exactly what makes `movingRight` (`pos >= oldPos`) evaluate `true`
+for a plain in-place edit — not just for real rightward navigation.
+
+Backspacing the `#` out of an in-progress heading-then-block query like
+`[[Note-05#^]]` (deleting `^`, then `#`, one Backspace at a time) leaves
+`[[Note-05]]` — a link that just became *complete* for the first time — with
+the cursor naturally sitting right after `Note-05`, which is exactly `h.from`
+of the **freshly-formed** trailing `]]` hidden range. Without the
+`isEditUpdate` guard, `correctCursorPos` treated this the same as a real
+right-arrow press advancing out of the link's visible text, pushing the
+cursor past `]]` to `h.to`. In real Obsidian this made the in-editor `[[`
+suggest's `onTrigger` see the cursor as outside the link and close the
+popup, and the next keystroke (retyping `^`) landed outside the link as
+plain text (`[[Note-05]]^`) instead of completing it (`[[Note-05^]]`).
+
+This is the same class of bug as the `editor.transaction` atomicity section
+above (an edit-driven cursor position getting "corrected" as if it were
+navigation) but on the opposite side: that one was triggered by this
+plugin's own `EditorFileSuggest` completion; this one is triggered by a
+plain user Backspace that this plugin's own `linkSyntaxHider.ts` reacts to.
+
+### How to verify
+
+```
+"does not advance past the trailing boundary when an edit lands the cursor there"
+"still advances past the trailing boundary for a genuine right-arrow press (not an edit)"
+```
+
+in `tests/linkSyntaxHider.test.ts` test the guard directly against
+`correctCursorPos`. The full real-world sequence (Backspace, Backspace,
+retype `^`) is reproduced end-to-end in `tests/linkSyntaxHider.integration.test.ts`:
+
+```
+"backspacing '#' out of an in-progress '[[Note-05#^]]' query keeps the cursor inside the link, not past ']]'"
+```
+
+### What NOT to do
+
+- Do NOT remove the `isEditUpdate` check or move it after the
+  `isSingleCharInLinkAdvance` / `isLineEndMove` logic — arrow-key navigation
+  never sets `isEditUpdate`, so adding the check first cannot affect genuine
+  navigation; it only suppresses the incorrect edit-driven case.
+- Do NOT try to "fix" this by changing `cursorCorrector`'s
+  `update.changes.mapPos(oldHead, 1)` association instead — that forward
+  association is relied on elsewhere to keep `oldHead` meaningful after an
+  edit; the fix belongs in `correctCursorPos`, which is the one place that
+  actually decides whether a boundary crossing is worth correcting.
+
+## Critical: Enter inside a link must exit right, across plugins, without corrupting anything
+
+With the `[[` suggester closed, pressing Enter with the cursor inside a link
+must move the cursor to the link's right edge (`link.to`) and then let whichever
+plugin owns Enter act there. This must work in every context (paragraphs,
+bullet/ordered/task lists) and with the other Enter-handling plugins installed
+(obsidian-outliner, Obsidian's own smart-list Enter).
+
+### Who actually handles Enter (verified with runtime logs, do not assume)
+
+- **obsidian-outliner's Enter override** (`urOverride.run`) is a keymap that
+  outranks `enterAtLinkEndKeymap`, so our keymap is often NEVER invoked. It
+  replaces the WHOLE list-item line with `before-cursor + "\n" + newPrefix +
+  after-cursor` (e.g. replaces `[281,307)` with `'1. [[Steady \n2. Links Plugin]]'`).
+  It carries no `userEvent`.
+- **Obsidian's `newlineAndIndentContinueMarkdownList`** replaces the single
+  character before the cursor with that character + `"\n"` + list prefix
+  (`"]\n2. "`), tagged `input.type`.
+- **Other plugins also rewrite the document around Enter** (e.g.
+  front-matter-timestamps replaces the frontmatter block with a large multi-line
+  string, possibly while the cursor is inside a link). That must never be
+  mistaken for an Enter.
+
+### The layered design (each layer must keep working on its own)
+
+1. **`enterCapturePlugin`** (capture-phase `keydown` on `view.dom`) calls
+   `handleEnterKey` BEFORE any keymap sees the key, so every plugin finds the
+   cursor already at `link.to` and needs no knowledge of us.
+2. **`enterAtLinkEndKeymap`** is the fallback if the capture listener did not run.
+3. **`enterAtLinkEndFix`** (transaction filter) repairs the two known edit shapes
+   (outliner whole-line split; Obsidian one-char reinsert) when the cursor was
+   still inside the link. It fails OPEN: any other shape passes through
+   untouched. **`protectSyntaxFilter`'s newline safety net** only redirects
+   genuinely Enter-shaped changes for the same reason.
+
+CodeMirror runs `transactionFilter`s in REVERSE registration order, so
+`protectSyntaxFilter` sees input-tagged transactions BEFORE `enterAtLinkEndFix`.
+Any change to filter behavior must be checked against the full extension (the
+integration tests), not only `makeHiderState` (which contains only some filters).
+
+### Contract with other plugins (do not weaken)
+
+- The pre-move dispatch MUST carry `userEvent: "select.steadyLinks"`. Visible
+  Cursor's `navCorrection` ignores exactly that tag; untagged, a mid-link ->
+  `link.to` jump looks like a large user move and the plugins fight over the
+  cursor. (Visible Cursor pins this in `tests/homeNavigation.test.ts`, "Steady
+  Links contract".)
+- The one exception: in Live Preview with the cursor strictly inside a link,
+  plain Enter runs Obsidian's `editor:follow-link` (open in current tab) via
+  `tryFollowLinkInCurrentTab` and IS consumed. Source mode and cursor-at-edge
+  keep the exit-right behavior below.
+- Otherwise the capture listener MUST NOT `preventDefault`/`stopPropagation` and MUST NOT
+  consume the event. Emacs Text Editor (document-level `keydown`) and Visible
+  Cursor (`handleKeydown`) still need to see the keypress. Only plain Enter (no
+  Ctrl/Alt/Meta/Shift, not composing, not already `defaultPrevented`).
+- Rewriting another plugin's transaction MUST go through `rewriteKeepingMeta`,
+  which preserves annotations (`userEvent`, `addToHistory`, ...) and maps
+  effects. Never replace a transaction with a bare `tr.startState.update(...)`.
+- Never rewrite `undo`, `redo`, `set`, `input.paste`, `input.drop`, `move`
+  (`isEnterRewriteExempt`), multi-change transactions, or multi-line
+  replacements. Positional guards (`insertFrom` within one char of the cursor, or
+  a single-line whole-range replace containing the cursor) are what keep a
+  frontmatter rewrite from being hijacked.
+
+### Re-inserted boundary char
+
+Both Obsidian's handler (and any similar one) re-insert the character before the
+cursor, which at a link's end is the hidden `]`/`)`. Relocating the insertion
+must strip it (`stripReinsertedLeadingChar`) or the document ends up with `]]]`.
+
+### What NOT to do
+
+- Do NOT remove `stripReinsertedLeadingChar` calls from `enterAtLinkEndFix` or
+  `protectSyntaxFilter`.
+- Do NOT re-add an early `if (range.head === line.to) return tr;` bail to
+  `enterAtLinkEndFix` (it lets `protectSyntaxFilter` duplicate the `]`). The
+  self-loop guard is `if (insertFrom === targetPos) return tr;`.
+- Do NOT drop the `enterCapturePlugin` on the theory that the keymap suffices:
+  outliner's Enter outranks the keymap and the keymap never runs.
+- Do NOT revert `handleEnterKey` to inserting the newline itself; the owning
+  plugin's own Enter preserves numbering, empty-item removal and blockquotes.
+- Do NOT broaden `enterAtLinkEndFix` to "any newline-containing change near a
+  link". That exact mistake once appended an entire frontmatter block after a
+  link and duplicated it in the note.
+- Diagnostics: `window.__STEADY_LINKS_DEBUG = true` enables `ENTER ...` logs
+  (the `newline tr seen` entry includes a stack naming the dispatching plugin).
+  Keep `STEADY_LINKS_DEBUG` itself `false`, and remove any temporary line in
+  `main.ts` that forces the flag on before committing.
+
+### How to verify
+
+`tests/linkSyntaxHider.test.ts` (`enterAtLinkEndFix` block): the reinsert,
+whole-line-split, frontmatter-rewrite and exempt-userEvent cases.
+
+`tests/linkSyntaxHider.integration.test.ts` ("Enter capture-phase pre-move and
+do-no-harm guarantees"): a `Prec.highest` competing keymap registered before
+ours must see the cursor already at `link.to`; the pre-move is tagged
+`select.steadyLinks`; the event is never consumed; modified Enter is untouched;
+rewrites keep annotations/effects; exempt events and large rewrites are never
+hijacked.
+## Critical: EditorFileSuggest completions must set text and cursor atomically via editor.transaction
+
+`EditorFileSuggest.completeSelection()` (Tab/`#`/`^` in-editor `[[` completion)
+and `buildFullLinkReplacement()` (shared by `selectSuggestion` and
+`createUnresolvedLink`) MUST apply their document edit and the resulting
+cursor/selection in a single `editor.transaction({ changes, selection },
+origin?)` call. NEVER split this into a separate `editor.replaceRange(...)`
+followed by a later `editor.setCursor(...)` / `editor.setSelection(...)`.
+
+### The bug pattern
+
+This plugin's own cursor-corrector (`cursorCorrector` in `linkSyntaxHider.ts`)
+explicitly skips its trailing-syntax-boundary correction logic for
+doc-changing transactions (see the `!update.docChanged` guards documented
+elsewhere in this file) so that normal typing is never interfered with. A
+*separate*, later, pure-selection dispatch (no doc change) has no such
+protection: the corrector treats it exactly like arrow-key navigation
+landing on a boundary.
+
+Tab-completing a query into a real file name (e.g. `[[not` -> `[[Note-05`)
+turns the completed text into a freshly-recognized hidden wikilink, and the
+completion's target cursor position sits exactly on that link's
+`textTo`/trailing-boundary (right before the now-hidden `]]`). If the cursor
+is placed there via a *separate* `setCursor()` call after the edit, the
+corrector "corrects" it forward past the `]]` on the very next update. The
+next `onTrigger` check then (correctly) sees the cursor as outside the link
+and closes the suggest popup — even though the completion itself worked.
+This is exactly the real-Obsidian regression that motivated this section:
+Tab appeared to "exit" the `[[` suggest instead of keeping it open for
+`#`/`^` continuation, and every unit test still passed because the test
+mock's `Editor` doesn't simulate the cursor-corrector at all — only a test
+that asserts `editor.transaction(...)` was called (rather than only
+asserting final editor state) can catch a regression back to two separate
+dispatches.
+
+### The correct code
+
+```typescript
+editor.transaction(
+    {
+        changes: [{ from: context.start, to: context.end, text: completionText }],
+        selection: { from: newCursor },
+    },
+    AUTOCOMPLETE_USER_EVENT // "input.type" — see the section below
+);
+```
+
+This mirrors stock Obsidian's own built-in `[[` suggest, whose
+`selectSuggestion` uses `editor.transaction({ changes, selection },
+"input.autocomplete")` for precisely this reason.
+
+### How to verify
+
+The test suite includes dedicated regression-guard tests that spy on
+`editor.transaction` and assert it is called exactly once with both
+`changes` and `selection` present in the same call:
+
+```
+"applies the completion text and the resulting cursor atomically via editor.transaction, never a separate setCursor call"
+"applies the full link insertion and cursor atomically via editor.transaction"
+"applies the full link insertion and the resulting cursor atomically via editor.transaction"
+```
+
+in `tests/EditorFileSuggest.test.ts`. These tests fail if the implementation
+reverts to `editor.replaceRange(...)` + `editor.setCursor(...)` as two
+separate calls, even though every other assertion in that file (which only
+checks the final line text / cursor position) would still pass, since the
+test mock's `Editor.transaction()` simply delegates to the same
+`replaceRange`/`setCursor` internally and cannot itself detect the
+real-Obsidian corrector-interference bug.
+
+### What NOT to do
+
+- Do NOT reintroduce `editor.replaceRange(text, from, to, origin)` followed
+  by a separate `editor.setCursor(pos)` / `editor.setSelection(from, to)` in
+  `completeSelection` or `buildFullLinkReplacement` — even though this looks
+  behaviorally identical and passes naive "does the final text/cursor match"
+  tests, it reintroduces the popup-closes-after-Tab bug in real Obsidian.
+- Do NOT "fix" a future report of this same symptom by re-adding a
+  `suggestions.update()` call or similar private-internals poke; the actual
+  cause was the split dispatch, not a missing refresh call.
+- Do NOT remove the `editor.transaction` spy assertions from the tests named
+  above on the grounds that they duplicate the "final state" assertions
+  already in the same test — they intentionally test a different thing
+  (dispatch shape, not just outcome) that the final-state assertions cannot
+  catch.
+
+## Critical: EditorFileSuggest completions must retrigger via `this.trigger()`, not rely on Obsidian's own debounced re-trigger
+
+After `completeSelection()` edits the document (Tab/`#`/`^`), it must call
+`this.trigger(editor, file, true)` itself, synchronously, via the private
+`retriggerSuggest()` helper — do not remove this call or assume Obsidian's
+own editor update listener will notice the edit and reopen the popup on its
+own.
+
+### Why this exists
+
+`trigger()` is the inherited (but not `obsidian.d.ts`-documented) method the
+base `EditorSuggest` class already uses internally to run
+`onTrigger`/`getSuggestions`/render on every keystroke; Obsidian's own editor
+update listener calls it after a debounced delay and only forces a redisplay
+when its own internal "was this typing?" heuristic (based on the
+transaction's `userEvent` classification) says so. That heuristic was not
+reliable enough in practice to keep the popup open after a Tab completion —
+see the git history / PR description for this fix for the concrete
+real-Obsidian console-log evidence that motivated bypassing it. Calling
+`this.trigger(...)` ourselves, immediately and unconditionally
+(`forceShow=true`), removes the dependency on that undocumented timing
+entirely.
+
+`retriggerSuggest()` accesses `this.trigger` via a narrow, explicitly-typed
+`unknown` cast (not `any`) and defensively checks
+`typeof trigger === "function"` before calling it, so that if a future
+Obsidian version renames or removes this internal method, the suggest simply
+stops force-refreshing (falls back to whatever Obsidian's own debounced
+re-trigger still does) instead of throwing.
+
+### What NOT to do
+
+- Do NOT delete the `retriggerSuggest()` call from `completeSelection` on the
+  assumption that tagging the edit's `origin` correctly is sufficient by
+  itself to keep the popup open — it is not (see the git history for this
+  file for the specific evidence).
+- Do NOT widen the `as unknown as { trigger?: ... }` cast to a plain `as any`
+  — the narrow, explicit shape is what makes the `typeof trigger ===
+  "function"` guard meaningful type-checked code rather than a silent no-op.
+
+## Critical: EditorFileSuggest completion edits must be tagged "input.type", not a bespoke userEvent
+
+`completeSelection`'s `editor.transaction(...)` call must tag its
+`AUTOCOMPLETE_USER_EVENT` origin as exactly `"input.type"` — not
+`"input.autocomplete"` or any other custom string, even though stock
+Obsidian's own suggest uses `"input.autocomplete"` for its equivalent edit.
+
+### Why this exists
+
+Several of this plugin's own CM6 `EditorState.transactionFilter`s in
+`linkSyntaxHider.ts` (e.g. `pasteDuplicateSyntaxFix`) explicitly check
+`tr.isUserEvent("input.type")` to distinguish genuine keyboard typing from
+other kinds of edits (paste, programmatic replacement, etc.) and skip their
+special-case rewriting logic specifically for real typing. CodeMirror's
+`isUserEvent(event)` matches an exact string OR a dot-prefixed subtype (e.g.
+`"input.type.compose"` matches `isUserEvent("input.type")`), but a sibling
+tag like `"input.autocomplete"` matches the broader `isUserEvent("input")`
+checks elsewhere in the same file WITHOUT matching the narrower
+`isUserEvent("input.type")` checks — meaning a custom tag routes our
+completion edit through different logic than genuine typing hits, in a file
+already documented above as fragile and repeatedly broken by AI edits.
+
+### What NOT to do
+
+- Do NOT change `AUTOCOMPLETE_USER_EVENT` to `"input.autocomplete"` (matching
+  stock Obsidian) or to `undefined` (no tag) — either one can route the edit
+  through different `linkSyntaxHider.ts` filter branches than genuine
+  typing, in ways that are easy to get wrong and hard to notice without a
+  live-Obsidian repro.
+- If you need to add a NEW `isUserEvent(...)`-based filter to
+  `linkSyntaxHider.ts` in the future, check whether it should treat
+  `"input.type"` specially, and if so, confirm this plugin's own
+  `AUTOCOMPLETE_USER_EVENT` edits are handled the same way real typing is.
+
+## Critical: `#`/`^` in-editor `[[` completion must require a non-empty, already-typed file query
+
+`EditorFileSuggest`'s `#`/`^` key handlers must gate on
+`hasTypedPlainFileQuery()`, which requires the current query to be
+**non-empty** in addition to being a plain file search (not already a
+heading/block/alias query). Do not gate on the plain-file-search check
+alone.
+
+### Why this exists
+
+Immediately after typing bare `[[` (before typing any file name), the query
+is empty and the suggest shows the unfiltered file list with some file
+pre-highlighted (normal listbox behavior — the first/most-recent item is
+always highlighted by default). Without the non-empty check, pressing `#` or
+`^` at that point would complete-select whatever happens to be highlighted
+in that unfiltered list and link to it — silently picking an unrelated note
+the user never chose, just because they pressed `#` before typing a file
+name. With the non-empty check, `#`/`^` on an empty query instead fall
+through to normal typing, which `parseSuggestionQuery` already interprets as
+"search headings/blocks of the *current* file" — the actually useful,
+expected behavior for typing `[[#` or `[[^` with nothing else typed.
+
+### How to verify
+
+```
+"does not complete-select the top suggestion on an untouched, empty query"
+```
+
+appears in both the `'#'` and `'^'` key handler describe blocks in
+`tests/EditorFileSuggest.test.ts`.
+
+### What NOT to do
+
+- Do NOT simplify `hasTypedPlainFileQuery` back to just
+  `parseSuggestionQuery(context.query).type === "file"` without the
+  `context.query.trim() === ""` guard — an empty query also parses as type
+  `"file"` (that's the type `getSuggestionItems` uses for the unfiltered file
+  list), so removing the guard silently reintroduces the auto-select bug.
+
+## Note: avoid the global `window.app`; prefer a threaded-through `App` reference
+
+Obsidian's plugin guidelines call for using `this.app` (the `App` instance
+your `Plugin` subclass already has) rather than reaching for the global
+`window.app` singleton, since it isn't guaranteed to be present or stable and
+bypasses whatever `App` instance is actually relevant to the code running.
+
+Bare CM6-level code (a `ViewPlugin`, a module-level helper called from one,
+etc.) has no `this.app` to use, since it isn't a method on the plugin class.
+Prefer accessing the `App` through a public Obsidian `StateField` that
+already threads it through the `EditorView`'s state, such as
+`editorInfoField` (`view.state.field(editorInfoField, false)?.app`), over
+`(window as any).app`. See `getModeForView()` in `linkSyntaxHider.ts` for the
+pattern — it needs the app only to enumerate `workspace.getLeavesOfType`, and
+gets it via `editorInfoField` rather than the global.
+
+### What NOT to do
+
+- Do NOT add a new `(window as any).app` (or any other global-`app`) access
+  point to this codebase. If a CM6-level function genuinely needs an `App`
+  reference and no `EditorView`/`Transaction` is available to pull one from
+  via `editorInfoField`, thread the `App` in explicitly (a closure
+  parameter, a `StateField` this plugin controls, etc.) instead.
+
+## Critical: debug-logging flags (`*_DEBUG`) must default to `false`
+
+This repo has more than one gated `console.log` debug helper used to
+diagnose hard-to-reproduce real-Obsidian issues (`EDITOR_SUGGEST_DEBUG` in
+`EditorFileSuggest.ts`, `STEADY_LINKS_DEBUG` in `linkSyntaxHider.ts`). It is
+fine, and sometimes necessary, to flip one of these to `true` temporarily
+while diagnosing a live bug with the user — but it MUST be flipped back to
+`false` before the change is considered done. Obsidian's community plugin
+review guidelines require plugins not to log to the console during normal
+operation; leaving a debug flag on ships console spam to every user.
+
+### How to verify
+
+`tests/compliance.debugFlags.test.ts` statically scans every `src/*.ts` file
+for any `const ..._DEBUG... = <boolean>` declaration and fails the build if
+any of them are `true`. This is a repo-wide guard, not specific to any one
+flag — it also catches any new debug flag added in the future, as long as
+its name contains `DEBUG`.
+
+### What NOT to do
+
+- Do NOT leave a `*_DEBUG` flag set to `true` as the final state of a change,
+  even if the user asked for the extra logging while actively debugging an
+  issue together — flip it back to `false` once the issue is confirmed fixed.
+- Do NOT name a new debug flag in a way that avoids containing `DEBUG` purely
+  to dodge the compliance scan — name it accurately; the scan is a safety
+  net, not the actual policy.
+- Do NOT delete the gated `debugLog`/logging helpers themselves just because
+  they're currently disabled — they are useful, low-noise, opt-in
+  instrumentation for diagnosing future real-Obsidian-only issues that don't
+  reproduce in the unit test mocks.
