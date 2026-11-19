@@ -84,27 +84,8 @@ export class EditLinkModal extends Modal {
 		this.clipboardUsedDest = flags.clipboardUsedDest;
 	}
 
-	/** Apply compact inline styles directly to a setting row's DOM element */
 	private compactSetting(s: Setting) {
-		const el = s.settingEl;
-		el.style.borderTop = "none";
-		el.style.padding = "4px 0";
-		el.style.display = "flex";
-		el.style.alignItems = "center";
-		el.style.gap = "12px";
-		const info = el.querySelector(".setting-item-info") as HTMLElement | null;
-		if (info) {
-			info.style.flex = "0 0 120px";
-			info.style.minWidth = "0";
-			info.style.paddingRight = "0";
-		}
-		const ctrl = el.querySelector(".setting-item-control") as HTMLElement | null;
-		if (ctrl) {
-			ctrl.style.flex = "1 1 auto";
-			ctrl.style.minWidth = "0";
-			ctrl.style.paddingLeft = "0";
-			ctrl.style.justifyContent = "flex-start";
-		}
+		s.settingEl.addClass("steady-links-compact-setting");
 	}
 
 	/**
@@ -134,9 +115,10 @@ export class EditLinkModal extends Modal {
 		modalEl.addClass("steady-links-edit-modal-shell");
 		contentEl.addClass("steady-links-edit-modal");
 
-		const heading = contentEl.createEl("h4", { text: "Edit Link" });
-		heading.style.marginTop = "0";
-		heading.style.marginBottom = "10px";
+		contentEl.createEl("h4", {
+			text: "Edit Link",
+			cls: "steady-links-modal-heading",
+		});
 
 		// Determine initial link type. A wikilink whose destination is
 		// bare-domain-shaped (e.g. my.project.notes) but resolves to an existing
@@ -174,8 +156,7 @@ export class EditLinkModal extends Modal {
 		const textSetting = new Setting(contentEl).setName("Link Text").addText((text) => {
 			this.textInput = text;
 			text.setValue(this.link.text);
-			text.inputEl.style.width = "100%";
-			text.inputEl.style.minWidth = "0";
+			text.inputEl.addClass("steady-links-full-input");
 			const textInputHandler = () => {
 				this.textModifiedByUser = true;
 				this.clearAliasNotice();
@@ -194,8 +175,7 @@ export class EditLinkModal extends Modal {
 		destSetting.addText((text) => {
 			this.destInput = text;
 			text.setValue(this.link.destination);
-			text.inputEl.style.width = "100%";
-			text.inputEl.style.minWidth = "0";
+			text.inputEl.addClass("steady-links-full-input");
 
 			this.fileSuggest = new FileSuggest(this.app, text.inputEl, this);
 
@@ -210,12 +190,10 @@ export class EditLinkModal extends Modal {
 
 		// Warnings container
 		this.warningsContainer = contentEl.createDiv({ cls: "link-warnings-container" });
-		this.warningsContainer.style.marginTop = "2px";
-		this.warningsContainer.style.marginBottom = "2px";
 
 		// Conversion notice
 		if (this.conversionNotice) {
-			this.conversionNoticeEl = this.warningsContainer.createEl("div", {
+			this.conversionNoticeEl = this.warningsContainer.createDiv({
 				cls: "link-conversion-notice",
 				text: this.conversionNotice,
 			});
@@ -224,7 +202,7 @@ export class EditLinkModal extends Modal {
 		// Link Type — segmented control (Wikilink | Markdown)
 		this.typeSetting = new Setting(contentEl).setName("Link Type");
 		this.typeSetting.then((s) => {
-			const seg = s.controlEl.createEl("div", { cls: "seg-control" });
+			const seg = s.controlEl.createDiv({ cls: "seg-control" });
 
 			this.wikiBtnEl = seg.createEl("button", {
 				text: "Wikilink",
@@ -306,10 +284,10 @@ export class EditLinkModal extends Modal {
 			};
 			const wikiKeyHandler = makeKeyHandler(true);
 			const mdKeyHandler = makeKeyHandler(false);
-			this.wikiBtnEl.addEventListener("keydown", wikiKeyHandler as EventListener);
-			this.mdBtnEl.addEventListener("keydown", mdKeyHandler as EventListener);
-			this.eventListeners.push([this.wikiBtnEl, "keydown", wikiKeyHandler as EventListener]);
-			this.eventListeners.push([this.mdBtnEl, "keydown", mdKeyHandler as EventListener]);
+			this.wikiBtnEl.addEventListener("keydown", wikiKeyHandler);
+			this.mdBtnEl.addEventListener("keydown", mdKeyHandler);
+			this.eventListeners.push([this.wikiBtnEl, "keydown", wikiKeyHandler]);
+			this.eventListeners.push([this.mdBtnEl, "keydown", mdKeyHandler]);
 		});
 
 		// Embed checkbox
@@ -350,13 +328,13 @@ export class EditLinkModal extends Modal {
 				};
 				toggle.toggleEl.addEventListener(
 					"keydown",
-					embedToggleKeydownHandler as EventListener,
+					embedToggleKeydownHandler,
 					true
 				);
 				this.eventListeners.push([
 					toggle.toggleEl,
 					"keydown",
-					embedToggleKeydownHandler as EventListener,
+					embedToggleKeydownHandler,
 					true,
 				]);
 			});
@@ -373,15 +351,13 @@ export class EditLinkModal extends Modal {
 					this.submit();
 				});
 		});
-		applyRowSetting.settingEl.style.borderTop = "none";
-		applyRowSetting.settingEl.style.padding = "8px 0 0 0";
-		applyRowSetting.settingEl.style.justifyContent = "flex-end";
+		applyRowSetting.settingEl.addClass("steady-links-apply-row");
 
 		// Key handling
 		const modalKeydownHandler = (e: KeyboardEvent) => {
 			// TAB: accept suggestion if open, otherwise cycle focus
 			if (e.key === "Tab") {
-				const doc = this.contentEl.ownerDocument ?? document;
+				const doc = this.contentEl.ownerDocument;
 				// If on dest and suggester open, let suggester handle Tab completion (don't cycle focus)
 				if (doc.activeElement === this.destInput.inputEl) {
 					const isOpen = this.fileSuggest.isSuggestOpen;
@@ -437,8 +413,8 @@ export class EditLinkModal extends Modal {
 				this.close();
 			}
 		};
-		this.modalEl.addEventListener("keydown", modalKeydownHandler as EventListener);
-		this.eventListeners.push([this.modalEl, "keydown", modalKeydownHandler as EventListener]);
+		this.modalEl.addEventListener("keydown", modalKeydownHandler);
+		this.eventListeners.push([this.modalEl, "keydown", modalKeydownHandler]);
 
 		this.updateUIState();
 		// Clipboard auto-fill is only a convenience for links that have not
@@ -447,7 +423,7 @@ export class EditLinkModal extends Modal {
 		// asynchronously overwrite this.isWiki based on whatever happens to be in
 		// the clipboard. Callers can also opt out for prefilled new links.
 		if (this.shouldPopulateFromClipboard) {
-			this.populateFromClipboard();
+			void this.populateFromClipboard();
 		}
 		this.setInitialFocus();
 	}
@@ -597,7 +573,7 @@ export class EditLinkModal extends Modal {
 		// Show this notice when editing an existing link in a mode where the link syntax might be hidden
 		if (!this.isNewLink) {
 			const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-			const mode = view ? (view as any).getMode?.() : undefined;
+			const mode: string | undefined = view?.getMode();
 
 			// Check if we're in a mode where link syntax might be hidden (live preview or reading view)
 			// In these modes, the ! prefix might not be visible/detectable
@@ -613,7 +589,7 @@ export class EditLinkModal extends Modal {
 			// 1. We're in preview/live mode AND the link wasn't detected as embedded
 			// 2. This helps users know they may need to manually check the embed box
 			if (isPreviewMode && !this.link.isEmbed) {
-				this.warningsContainer.createEl("div", {
+				this.warningsContainer.createDiv({
 					cls: "link-conversion-notice link-embed-detection-notice",
 					text: "⌾ In preview mode, embedded links that are collapsed may not be detected. Check 'Embed content' if this link should be embedded.",
 				});
@@ -636,7 +612,7 @@ export class EditLinkModal extends Modal {
 		const destHasScheme = /^(https?:\/\/|www\.)/i.test(currentDest.trim());
 		const noteTarget = destHasScheme ? null : bareDomainNoteTargetFromUrl(currentDest);
 		if (!this.isWiki && noteTarget !== null && this.destResolvesToNote(noteTarget)) {
-			const hint = this.warningsContainer.createEl("div", {
+			const hint = this.warningsContainer.createDiv({
 				cls: "link-conversion-notice link-note-target-hint",
 			});
 			hint.appendText(`⌾ Meant a note named "${noteTarget}"? `);
@@ -644,7 +620,6 @@ export class EditLinkModal extends Modal {
 				text: "Switch to Wikilink",
 				href: "#",
 			});
-			switchLink.style.cursor = "pointer";
 			const switchHandler = (e: Event) => {
 				e.preventDefault();
 				this.destInput.setValue(noteTarget);
@@ -654,8 +629,8 @@ export class EditLinkModal extends Modal {
 				this.updateUIState();
 				this.updateConversionNotice();
 			};
-			switchLink.addEventListener("click", switchHandler as EventListener);
-			this.eventListeners.push([switchLink, "click", switchHandler as EventListener]);
+			switchLink.addEventListener("click", switchHandler);
+			this.eventListeners.push([switchLink, "click", switchHandler]);
 		}
 
 		const dest = this.destInput.getValue();
@@ -686,7 +661,7 @@ export class EditLinkModal extends Modal {
 			validationResult.warnings.forEach((warning) => {
 				const cls =
 					warning.severity === "error" ? "link-warning-error" : "link-warning-caution";
-				this.warningsContainer.createEl("div", {
+				this.warningsContainer.createDiv({
 					cls: `link-warning ${cls}`,
 					text: warning.text,
 				});
@@ -720,11 +695,11 @@ export class EditLinkModal extends Modal {
 		const validation = validateSubmission(this.textInput.getValue(), destValue);
 
 		if (!validation.valid) {
-			const errorDiv = this.warningsContainer.createEl("div", {
+			const errorDiv = this.warningsContainer.createDiv({
 				cls: "link-warning link-validation-error link-warning-error",
 			});
-			errorDiv.createEl("div", { text: validation.error! });
-			errorDiv.createEl("div", {
+			errorDiv.createDiv({ text: validation.error! });
+			errorDiv.createDiv({
 				text: "Press Escape to cancel and close without making changes.",
 				cls: "link-validation-hint",
 			});
@@ -762,7 +737,7 @@ export class EditLinkModal extends Modal {
 
 	showAliasNotice(aliasText: string): void {
 		this.clearAliasNotice();
-		this.aliasNoticeEl = this.warningsContainer.createEl("div", {
+		this.aliasNoticeEl = this.warningsContainer.createDiv({
 			cls: "link-conversion-notice link-alias-notice",
 			text: `Alias "${aliasText}" used as link text — edit to change`,
 		});

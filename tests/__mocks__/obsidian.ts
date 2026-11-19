@@ -13,6 +13,12 @@
 
 import { StateField } from "@codemirror/state";
 
+if (typeof window !== "undefined" && typeof document !== "undefined") {
+	Object.defineProperty(globalThis, "activeDocument", { configurable: true, get: () => document });
+	Object.defineProperty(globalThis, "activeWindow", { configurable: true, get: () => window });
+}
+
+
 // ============================================================================
 // TFile - File representation
 // ============================================================================

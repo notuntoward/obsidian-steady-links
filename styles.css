@@ -14,7 +14,16 @@
  * .cm-formatting) is intentionally NOT hidden so it remains editable.
  */
 body.le-keep-links-steady .le-hidden-syntax-anchor {
-	pointer-events: none;
+	display: inline-block;
+	width: 1px;
+	min-width: 1px;
+	height: 1em;
+	line-height: 1;
+	margin-right: -1px;
+	overflow: hidden;
+	opacity: 0;
+	pointer-events: auto;
+	vertical-align: -0.2em;
 }
 
 /* Steady Links: faint "[]" marker for links whose display text is empty
@@ -79,6 +88,44 @@ body.le-keep-links-steady .cm-cursor {
 /* ── Edit Link Modal ──────────────────────────────────────────────── */
 
 /* ── Link Type segmented control ─────────────────────────────────── */
+
+
+.steady-links-edit-modal .steady-links-compact-setting {
+	border-top: none;
+	padding: 4px 0;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+
+.steady-links-edit-modal .steady-links-compact-setting .setting-item-info {
+	flex: 0 0 120px;
+	min-width: 0;
+	padding-right: 0;
+}
+
+.steady-links-edit-modal .steady-links-compact-setting .setting-item-control {
+	flex: 1 1 auto;
+	min-width: 0;
+	padding-left: 0;
+	justify-content: flex-start;
+}
+
+.steady-links-edit-modal .steady-links-full-input {
+	width: 100%;
+	min-width: 0;
+}
+
+.steady-links-edit-modal .steady-links-modal-heading {
+	margin-top: 0;
+	margin-bottom: 10px;
+}
+
+.steady-links-edit-modal .steady-links-apply-row {
+	border-top: none;
+	padding: 8px 0 0;
+	justify-content: flex-end;
+}
 
 .steady-links-edit-modal .seg-control {
 	display: inline-flex;
@@ -161,6 +208,9 @@ body.le-keep-links-steady .cm-cursor {
 }
 
 /* Warning and info message styling */
+.link-note-target-hint a {
+	cursor: pointer;
+}
 .link-warnings-container {
 	margin-top: 2px;
 	margin-bottom: 2px;

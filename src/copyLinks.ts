@@ -457,8 +457,8 @@ export function resolveLocation(input: {
 	);
 	let embeddedTarget: EmbedCache | undefined;
 	if (selectedRange) {
-		const touching = positionedEmbeds.filter((entry) => overlaps(entry.range, selectedRange!));
-		const exact = touching.filter((entry) => sameRange(entry.range, selectedRange!));
+		const touching = positionedEmbeds.filter((entry) => overlaps(entry.range, selectedRange));
+		const exact = touching.filter((entry) => sameRange(entry.range, selectedRange));
 		// An object selection must map to one complete parser-known embed token;
 		// partial or mixed selections are not safe object targets.
 		if (touching.length > 0 && (touching.length !== 1 || exact.length !== 1)) {

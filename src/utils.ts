@@ -156,7 +156,7 @@ export function markdownToWiki(dest: string): string | null {
 	// Decode URL encoding
 	try {
 		cleaned = decodeURIComponent(cleaned);
-	} catch (e) {
+	} catch {
 		// If decode fails, manually decode common cases
 		cleaned = cleaned
 			.replace(/%20/g, " ")
@@ -273,8 +273,8 @@ function isBareDomain(str: string): boolean {
 	if (FILE_EXTENSION_LABELS.has(tld)) return false;
 
 	// Every label (including the TLD) must be a valid DNS label.
-	const labelRe = /^(?!-)[a-z0-9-]{1,63}(?<!-)$/i;
-	return labels.every((label) => labelRe.test(label));
+	const labelRe = /^(?!-)[a-z0-9-]{1,63}$/i;
+	return labels.every((label) => labelRe.test(label) && !label.endsWith("-"));
 }
 
 /**
@@ -341,7 +341,7 @@ export function hasLinkableFileExtension(token: string): boolean {
 export function fileExtTokenAtCursor(text: string, pos: number): string | null {
 	// A whitespace/punctuation-delimited run that can form a file reference.
 	// Allows letters, digits, dots, dashes, underscores, slashes, #, ^.
-	const tokenRe = /[A-Za-z0-9._\-\/\\#^]+/g;
+	const tokenRe = /[A-Za-z0-9._/#^\x5c-]+/g;
 	let m: RegExpExecArray | null;
 	while ((m = tokenRe.exec(text)) !== null) {
 		const start = m.index;
@@ -398,7 +398,7 @@ export function bareDomainNoteTargetFromUrl(dest: string): string | null {
 	const afterScheme = schemeMatch ? schemeMatch[1] : trimmed;
 
 	// Host-only: no path, query, fragment, port, credentials, or whitespace.
-	if (/[\/?#@:\s]/.test(afterScheme)) return null;
+	if (/[/?#@:\s]/.test(afterScheme)) return null;
 
 	// Drop a leading www. so https://www.a.b.com → a.b.com.
 	const host = afterScheme.replace(/^www\./i, "");

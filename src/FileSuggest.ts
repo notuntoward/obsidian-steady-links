@@ -16,7 +16,8 @@ import {
 	flashSuggestContainer,
 	findVisibleSuggestionContainer,
 	getSelectedSuggestionItem,
-	computeSelectedLinkValue
+	computeSelectedLinkValue,
+	type SelectedLinkValue,
 } from "./suggestionLogic";
 
 import { getFileAliasesForFile } from "./suggestionLogic";
@@ -58,7 +59,7 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 				if (alreadyComplete) {
 					// Flash completion window to show it is already fully completed
 					const container = findVisibleSuggestionContainer(this.inputEl?.ownerDocument);
-					if (container) flashSuggestContainer(container, ownerWindow(this.inputEl) ?? window);
+					if (container) flashSuggestContainer(container, ownerWindow(this.inputEl) ?? activeWindow);
 					return false; // consume event
 				}
 
@@ -105,7 +106,7 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 		switch (parsed.type) {
 			case "global-heading": {
 				const headingQuery = (parsed.searchTerm ?? "").toLowerCase();
-				const allHeadings = await this.getAllHeadings();
+				const allHeadings = await Promise.resolve(this.getAllHeadings());
 				if (!headingQuery) return allHeadings;
 				return allHeadings.filter(
 					(h) => h.heading && h.heading.toLowerCase().includes(headingQuery)
@@ -120,7 +121,7 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 			}
 			case "current-heading": {
 				const headingQuery = (parsed.searchTerm ?? "").toLowerCase();
-				const allHeadings = await this.getHeadingsInCurrentFile();
+				const allHeadings = await Promise.resolve(this.getHeadingsInCurrentFile());
 				if (!headingQuery) return allHeadings;
 				return allHeadings.filter(
 					(h) => h.heading && h.heading.toLowerCase().includes(headingQuery)
@@ -134,7 +135,7 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 				return await this.getAllBlocksInFile(file, blockQuery);
 			}
 			case "file-heading": {
-				return await this.getHeadingsInFile(parsed.fileName ?? "", parsed.searchTerm ?? "");
+				return Promise.resolve(this.getHeadingsInFile(parsed.fileName ?? "", parsed.searchTerm ?? ""));
 			}
 			case "file-alias": {
 				return this.getFileAliasesForFile(parsed.fileName ?? "", parsed.searchTerm ?? "");
@@ -178,15 +179,25 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 		renderSuggestionItem(item, el, query, this.app);
 	}
 
-	async selectSuggestion(item: SuggestionItem, _evt?: MouseEvent | KeyboardEvent): Promise<void> {
-		const { linkValue, newLinkText } = await computeSelectedLinkValue(item, this.app, true);
+	selectSuggestion(item: SuggestionItem, _evt?: MouseEvent | KeyboardEvent): void {
+		const result = computeSelectedLinkValue(item, this.app, true);
+		if (result instanceof Promise) {
+			void result.then(
+				(value) => this.applySelectedSuggestion(item, value),
+				() => undefined
+			);
+			return;
+		}
+		this.applySelectedSuggestion(item, result);
+	}
 
+	private applySelectedSuggestion(item: SuggestionItem, value: SelectedLinkValue): void {
+		const { linkValue, newLinkText } = value;
 		this.inputEl.value = linkValue;
 		this.modal.handleDestInput();
 		this.close();
 
 		let focusMoved = false;
-
 		if (newLinkText !== null && this.modal.isTextProvisional()) {
 			const textEl = this.modal.textInput.inputEl;
 			textEl.value = newLinkText;
@@ -198,7 +209,6 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 				this.modal.clearAliasNotice();
 			}
 
-			// Focus and select the Link Text field if selecting an alias
 			textEl.focus();
 			textEl.select();
 			focusMoved = true;
@@ -219,13 +229,14 @@ export class FileSuggest extends AbstractInputSuggest<SuggestionItem> {
 		}
 	}
 
+
 	get isSuggestOpen(): boolean {
 		return findVisibleSuggestionContainer(this.inputEl?.ownerDocument) !== null;
 	}
 
 	selectCurrentSuggestion(): void {
-		const doc = this.inputEl?.ownerDocument ?? document;
-		const selected = doc.querySelector(".suggestion-item.is-selected") as HTMLElement | null;
+		const doc = this.inputEl.ownerDocument;
+		const selected = doc.querySelector<HTMLElement>(".suggestion-item.is-selected");
 		if (selected) {
 			selected.click();
 		}

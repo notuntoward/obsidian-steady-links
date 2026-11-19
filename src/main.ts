@@ -1,6 +1,6 @@
 import { ownerWindow, setTimeoutIn, requestFrameIn, readClipboardIn, writeClipboardIn } from "commons/windows";
 import { getEditorLeafLocations } from "commons/workspace";
-import { Plugin, Editor, MarkdownView, Notice, FileSystemAdapter, TFile, Menu, Platform } from "obsidian";
+import { Plugin, Editor, MarkdownView, Notice, FileSystemAdapter, TFile, Menu, Platform, ItemView } from "obsidian";
 import { Extension, EditorSelection } from "@codemirror/state";
 import { EditLinkModal } from "./EditLinkModal";
 import { EditorFileSuggest } from "./EditorFileSuggest";
@@ -17,6 +17,7 @@ import {
 	fileExtTokenAtCursor,
 	moveToFront,
 	parseClipboardLink,
+	type LinkAtCursor,
 } from "./utils";
 import {
 	buildLinkText,
@@ -52,6 +53,34 @@ import {
 } from "./linkSyntaxHider";
 import { EditorView } from "@codemirror/view";
 
+interface EditorInternals {
+	cm?: EditorView;
+	containerEl?: HTMLElement;
+}
+
+interface DebugWindow extends Window {
+	__STEADY_LINKS_DEBUG?: boolean;
+}
+
+function editorInternals(editor: Editor): EditorInternals {
+	return editor as Editor & EditorInternals;
+}
+
+function pluginActiveDocument(): Document {
+	return activeDocument;
+}
+
+function pluginActiveWindow(): Window {
+	return activeWindow;
+}
+
+function editorWindow(editor: Editor): Window {
+	const internal = editorInternals(editor);
+	return (internal.cm?.dom ? ownerWindow(internal.cm.dom) : null)
+		?? internal.containerEl?.ownerDocument.defaultView
+		?? pluginActiveWindow();
+}
+
 const DEFAULT_SETTINGS: PluginSettings = {
 	keepLinksSteady: false,
 	copyLinkToCurrentNoteInTabMenu: false,
@@ -61,8 +90,8 @@ const DEFAULT_SETTINGS: PluginSettings = {
 
 export default class SteadyLinksPlugin extends Plugin {
 	setDebug(enabled: boolean = true) {
-		(window as any).__STEADY_LINKS_DEBUG = enabled;
-		console.log(`[SteadyLinks] Debug logging ${enabled ? "enabled" : "disabled"}`);
+		(pluginActiveWindow() as DebugWindow).__STEADY_LINKS_DEBUG = enabled;
+		console.debug(`[SteadyLinks] Debug logging ${enabled ? "enabled" : "disabled"}`);
 	}
 	settings!: PluginSettings;
 	private editorFileSuggest!: EditorFileSuggest;
@@ -80,7 +109,7 @@ export default class SteadyLinksPlugin extends Plugin {
 	): void {
 		const restore = () => {
 			try {
-				const cm6View = (editor as any).cm as EditorView | undefined;
+				const cm6View = editorInternals(editor).cm;
 				if (!cm6View) {
 					editor.setCursor(cursorPos);
 					return;
@@ -108,8 +137,7 @@ export default class SteadyLinksPlugin extends Plugin {
 			}
 		};
 
-		const cm6View = (editor as any)?.cm as EditorView | undefined;
-		const win = (cm6View?.dom ? ownerWindow(cm6View.dom) : null) ?? (editor as any)?.containerEl?.ownerDocument?.defaultView ?? window;
+		const win = editorWindow(editor);
 		setTimeoutIn(win, () => {
 			requestFrameIn(win, () => {
 				restore();
@@ -121,7 +149,7 @@ export default class SteadyLinksPlugin extends Plugin {
 	 * Check if the current view is in source mode (as opposed to live preview).
 	 */
 	private isSourceMode(view: MarkdownView): boolean {
-		const cm6View = (view.editor as any).cm as EditorView;
+		const cm6View = editorInternals(view.editor).cm;
 		if (!cm6View) {
 			// If no CM6 view, we're likely in reading view or legacy mode
 			// In this case, treat as source mode (skip off link)
@@ -162,10 +190,10 @@ export default class SteadyLinksPlugin extends Plugin {
 		// to end of line, the raw selection contains trailing hidden syntax like "]]"
 		// or "](url)". We intercept standard copy operations and strip it.
 		// -----------------------------------------------------------------------
-		this.registerDomEvent(document, "copy", (e: ClipboardEvent) => {
+		this.registerDomEvent(pluginActiveDocument(), "copy", (e: ClipboardEvent) => {
 			const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
 			const cm6View = activeView
-				? ((activeView.editor as any).cm as EditorView | undefined)
+				? (editorInternals(activeView.editor).cm)
 				: undefined;
 			if (cm6View && cm6View.hasFocus) {
 				const selection = cm6View.state.sliceDoc(
@@ -258,7 +286,7 @@ export default class SteadyLinksPlugin extends Plugin {
 					return;
 				}
 
-				const cm6View = (editor as any).cm as EditorView;
+				const cm6View = editorInternals(editor).cm;
 				if (!cm6View) {
 					return;
 				}
@@ -434,14 +462,17 @@ export default class SteadyLinksPlugin extends Plugin {
 			new Notice("No link found at cursor");
 			return;
 		}
-		const { shell } = require("electron");
+		const { shell } = require("electron") as typeof import("electron");
 		if (target.kind === "url") {
 			shell.openExternal(target.url).catch(() => new Notice("Failed to open URL"));
 			return;
 		}
-		shell.openPath(target.path).then((errMsg: string) => {
-			if (errMsg) new Notice("Failed to open: " + errMsg);
-		});
+		void shell.openPath(target.path).then(
+			(errMsg) => {
+				if (errMsg) new Notice("Failed to open: " + errMsg);
+			},
+			() => new Notice("Failed to open file")
+		);
 	}
 
 	private handleRevealLinkedFileInNavigation(editor: Editor): void {
@@ -579,7 +610,7 @@ export default class SteadyLinksPlugin extends Plugin {
 		}
 		try {
 			const link = generateFileLink(file, this.app.fileManager, file.path);
-			this.writeLinkToClipboard(link, "Copied link to current note");
+			void this.writeLinkToClipboard(link, "Copied link to current note");
 		} catch {
 			new Notice("Could not generate a link to this file");
 		}
@@ -596,12 +627,12 @@ export default class SteadyLinksPlugin extends Plugin {
 	}
 
 	private isFileExplorerActive(): boolean {
-		return this.app.workspace.activeLeaf?.view.getViewType() === "file-explorer";
+		return this.app.workspace.getActiveViewOfType(ItemView)?.getViewType() === "file-explorer";
 	}
 
 	private isActivePdfView(): boolean {
 		return (
-			this.app.workspace.activeLeaf?.view.getViewType() === "pdf" &&
+			this.app.workspace.getActiveViewOfType(ItemView)?.getViewType() === "pdf" &&
 			this.app.workspace.getActiveFile()?.extension.toLowerCase() === "pdf"
 		);
 	}
@@ -679,7 +710,7 @@ export default class SteadyLinksPlugin extends Plugin {
 							editor.replaceRange(plan.insertion.text, plan.insertion.position);
 						}
 						const link = buildLinkText(result);
-						this.writeLinkToClipboard(
+						void this.writeLinkToClipboard(
 							link,
 							`Copied link to ${targetLabel} in ${file.basename}`
 						);
@@ -702,14 +733,14 @@ export default class SteadyLinksPlugin extends Plugin {
 				plan.subpath,
 				resolution.target.alias
 			);
-			this.writeLinkToClipboard(link, `Copied link to ${targetLabel} in ${file.basename}`);
+			void this.writeLinkToClipboard(link, `Copied link to ${targetLabel} in ${file.basename}`);
 		} catch {
 			new Notice("Could not create a reliable link to this location.");
 		}
 	}
 
 	private async writeLinkToClipboard(link: string, successNotice: string, targetWin?: Window): Promise<void> {
-		const win = targetWin ?? (typeof activeWindow !== "undefined" ? activeWindow : window);
+		const win = targetWin ?? pluginActiveWindow();
 		try {
 			const success = await writeClipboardIn(win, link);
 			if (success) {
@@ -740,7 +771,7 @@ export default class SteadyLinksPlugin extends Plugin {
 		}
 
 		// Get the CM6 view from the editor
-		const cm6View = (editor as any).cm as EditorView;
+		const cm6View = editorInternals(editor).cm;
 		if (!cm6View) {
 			return;
 		}
@@ -823,7 +854,7 @@ export default class SteadyLinksPlugin extends Plugin {
 		}
 
 		// Clear any temporarily visible link
-		const cm6View = (editor as any).cm as EditorView;
+		const cm6View = editorInternals(editor).cm;
 		if (cm6View) {
 			cm6View.dispatch({
 				effects: setTemporarilyVisibleLink.of(null),
@@ -883,7 +914,7 @@ export default class SteadyLinksPlugin extends Plugin {
 		if (this.settings.keepLinksSteady) {
 			for (const { leaf } of getEditorLeafLocations(this.app)) {
 				if (!(leaf.view instanceof MarkdownView)) continue;
-				const cm6View = (leaf.view.editor as any).cm as EditorView | undefined;
+				const cm6View = editorInternals(leaf.view.editor).cm;
 				cm6View?.dispatch({ effects: [setWikiLinkHidingOptions.of(wikiLinkOptions)] });
 			}
 		}
@@ -917,7 +948,7 @@ export default class SteadyLinksPlugin extends Plugin {
 		editor: Editor,
 		view: MarkdownView,
 		cursor: { line: number; ch: number },
-		existingLink: any
+		existingLink: LinkAtCursor
 	): void {
 		const originalCursor = { line: cursor.line, ch: cursor.ch };
 		const shouldSkip = this.shouldSkipOffLink(view);
@@ -1039,11 +1070,10 @@ export default class SteadyLinksPlugin extends Plugin {
 		let clipboardText = "";
 
 		try {
-			const cm6View = (editor as any)?.cm as EditorView | undefined;
-			const win = (cm6View?.dom ? ownerWindow(cm6View.dom) : null) ?? (editor as any)?.containerEl?.ownerDocument?.defaultView ?? window;
+			const win = editorWindow(editor);
 			const text = await readClipboardIn(win);
 			clipboardText = (text ?? "").trim();
-		} catch (e) {
+		} catch {
 			// Clipboard access may fail - proceed without it
 		}
 
@@ -1130,13 +1160,22 @@ export default class SteadyLinksPlugin extends Plugin {
 	 * mutates any other plugin's suggest.
 	 */
 	private prioritizeOwnSuggest() {
-		const suggests = (this.app.workspace as any).editorSuggest?.suggests;
+		const suggests = (this.app.workspace as unknown as {
+			editorSuggest?: { suggests?: unknown[] };
+		}).editorSuggest?.suggests;
 		if (!Array.isArray(suggests)) return;
 		moveToFront(suggests, this.editorFileSuggest);
 	}
 
 	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+		const saved: unknown = await this.loadData();
+		this.settings = Object.assign(
+			{},
+			DEFAULT_SETTINGS,
+			typeof saved === "object" && saved !== null
+				? (saved as Partial<PluginSettings>)
+				: {}
+		);
 	}
 
 	async saveSettings() {

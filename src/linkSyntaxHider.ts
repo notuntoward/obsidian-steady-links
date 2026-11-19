@@ -73,19 +73,41 @@ interface ChangeSpec {
 	insert: string;
 }
 
+interface DebugWindow extends Window {
+	__STEADY_LINKS_DEBUG?: boolean;
+	STEADY_LINKS_DEBUG?: boolean;
+}
+
+interface SteadyLinksEditorView extends EditorView {
+	__leSyntaxCorrecting?: boolean;
+	__leArrivedFromOutside?: number;
+	__leEmacsIntentionalLeadingFrom?: number;
+	__leEmacsPendingExpansion?: PendingExternalSelectionExpansion;
+}
+
+function pluginActiveDocument(): Document {
+	return activeDocument;
+}
+
+function pluginActiveWindow(): Window {
+	return activeWindow;
+}
+
+function editorViewState(view: EditorView): SteadyLinksEditorView {
+	return view;
+}
+
 const STEADY_LINKS_DEBUG = false;
 
 function isSteadyLinksDebug(): boolean {
 	if (STEADY_LINKS_DEBUG) return true;
-	if (typeof window !== "undefined" && ((window as any).__STEADY_LINKS_DEBUG || (window as any).STEADY_LINKS_DEBUG)) {
-		return true;
-	}
-	return false;
+	const debugWindow = typeof activeWindow !== "undefined" ? (activeWindow as DebugWindow) : null;
+	return debugWindow?.__STEADY_LINKS_DEBUG === true || debugWindow?.STEADY_LINKS_DEBUG === true;
 }
 
 function debugLog(label: string, details: Record<string, unknown>): void {
 	if (!isSteadyLinksDebug() || typeof console === "undefined") return;
-	console.log(`[SteadyLinks debug] ${label}`, details);
+	console.debug(`[SteadyLinks debug] ${label}`, details);
 }
 
 function traceFilter(
@@ -100,7 +122,7 @@ function traceFilter(
 		changes.push({ from: fromA, to: toA, insert: inserted.toString().substring(0, 30) });
 	});
 	const sel = tr.startState.selection.main;
-	console.log(`[SteadyLinks TRACE] ${filterName}: ${action}`, {
+	console.debug(`[SteadyLinks TRACE] ${filterName}: ${action}`, {
 		userEvent: tr.annotation(Transaction.userEvent) ?? null,
 		selFrom: sel.from,
 		selTo: sel.to,
@@ -489,7 +511,7 @@ function getModeForView(view: EditorView): "source" | "preview" | "live" | null 
 		// values this function has always recognized.
 		const mode = markdownView.getMode() as string;
 		if (mode === "source" || mode === "preview" || mode === "live") {
-			return mode as "source" | "preview" | "live";
+			return mode;
 		}
 	}
 	return null;
@@ -500,38 +522,13 @@ function getModeForView(view: EditorView): "source" | "preview" | "live" | null 
 // ---------------------------------------------------------------------------
 
 function createHiddenSyntaxAnchor(doc?: Document): HTMLSpanElement {
-	const d = doc ?? (typeof document !== "undefined" ? document : null);
-	const span = d ? d.createElement("span") : (document.createElement("span"));
+	const span = (doc ?? pluginActiveDocument()).createElement("span");
 	span.className = "le-hidden-syntax-anchor";
 	span.setAttribute("aria-hidden", "true");
 	span.setAttribute("data-steady-links-anchor", "hidden-syntax");
 
-	// Keep a measurable inline box for custom-cursor plugins such as
-	// Visible Cursor. A fully 0×0 replacement widget can cause external cursor
-	// overlays to disappear when the caret lands on a link boundary because
-	// there is no usable DOM rect to anchor to. The negative margin keeps the
-	// anchor layout-neutral while still leaving a 1px caret target.
-	span.style.display = "inline-block";
-	span.style.width = "1px";
-	span.style.minWidth = "1px";
-	// Keep the anchor's own box tied to the text metrics instead of the full
-	// line box, otherwise the inline widget can sit too high on the baseline and
-	// lift block-cursor overlays. Use baseline-preserving metrics here and let
-	// the inline-block alignment below position the measurable box correctly.
-	span.style.height = "1em";
-	span.style.lineHeight = "1";
-	span.style.marginRight = "-1px";
-	span.style.overflow = "hidden";
-	span.style.opacity = "0";
-	// Keep hit-testing enabled so vertical cursor motion can still resolve a
-	// target at line start when hidden link syntax is represented by this anchor.
-	// With pointer-events disabled, moving down from a blank line onto a line
-	// that starts with hidden link syntax can fail because there is no hittable
-	// geometry at the goal column.
-	span.style.pointerEvents = "auto";
-	// Extend the measurable box downward to cover descender space at end-of-line
-	// caret positions without increasing the line's layout height.
-	span.style.verticalAlign = "-0.2em";
+	// Its measurable, layout-neutral dimensions live in styles.css so custom
+	// cursor overlays still have a usable 1px rect at hidden link boundaries.
 
 	return span;
 }
@@ -563,7 +560,7 @@ const hiddenSyntaxReplace = Decoration.replace({
  */
 class EmptyLinkBracketsWidget extends WidgetType {
 	toDOM(view?: EditorView): HTMLElement {
-		const doc = view?.dom?.ownerDocument ?? document;
+		const doc = view?.dom?.ownerDocument ?? pluginActiveDocument();
 		const span = doc.createElement("span");
 		span.className = "le-empty-link-brackets";
 		span.setAttribute("aria-hidden", "true");
@@ -893,22 +890,22 @@ class BodyClassPlugin implements PluginValue {
 	private ownerDoc: Document | null = null;
 
 	constructor(view: EditorView) {
-		this.ownerDoc = view.dom.ownerDocument ?? (typeof document !== "undefined" ? document : null);
+		this.ownerDoc = view.dom.ownerDocument;
 		this.sync(view);
 	}
 	update(update: ViewUpdate) {
-		this.ownerDoc = update.view.dom.ownerDocument ?? (typeof document !== "undefined" ? document : null);
+		this.ownerDoc = update.view.dom.ownerDocument;
 		this.sync(update.view);
 	}
 	private sync(view: EditorView) {
 		const enabled = view.state.field(syntaxHiderEnabledField, false) ?? false;
 		if (enabled === this.enabled) return;
 		this.enabled = enabled;
-		const doc = this.ownerDoc ?? view.dom.ownerDocument ?? (typeof document !== "undefined" ? document : null);
+		const doc = this.ownerDoc ?? view.dom.ownerDocument;
 		doc?.body.classList.toggle(BODY_CLASS, enabled);
 	}
 	destroy() {
-		const doc = this.ownerDoc ?? (typeof document !== "undefined" ? document : null);
+		const doc = this.ownerDoc;
 		doc?.body.classList.remove(BODY_CLASS);
 	}
 }
@@ -1088,7 +1085,7 @@ class SyntaxHiderModePlugin implements PluginValue {
 
 	private scheduleSync(view: EditorView) {
 		if (this.pendingSync !== null) return;
-		const win = (view?.dom ? ownerWindow(view.dom) : null) ?? window;
+		const win = (view?.dom ? ownerWindow(view.dom) : null) ?? pluginActiveWindow();
 		this.pendingSync = setTimeoutIn(win, () => {
 			this.pendingSync = null;
 			this.sync(view);
@@ -1422,10 +1419,9 @@ function findSelectionCollapseRedirectSpan(
 	return null;
 }
 
-const CORRECTING = "__leSyntaxCorrecting";
 const cursorCorrector = EditorView.updateListener.of((update) => {
 	if (!update.selectionSet) return;
-	if ((update.view as any)[CORRECTING]) return;
+	if (editorViewState(update.view).__leSyntaxCorrecting) return;
 	if (!update.state.field(syntaxHiderEnabledField, false)) return;
 
 	const state = update.state;
@@ -1504,7 +1500,7 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 			oldHead: oldSel.main.head,
 			newHead: newSel.main.head,
 		});
-		(update.view as any)[CORRECTING] = true;
+		editorViewState(update.view).__leSyntaxCorrecting = true;
 		try {
 			update.view.dispatch({
 				selection: EditorSelection.cursor(suppressedResetPos),
@@ -1516,7 +1512,7 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 				],
 			});
 		} finally {
-			(update.view as any)[CORRECTING] = false;
+			editorViewState(update.view).__leSyntaxCorrecting = false;
 		}
 		return;
 	}
@@ -1553,7 +1549,7 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 				textTo: suppressedResetSpan.textTo,
 				linkTo: suppressedResetSpan.to,
 			});
-			(update.view as any)[CORRECTING] = true;
+			editorViewState(update.view).__leSyntaxCorrecting = true;
 			try {
 				update.view.dispatch({
 					selection: EditorSelection.cursor(suppressedResetPos),
@@ -1565,7 +1561,7 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 					],
 				});
 			} finally {
-				(update.view as any)[CORRECTING] = false;
+				editorViewState(update.view).__leSyntaxCorrecting = false;
 			}
 			return;
 		}
@@ -1575,7 +1571,7 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 			oldHead: oldSel.main.head,
 			newHead: newSel.main.head,
 		});
-		(update.view as any)[CORRECTING] = true;
+		editorViewState(update.view).__leSyntaxCorrecting = true;
 		try {
 			update.view.dispatch({
 				selection: EditorSelection.cursor(suppressedResetPos),
@@ -1587,7 +1583,7 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 				],
 			});
 		} finally {
-			(update.view as any)[CORRECTING] = false;
+			editorViewState(update.view).__leSyntaxCorrecting = false;
 		}
 		return;
 	}
@@ -1951,15 +1947,15 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 					needsAdjust = true;
 					
 					if (head === lineStartSpan.leading.from) {
-						(update.view as any).__leArrivedFromOutside = lineStartSpan.leading.from;
-						(update.view as any).__leEmacsIntentionalLeadingFrom =
+						editorViewState(update.view).__leArrivedFromOutside = lineStartSpan.leading.from;
+						editorViewState(update.view).__leEmacsIntentionalLeadingFrom =
 							lineStartSpan.leading.from;
-						(update.view as any).__leEmacsPendingExpansion = {
+						editorViewState(update.view).__leEmacsPendingExpansion = {
 							from: lineStartSpan.from,
 							to: lineStartSpan.to,
 						};
 					} else if (head === lineStartSpan.textFrom || head === state.doc.lineAt(head).from) {
-						(update.view as any).__leArrivedFromOutside = lineStartSpan.leading.from;
+						editorViewState(update.view).__leArrivedFromOutside = lineStartSpan.leading.from;
 					}
 				} else if (
 					head === lineStartSpan.leading.from &&
@@ -1968,17 +1964,17 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 					// For links at column 0 (isLineStart), keep cursor at leading.from
 					// so editor.getCursor() returns ch:0 for kill-line / kill-region.
 					if (isLineStart) {
-						(update.view as any).__leArrivedFromOutside = lineStartSpan.leading.from;
+						editorViewState(update.view).__leArrivedFromOutside = lineStartSpan.leading.from;
 					}
 				} else if (head === lineStartSpan.leading.from) {
 					// Case A: snap to visible text start
 					head = lineStartSpan.textFrom;
 					needsAdjust = true;
-					(update.view as any).__leArrivedFromOutside = lineStartSpan.leading.from;
+					editorViewState(update.view).__leArrivedFromOutside = lineStartSpan.leading.from;
 				} else {
 					// Case B: already at textFrom, just mark it
 					needsAdjust = true; // trigger dispatch so the effect is attached
-					(update.view as any).__leArrivedFromOutside = lineStartSpan.leading.from;
+					editorViewState(update.view).__leArrivedFromOutside = lineStartSpan.leading.from;
 				}
 			}
 		}
@@ -2070,7 +2066,7 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 				if (isVertical || isEmacsVertical || cameFromBlankLine) {
 					head = span.textFrom;
 					needsAdjust = true;
-					(update.view as any).__leArrivedFromOutside = span.leading.from;
+					editorViewState(update.view).__leArrivedFromOutside = span.leading.from;
 					// When vertical motion arrives from a line above/below with a
 					// remembered goal column that is inside the folded link text,
 					// always snap to the visible text start. Preserving oldHead here
@@ -2204,16 +2200,14 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 	const sel = EditorSelection.create(adjusted, newSel.mainIndex);
 	const view = update.view;
 
-	const arrivedFromOutsideHFrom: number | undefined = (view as any).__leArrivedFromOutside;
-	(view as any).__leArrivedFromOutside = undefined;
+	const arrivedFromOutsideHFrom: number | undefined = editorViewState(view).__leArrivedFromOutside;
+	editorViewState(view).__leArrivedFromOutside = undefined;
 
-	const emacsIntentionalLeadingFrom: number | undefined = (view as any)
-		.__leEmacsIntentionalLeadingFrom;
-	(view as any).__leEmacsIntentionalLeadingFrom = undefined;
+	const emacsIntentionalLeadingFrom: number | undefined = editorViewState(view).__leEmacsIntentionalLeadingFrom;
+	editorViewState(view).__leEmacsIntentionalLeadingFrom = undefined;
 
-	const emacsPendingExpansion: PendingExternalSelectionExpansion | undefined = (view as any)
-		.__leEmacsPendingExpansion;
-	(view as any).__leEmacsPendingExpansion = undefined;
+	const emacsPendingExpansion: PendingExternalSelectionExpansion | undefined = editorViewState(view).__leEmacsPendingExpansion;
+	editorViewState(view).__leEmacsPendingExpansion = undefined;
 
 	debugLog("cursor correction dispatch", {
 		oldHead: oldSel.main.head,
@@ -2223,7 +2217,7 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 		emacsIntentionalLeadingFrom: emacsIntentionalLeadingFrom ?? null,
 	});
 
-	const effects: any[] = [];
+	const effects: StateEffect<unknown>[] = [];
 	if (arrivedFromOutsideHFrom !== undefined) {
 		effects.push(arrivedAtTextFromFromOutsideEffect.of(true));
 	}
@@ -2234,7 +2228,7 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 		effects.push(setPendingExternalSelectionExpansion.of(emacsPendingExpansion));
 	}
 
-	(view as any)[CORRECTING] = true;
+	editorViewState(view).__leSyntaxCorrecting = true;
 	try {
 		view.dispatch({
 			selection: sel,
@@ -2254,7 +2248,7 @@ const cursorCorrector = EditorView.updateListener.of((update) => {
 			effects: effects.length > 0 ? effects : undefined,
 		});
 	} finally {
-		(view as any)[CORRECTING] = false;
+		editorViewState(view).__leSyntaxCorrecting = false;
 	}
 });
 
@@ -2272,7 +2266,7 @@ const suppressSuggestAfterDeleteListener = EditorView.updateListener.of((update)
 
 	if (targetPos === null) return;
 
-	const win = (update.view?.dom ? ownerWindow(update.view.dom) : null) ?? window;
+	const win = (update.view?.dom ? ownerWindow(update.view.dom) : null) ?? activeWindow;
 	setTimeoutIn(win, () => {
 		if (!update.view.dom.isConnected) return;
 
@@ -2700,7 +2694,7 @@ function handleHomeKey(view: EditorView, extend: boolean): boolean {
 			lineText: line.text,
 		});
 
-		const effects: any[] = [];
+		const effects: StateEffect<unknown>[] = [];
 		if (dest === span.textFrom) {
 			effects.push(arrivedAtTextFromFromOutsideEffect.of(true));
 		}
@@ -2735,7 +2729,7 @@ function isAnySuggestOpen(): boolean {
  */
 function transactionAnnotations(tr: Transaction): Annotation<unknown>[] {
 	const internal = (tr as unknown as { annotations?: readonly Annotation<unknown>[] }).annotations;
-	if (Array.isArray(internal)) return [...internal];
+	if (internal) return [...internal];
 	const out: Annotation<unknown>[] = [];
 	const userEvent = tr.annotation(Transaction.userEvent);
 	if (userEvent !== undefined) out.push(Transaction.userEvent.of(userEvent));
@@ -3743,7 +3737,7 @@ function findVisibleLinkSpanAtBoundary(
 	);
 }
 
-function isMarkdownLinkSpan(doc: EditorState["doc"], span: VisibleLinkSpan): boolean {
+function isMarkdownLinkSpan(doc: EditorState["doc"], span: LinkSpan): boolean {
 	const leading = doc.sliceString(span.from, span.textFrom);
 	// Markdown links start with "[" but NOT "[[" or "![[" (which are wikilinks).
 	// Check that the leading syntax contains "[" but does not start with "[["
@@ -3821,7 +3815,7 @@ function rewriteDeleteChangeForLinks(
 			change.from <= link.textFrom &&
 			change.to >= link.textTo;
 
-		const isMarkdown = doc ? isMarkdownLinkSpan(doc, link as any) : false;
+		const isMarkdown = doc ? isMarkdownLinkSpan(doc, link) : false;
 		const destination = doc ? getBareWikiLinkDestination(doc, link) : null;
 		const isConvertible = destination !== null || isMarkdown;
 
@@ -4265,7 +4259,7 @@ const clampSelectionDeleteFilter = EditorState.transactionFilter.of((tr) => {
 			// protectSyntaxFilter passes it through.
 			const dispatchUserEvent = tr.annotation(Transaction.userEvent) ?? undefined;
 			const identicalCursorPos = deleteChanges[0].from;
-			const identicalEffects: StateEffect<any>[] = [rewrittenSelectionDelete.of(null)];
+			const identicalEffects: StateEffect<unknown>[] = [rewrittenSelectionDelete.of(null)];
 
 			// Same as the non-identical path below: when the selection that
 			// produced this delete started right at a link boundary (e.g. the
@@ -4337,7 +4331,7 @@ const clampSelectionDeleteFilter = EditorState.transactionFilter.of((tr) => {
 	);
 	const dispatchUserEvent = tr.annotation(Transaction.userEvent) ?? undefined;
 
-	const effects: StateEffect<any>[] = [];
+	const effects: StateEffect<unknown>[] = [];
 	if (hasSelectionDelete) {
 		effects.push(rewrittenSelectionDelete.of(null));
 		effects.push(

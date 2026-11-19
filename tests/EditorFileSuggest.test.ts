@@ -489,10 +489,11 @@ describe("EditorFileSuggest.selectSuggestion — block items", () => {
 		const origContent = "New block";
 		app.vault.addFile(file, origContent);
 
-		await suggest.selectSuggestion(item, {} as any);
-		// The block ID should have been generated and inserted
-		const line = editor.getLine(0);
-		expect(line).toMatch(/^\[\[#\^[a-z0-9]{6}\]\]$/);
+		suggest.selectSuggestion(item, {} as any);
+		await vi.waitFor(() => {
+			expect(item.blockId).toMatch(/^[a-z0-9]{6}$/);
+			expect(editor.getLine(0)).toBe(`[[#^${item.blockId}]]`);
+		});
 	});
 
 	it("inserts [[Note-09|a_note_alias]] when selecting alias suggestion", async () => {

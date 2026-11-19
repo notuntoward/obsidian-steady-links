@@ -25,7 +25,10 @@ export interface SuggestionItem {
 	level?: number;
 	blockId?: string | null;
 	blockText?: string;
-	position?: any; // Position from cache (has start/end with line/col/offset)
+	position?: {
+		start: { line: number; col?: number; offset?: number };
+		end: { line: number; col?: number; offset?: number };
+	}; // Position from cache
 	basename?: string;
 	path?: string;
 	name?: string;

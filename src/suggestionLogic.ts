@@ -5,6 +5,14 @@ import { SuggestionItem } from "./types";
 import { isUrl } from "./utils";
 import { parseSuggestionQuery } from "./suggestionQuery";
 
+function pluginActiveDocument(): Document | null {
+	return typeof activeDocument !== "undefined" ? activeDocument : null;
+}
+
+function pluginActiveWindow(): Window {
+	return activeWindow;
+}
+
 export async function getSuggestionItems(
 	query: string,
 	app: App,
@@ -24,7 +32,7 @@ export async function getSuggestionItems(
 	switch (parsed.type) {
 		case "global-heading": {
 			const headingQuery = (parsed.searchTerm ?? "").toLowerCase();
-			const allHeadings = await getAllHeadings(app);
+			const allHeadings = await Promise.resolve(getAllHeadings(app));
 			if (!headingQuery) return allHeadings;
 			return allHeadings.filter(
 				(h) => h.heading && h.heading.toLowerCase().includes(headingQuery)
@@ -39,7 +47,7 @@ export async function getSuggestionItems(
 		}
 		case "current-heading": {
 			const headingQuery = (parsed.searchTerm ?? "").toLowerCase();
-			const allHeadings = await getHeadingsInCurrentFile(app);
+			const allHeadings = await Promise.resolve(getHeadingsInCurrentFile(app));
 			if (!headingQuery) return allHeadings;
 			return allHeadings.filter(
 				(h) => h.heading && h.heading.toLowerCase().includes(headingQuery)
@@ -53,7 +61,7 @@ export async function getSuggestionItems(
 			return await getAllBlocksInFile(file, app, blockQuery);
 		}
 		case "file-heading": {
-			return await getHeadingsInFile(parsed.fileName ?? "", app, parsed.searchTerm ?? "");
+			return Promise.resolve(getHeadingsInFile(parsed.fileName ?? "", app, parsed.searchTerm ?? ""));
 		}
 		case "file-alias": {
 			return getFileAliasesForFile(parsed.fileName ?? "", parsed.searchTerm ?? "", app);
@@ -492,7 +500,12 @@ export function generateBlockId(): string {
 	return result.substring(0, 6);
 }
 
-export async function addBlockIdToFile(file: TFile, app: App, position: any, blockId: string) {
+export async function addBlockIdToFile(
+	file: TFile,
+	app: App,
+	position: NonNullable<SuggestionItem["position"]>,
+	blockId: string
+) {
 	const content = await app.vault.read(file);
 	const lines = content.split("\n");
 	const endLine = position.end.line;
@@ -628,11 +641,32 @@ export function renderSuggestionItem(
  *   links alias-less, so it passes `false` here. This preserves each
  *   caller's exact prior behavior.
  */
-export async function computeSelectedLinkValue(
+export interface SelectedLinkValue {
+	linkValue: string;
+	newLinkText: string | null;
+}
+
+export function computeSelectedLinkValue(
 	item: SuggestionItem,
 	app: App,
 	includeNewLinkTextForPlainFile: boolean
-): Promise<{ linkValue: string; newLinkText: string | null }> {
+): SelectedLinkValue | Promise<SelectedLinkValue> {
+	if (item.type === "block" && !item.blockId && item.file && item.position) {
+		const newBlockId = generateBlockId();
+		return addBlockIdToFile(item.file, app, item.position, newBlockId).then(() => {
+			item.blockId = newBlockId;
+			return buildSelectedLinkValue(item, app, includeNewLinkTextForPlainFile);
+		});
+	}
+
+	return buildSelectedLinkValue(item, app, includeNewLinkTextForPlainFile);
+}
+
+function buildSelectedLinkValue(
+	item: SuggestionItem,
+	app: App,
+	includeNewLinkTextForPlainFile: boolean
+): SelectedLinkValue {
 	let linkValue: string;
 	let newLinkText: string | null = null;
 
@@ -644,12 +678,6 @@ export async function computeSelectedLinkValue(
 			linkValue = `#${item.heading}`;
 		}
 	} else if (item.type === "block") {
-		if (!item.blockId && item.file && item.position) {
-			const newBlockId = generateBlockId();
-			await addBlockIdToFile(item.file, app, item.position, newBlockId);
-			item.blockId = newBlockId;
-		}
-
 		const currentFile = app.workspace.getActiveFile();
 		if (item.file && (!currentFile || item.file.path !== currentFile.path)) {
 			linkValue = `${item.file.basename}#^${item.blockId}`;
@@ -658,17 +686,17 @@ export async function computeSelectedLinkValue(
 		}
 	} else if (item.type === "alias") {
 		linkValue = item.file
-			? (item.file.extension === "md" ? (item.file.basename || "") : (item.file.name || ""))
-			: (item.alias || "");
+			? item.file.extension === "md"
+				? item.file.basename || ""
+				: item.file.name || ""
+			: item.alias || "";
 		newLinkText = item.alias || "";
+	} else if (item.extension === "md") {
+		linkValue = item.basename || "";
+		if (includeNewLinkTextForPlainFile) newLinkText = item.basename || "";
 	} else {
-		if (item.extension === "md") {
-			linkValue = item.basename || "";
-			if (includeNewLinkTextForPlainFile) newLinkText = item.basename || "";
-		} else {
-			linkValue = item.name || "";
-			if (includeNewLinkTextForPlainFile) newLinkText = item.name || "";
-		}
+		linkValue = item.name || "";
+		if (includeNewLinkTextForPlainFile) newLinkText = item.name || "";
 	}
 
 	return { linkValue, newLinkText };
@@ -744,7 +772,7 @@ export function resolveCompletion(
  * how popups are hidden only needs to be updated here.
  */
 export function findVisibleSuggestionContainer(doc?: Document): HTMLElement | null {
-	const d = doc ?? (typeof document !== "undefined" ? document : null);
+	const d = doc ?? pluginActiveDocument();
 	if (!d) return null;
 	const containers = d.querySelectorAll(".suggestion-container");
 	for (let i = 0; i < containers.length; i++) {
@@ -833,9 +861,9 @@ export function flashSuggestContainer(customContainer?: HTMLElement, win?: Windo
 	const container = customContainer ?? findVisibleSuggestionContainer() ?? undefined;
 	if (container) {
 		container.classList.remove("is-flashing");
-		void (container as any).offsetWidth; // trigger reflow to restart animation
+		void container.offsetWidth; // trigger reflow to restart animation
 		container.classList.add("is-flashing");
-		const targetWin = win ?? (container ? ownerWindow(container) : null) ?? window;
+		const targetWin = win ?? ownerWindow(container) ?? pluginActiveWindow();
 		setTimeoutIn(targetWin, () => {
 			if (container) {
 				container.classList.remove("is-flashing");

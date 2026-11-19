@@ -13,6 +13,7 @@
  */
 
 import { describe, it, expect, afterEach, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import { App, editorInfoField, type MarkdownFileInfo } from "obsidian";
 import SteadyLinksPlugin from "../src/main";
 import { EditorView, keymap } from "@codemirror/view";
@@ -183,15 +184,21 @@ describe("Integration: cursor correction with real CM6 state", () => {
 			expect(anchor.className).toBe("le-hidden-syntax-anchor");
 			expect(anchor.getAttribute("aria-hidden")).toBe("true");
 			expect(anchor.getAttribute("data-steady-links-anchor")).toBe("hidden-syntax");
-			expect(anchor.style.display).toBe("inline-block");
-			expect(anchor.style.width).toBe("1px");
-			expect(anchor.style.minWidth).toBe("1px");
-			expect(anchor.style.height).toBe("1em");
-			expect(anchor.style.lineHeight).toBe("1");
-			expect(anchor.style.marginRight).toBe("-1px");
-			expect(anchor.style.opacity).toBe("0");
-			expect(anchor.style.pointerEvents).toBe("auto");
-			expect(anchor.style.verticalAlign).toBe("-0.2em");
+			const styles = readFileSync("styles.css", "utf8");
+			expect(styles).toContain("body.le-keep-links-steady .le-hidden-syntax-anchor");
+			for (const property of [
+				"display: inline-block",
+				"width: 1px",
+				"min-width: 1px",
+				"height: 1em",
+				"line-height: 1",
+				"margin-right: -1px",
+				"opacity: 0",
+				"pointer-events: auto",
+				"vertical-align: -0.2em",
+			]) {
+				expect(styles).toContain(property);
+			}
 		});
 
 		it("replaces raw [[ and ]] syntax with hidden anchors when cursor is on a spaced-heading wikilink", () => {

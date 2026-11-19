@@ -7,7 +7,8 @@ import {
 	resolveCompletion,
 	flashSuggestContainer,
 	getSelectedSuggestionItem,
-	computeSelectedLinkValue
+	computeSelectedLinkValue,
+	type SelectedLinkValue,
 } from "./suggestionLogic";
 import { parseSuggestionQuery } from "./suggestionQuery";
 import type SteadyLinksPlugin from "./main";
@@ -39,7 +40,7 @@ const EDITOR_SUGGEST_DEBUG = false;
 
 function debugLog(label: string, details?: Record<string, unknown>): void {
 	if (!EDITOR_SUGGEST_DEBUG || typeof console === "undefined") return;
-	console.log(`[SteadyLinks EditorFileSuggest] ${label}`, details ?? {});
+	console.debug(`[SteadyLinks EditorFileSuggest] ${label}`, details ?? {});
 }
 
 export class EditorFileSuggest extends EditorSuggest<SuggestionItem> {
@@ -270,7 +271,7 @@ export class EditorFileSuggest extends EditorSuggest<SuggestionItem> {
 		const to = editor.getCursor("to");
 		debugLog("retriggerSuggest: about to call this.trigger(editor, file, true)", { from, to });
 
-		const didTrigger = trigger.call(this, editor, file, true);
+		const didTrigger = trigger.call(this, editor, file, true) as boolean;
 		debugLog("retriggerSuggest: called this.trigger(editor, file, true)", {
 			didTrigger,
 			contextAfter: this.context ? { ...this.context, editor: undefined } : null,
@@ -415,16 +416,30 @@ export class EditorFileSuggest extends EditorSuggest<SuggestionItem> {
 		renderSuggestionItem(item, el, query, this.app);
 	}
 
-	async selectSuggestion(item: SuggestionItem, _evt: MouseEvent | KeyboardEvent): Promise<void> {
+	selectSuggestion(item: SuggestionItem, _evt: MouseEvent | KeyboardEvent): void {
 		const context = this.context;
 		if (!context) return;
 
-		const { linkValue, newLinkText } = await computeSelectedLinkValue(item, this.app, false);
-		const inner = newLinkText !== null ? `${linkValue}|${newLinkText}` : linkValue;
+		const result = computeSelectedLinkValue(item, this.app, false);
+		if (result instanceof Promise) {
+			void result.then(
+				(value) => this.applySelectedSuggestion(context, value),
+				() => undefined
+			);
+			return;
+		}
+		this.applySelectedSuggestion(context, result);
+	}
 
+	private applySelectedSuggestion(
+		context: EditorSuggestContext,
+		value: SelectedLinkValue
+	): void {
+		const { linkValue, newLinkText } = value;
+		const inner = newLinkText !== null ? `${linkValue}|${newLinkText}` : linkValue;
 		this.buildFullLinkReplacement(context, inner, (startPos, insertion) => {
 			if (newLinkText !== null) {
-				const selectionStartCh = startPos.ch + 2 + linkValue.length + 1; // startPos.ch + [[ + linkValue + |
+				const selectionStartCh = startPos.ch + 2 + linkValue.length + 1;
 				const selectionEndCh = selectionStartCh + newLinkText.length;
 				return {
 					from: { line: startPos.line, ch: selectionStartCh },
