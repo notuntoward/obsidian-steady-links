@@ -49,6 +49,20 @@ export class TFile {
 	}
 }
 
+export class TExternalFile extends TFile {
+	private realPath: string;
+
+	constructor(overrides: Partial<TFile> & { realPath: string }) {
+		const { realPath, ...file } = overrides;
+		super(file);
+		this.realPath = realPath;
+	}
+
+	getRealPath(): string {
+		return this.realPath;
+	}
+}
+
 // ============================================================================
 // MetadataCache - File metadata and frontmatter
 // ============================================================================
@@ -941,10 +955,12 @@ export class TextAreaComponent {
 // ============================================================================
 
 export class Notice {
+	static messages: string[] = [];
 	private message: string;
 
 	constructor(message: string, _timeout?: number) {
 		this.message = message;
+		Notice.messages.push(message);
 	}
 
 	getMessage(): string {

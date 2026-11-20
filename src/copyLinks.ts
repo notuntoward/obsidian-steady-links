@@ -8,6 +8,7 @@ import type {
 	SectionCache,
 	TAbstractFile,
 } from "obsidian";
+import { generateExternalMarkdownLink, getExternalFilePath } from "commons/links";
 
 export interface MarkdownLinkGenerator {
 	generateMarkdownLink(file: TFile, sourcePath: string, subpath?: string, alias?: string): string;
@@ -26,6 +27,10 @@ export function generateFileLink(
 ): string {
 	const displayAlias =
 		alias ?? (file.extension.toLowerCase() === "pdf" ? file.basename : undefined);
+	const externalPath = getExternalFilePath(file);
+	if (externalPath) {
+		return generateExternalMarkdownLink(externalPath, false, subpath, displayAlias);
+	}
 	return generator.generateMarkdownLink(file, sourcePath, subpath, displayAlias);
 }
 
@@ -42,6 +47,10 @@ export function generateLocationLink(
 	subpath: string,
 	alias?: string
 ): string {
+	const externalPath = getExternalFilePath(file);
+	if (externalPath) {
+		return generateExternalMarkdownLink(externalPath, false, subpath, alias);
+	}
 	const generated = generator.generateMarkdownLink(file, "", subpath, alias);
 	if (!generated.startsWith("[[")) return generated;
 

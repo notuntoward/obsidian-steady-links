@@ -1,11 +1,30 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it, vi } from "vitest";
-import { App, Editor, Modal, TFile } from "./__mocks__/obsidian";
+import { App, Editor, Modal, Notice, TExternalFile, TFile } from "./__mocks__/obsidian";
 import { EditLinkModal } from "../src/EditLinkModal";
 import SteadyLinksPlugin from "../src/main";
 
 describe("Copy link to current location", () => {
+	it("warns instead of copying an external file when external linking is disabled", () => {
+		const app = new App();
+		const file = new TExternalFile({
+			path: "MAINTENANCE.md",
+			realPath: "C:/Users/scott/repos/obsidian-commons/docs/MAINTENANCE.md",
+		});
+		const plugin = new SteadyLinksPlugin(app as any, {} as any);
+		(plugin as any).settings = {
+			allowExternalFileLinks: false,
+		};
+		Notice.messages.length = 0;
+
+		(plugin as any).copyLinkToFile(file);
+
+		expect(Notice.messages).toContain(
+			"External file links are disabled. Enable “Allow links to files outside the vault” in Steady Links settings."
+		);
+	});
+
 	it("opens the link editor for an unselected block and defers adding its ID until acceptance", () => {
 		const app = new App();
 		const file = new TFile({ path: "Meeting Notes.md" });

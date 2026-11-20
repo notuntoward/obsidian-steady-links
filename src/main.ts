@@ -1,5 +1,6 @@
 import { ownerWindow, setTimeoutIn, requestFrameIn, readClipboardIn, writeClipboardIn } from "commons/windows";
 import { getEditorLeafLocations } from "commons/workspace";
+import { getExternalFilePath } from "commons/links";
 import { Plugin, Editor, MarkdownView, Notice, FileSystemAdapter, TFile, Menu, Platform, ItemView } from "obsidian";
 import { Extension, EditorSelection } from "@codemirror/state";
 import { EditLinkModal } from "./EditLinkModal";
@@ -84,6 +85,7 @@ function editorWindow(editor: Editor): Window {
 const DEFAULT_SETTINGS: PluginSettings = {
 	keepLinksSteady: false,
 	copyLinkToCurrentNoteInTabMenu: false,
+	allowExternalFileLinks: false,
 	shortenHeadingLinks: false,
 	shortenFileLinks: false,
 };
@@ -608,12 +610,21 @@ export default class SteadyLinksPlugin extends Plugin {
 			new Notice("Canvas and Ink links are not supported");
 			return;
 		}
+		if (!this.ensureExternalFileLinksAllowed(file)) return;
 		try {
 			const link = generateFileLink(file, this.app.fileManager, file.path);
 			void this.writeLinkToClipboard(link, "Copied link to current note");
 		} catch {
 			new Notice("Could not generate a link to this file");
 		}
+	}
+
+	private ensureExternalFileLinksAllowed(file: TFile): boolean {
+		if (!getExternalFilePath(file) || this.settings.allowExternalFileLinks) return true;
+		new Notice(
+			"External file links are disabled. Enable “Allow links to files outside the vault” in Steady Links settings."
+		);
+		return false;
 	}
 
 	private addCopyFileMenuItem(menu: Menu, file: TFile): void {
@@ -660,6 +671,7 @@ export default class SteadyLinksPlugin extends Plugin {
 	}
 
 	private copyLinkToLocation(editor: Editor, file: TFile): void {
+		if (!this.ensureExternalFileLinksAllowed(file)) return;
 		const resolution = this.resolveEditorLocation(editor, file);
 		if (!resolution.target) {
 			new Notice(resolution.reason ?? "Could not resolve this location.");

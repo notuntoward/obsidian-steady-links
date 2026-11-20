@@ -52,6 +52,11 @@ export interface PluginSettings {
 	 */
 	copyLinkToCurrentNoteInTabMenu: boolean;
 	/**
+	 * Allow commands and menus to create absolute file links for files opened
+	 * outside the vault. Disabled by default for privacy and portability.
+	 */
+	allowExternalFileLinks: boolean;
+	/**
 	 * When enabled (and keepLinksSteady is also enabled), heading and block
 	 * references without an alias (e.g. [[Note#Heading]], [[Note#^block-id]])
 	 * hide the note path and "#"/"#^" marker, showing only the heading text

@@ -18,6 +18,7 @@ describe("SteadyLinksSettingTab", () => {
 				shortenHeadingLinks: false,
 				shortenFileLinks: false,
 				copyLinkToCurrentNoteInTabMenu: false,
+				allowExternalFileLinks: false,
 			}),
 			saveSettings: vi.fn().mockResolvedValue(undefined),
 			applySyntaxHiderSetting: vi.fn(),
@@ -28,7 +29,7 @@ describe("SteadyLinksSettingTab", () => {
 
 	it("returns declarative setting definitions with expected groups and keys", () => {
 		const defs = tab.getSettingDefinitions();
-		expect(defs).toHaveLength(2);
+		expect(defs).toHaveLength(3);
 
 		const group1 = defs[0] as any;
 		expect(group1.heading).toBe("Keep links steady");
@@ -38,8 +39,12 @@ describe("SteadyLinksSettingTab", () => {
 		expect(group1.items[2].control.key).toBe("shortenFileLinks");
 
 		const group2 = defs[1] as any;
-		expect(group2.heading).toBe("Tab menu");
-		expect(group2.items[0].control.key).toBe("copyLinkToCurrentNoteInTabMenu");
+		expect(group2.heading).toBe("External files");
+		expect(group2.items[0].control.key).toBe("allowExternalFileLinks");
+
+		const group3 = defs[2] as any;
+		expect(group3.heading).toBe("Tab menu");
+		expect(group3.items[0].control.key).toBe("copyLinkToCurrentNoteInTabMenu");
 	});
 
 	it("disables shorten toggles when keepLinksSteady is off and enables when on", () => {

@@ -43,6 +43,17 @@ export class SteadyLinksSettingTab extends PluginSettingTab {
 			},
 			{
 				type: "group",
+				heading: "External files",
+				items: [
+					{
+						name: "Allow links to files outside the vault",
+						desc: "Allow copy-link commands to create absolute file:// links for externally opened files.",
+						control: { type: "toggle", key: "allowExternalFileLinks" },
+					},
+				],
+			},
+			{
+				type: "group",
 				heading: "Tab menu",
 				items: [
 					{

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { CachedMetadata, Pos, TAbstractFile, TFile } from "obsidian";
-import { TFile as MockTFile } from "./__mocks__/obsidian";
+import { TExternalFile as MockTExternalFile, TFile as MockTFile } from "./__mocks__/obsidian";
 import {
 	generateFileLink,
 	generateLocationLink,
@@ -95,6 +95,39 @@ describe("copy links to notes and locations", () => {
 		expect(generateFileLink(pdf as unknown as TFile, fileLinkGenerator(false))).toBe(
 			"[Reference](Reference.pdf)"
 		);
+	});
+
+	it("copies externally opened files as absolute file links", () => {
+		const note = new MockTExternalFile({
+			path: "MAINTENANCE.md",
+			realPath: "C:/Users/scott/repos/obsidian-commons/docs/MAINTENANCE.md",
+		});
+		const generator = fileLinkGenerator(true);
+
+		expect(generateFileLink(note as unknown as TFile, generator)).toBe(
+			"[MAINTENANCE](file:///C:/Users/scott/repos/obsidian-commons/docs/MAINTENANCE.md)"
+		);
+		expect(generator.generateMarkdownLink).not.toHaveBeenCalled();
+	});
+
+	it("copies locations in external files with encoded fragments", () => {
+		const note = new MockTExternalFile({
+			path: "MAINTENANCE.md",
+			realPath: "C:/Projects/My Docs/MAINTENANCE.md",
+		});
+		const generator = fileLinkGenerator(true);
+
+		expect(
+			generateLocationLink(
+				note as unknown as TFile,
+				generator,
+				"#Release steps",
+				"Release"
+			)
+		).toBe(
+			"[Release](file:///C:/Projects/My%20Docs/MAINTENANCE.md#Release%20steps)"
+		);
+		expect(generator.generateMarkdownLink).not.toHaveBeenCalled();
 	});
 
 	it("resolves a heading and uses selected text as its alias", () => {

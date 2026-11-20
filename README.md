@@ -198,7 +198,7 @@ Steady Links registers 8 commands to streamline link editing, navigation, and in
 | **Collapse Link** | Collapses expanded link at cursor back to display text | `Alt+C` / `⌥C` | `steady-links:collapse-link` | Live Preview |
 | **Open link in default app** | Opens link destination in OS default application or browser | — | `steady-links:open-link-in-default-app` | Desktop only (all modes) |
 | **Reveal linked file in navigation** | Expands to and selects the linked vault file in Obsidian's native File Explorer | — | `steady-links:reveal-linked-file-in-navigation` | Live Preview & Source |
-| **Copy link to current note** | Copies a wikilink to the active note to the clipboard | — | `steady-links:copy-link-to-current-note` | All modes |
+| **Copy link to current note** | Copies a vault-configured link to the active note; external notes use an absolute `file://` link when enabled | — | `steady-links:copy-link-to-current-note` | All modes |
 
 ### Command Details
 
@@ -222,7 +222,8 @@ Steady Links registers 8 commands to streamline link editing, navigation, and in
   - Expands its parent folders and selects the linked vault file in Obsidian's native File Explorer navigation pane.
   - Works for files inside the current vault; URLs and paths outside the vault cannot be shown in the vault tree.
 - **Copy link to current note**:
-  - Generates a clean wikilink to the active note (e.g. `[[Folder/My Note]]` or `[[diagram.canvas]]`) and copies it to your clipboard.
+  - Generates a link in the vault's configured format for normal notes.
+  - For an externally opened note, generates an absolute `file://` Markdown link only when **Allow links to files outside the vault** is enabled.
   - Can also be accessed via the tab header context menu (see [Settings](#settings)).
 
 ---
@@ -257,7 +258,7 @@ Run **Reveal linked file in navigation** on a vault file link to highlight it in
 Enable **Shorten heading and block links** and **Shorten file links** in settings. Links like `[[Deep/Folder/Topic]]` display as `"Topic"` and `[[Guide#Installation]]` display as `"Installation"`, even while typing on them.
 
 ### "I want to quickly share or cross-reference my active note."
-Run **Copy link to current note** or right-click the note's tab header to copy its wikilink to the clipboard.
+Run **Copy link to current note** or right-click the note's tab header to copy a link to it. Externally opened notes require the external-file-link setting and produce an absolute `file://` link.
 
 ---
 
@@ -268,6 +269,7 @@ Run **Copy link to current note** or right-click the note's tab header to copy i
 | **Keep links steady** | `Off` | Keeps links collapsed to display text when entered by cursor in Live Preview. Underlying syntax remains hidden. |
 | **Shorten heading and block links** | `Off` | Hides note path and `#`/`#^` markers in unaliased links (e.g. `[[Note#Heading]]` → `"Heading"`), even with cursor on the link. *(Requires Keep links steady).* |
 | **Shorten file links** | `Off` | Hides parent folder path in unaliased file links (e.g. `[[folder/Note]]` → `"Note"`), even with cursor on the link. *(Requires Keep links steady).* |
+| **Allow links to files outside the vault** | `Off` | Allows copy-link commands to create absolute `file://` Markdown links for externally opened files. Disabled attempts show a settings reminder. |
 | **Show Copy link to current note in tab menu** | `Off` | Adds a "Copy link to current note" option to the right-click context menu of editor tab headers. |
 
 ---
